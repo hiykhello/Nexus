@@ -40,4 +40,66 @@ export namespace logging {
     [[nodiscard]] auto write_batch(Sink& sink, std::span<SinkRecord const> records) noexcept -> SinkResult;
     [[nodiscard]] auto write_batch(Sink& sink, std::span<std::string_view const> lines) noexcept -> SinkResult;
     [[nodiscard]] auto reopen_sink(Sink& sink) noexcept -> SinkResult;
+
+    // Cross-platform rotation state machine used by the Windows file sink.
+    // Preserves the active log intact if shifting backups or moving current -> .1 fails.
+    template<class Handle, class ErrorCode, class Ops>
+    [[nodiscard]] inline auto rotate_file_ops(
+        std::filesystem::path const& dir,
+        std::span<std::string const> names,
+        std::string const& temp_name,
+        Handle& active_handle,
+        std::uint64_t& active_size,
+        Ops&& ops) noexcept -> ErrorCode {
+        if (names.empty()) return ops.invalid_arg();
+        std::uint64_t dummy_sz = 0;
+        ErrorCode err = ops.ok();
+        auto temp_path = dir / temp_name;
+        Handle next = ops.open_append(temp_path, true, dummy_sz, err);
+        if (!next) return err;
+        auto cleanup_temp = [&]() noexcept {
+            ops.close(next);
+            ops.remove(temp_path);
+        };
+        for (std::size_t idx = names.size() - 1; idx > 1; --idx) {
+            auto src = dir / names[idx - 1];
+            auto dst = dir / names[idx];
+            ErrorCode move_err = ops.ok();
+            if (!ops.move_replace(src, dst, move_err) && !ops.is_not_found(move_err)) {
+                cleanup_temp();
+                return move_err;
+            }
+        }
+        if (active_handle) {
+            ops.close(active_handle);
+            active_handle = Handle{};
+        }
+        auto cur = dir / names[0];
+        auto recover_active = [&]() noexcept {
+            std::uint64_t recovered_sz = 0;
+            ErrorCode reopen_err = ops.ok();
+            if (Handle recovered = ops.open_append(cur, false, recovered_sz, reopen_err)) {
+                active_handle = recovered;
+                active_size = recovered_sz;
+            }
+        };
+        if (names.size() > 1) {
+            auto bak = dir / names[1];
+            ErrorCode bak_err = ops.ok();
+            if (!ops.move_replace(cur, bak, bak_err)) {
+                cleanup_temp();
+                recover_active();
+                return bak_err;
+            }
+        }
+        ErrorCode replace_err = ops.ok();
+        if (!ops.move_replace(temp_path, cur, replace_err)) {
+            cleanup_temp();
+            recover_active();
+            return replace_err;
+        }
+        active_handle = next;
+        active_size = 0;
+        return ops.ok();
+    }
 }

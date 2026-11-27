@@ -1,4 +1,5 @@
 import std;
+import cli.route_files;
 import config;
 import rulefile;
 import state.dns_cache;
@@ -74,7 +75,7 @@ auto nexus_state(int argc,char** argv) -> int {
         return 2;
     }
     if (command=="reset" && target!="fakeip" && target!="selectors") return usage();
-    auto text=::rulefile::read_regular_file(config_name);
+    auto text=cli::read_config_source(config_name);
     if (!text) {std::cerr << "state: cannot read configuration\n";return 1;}
     auto config=config::parse_kdl(*text);
     if (!config) {std::cerr << "state: invalid configuration\n";return 1;}

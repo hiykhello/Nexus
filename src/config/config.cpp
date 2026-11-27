@@ -3,6 +3,7 @@ import std;
 import logging.options;
 import glaze;
 import config.kdl_common;
+import config.rule_set_parse;
 import http.header;
 import http.connect;
 import platform.ip_address;
@@ -340,12 +341,16 @@ namespace config {
                 return error("routing default-http-client not found in http-clients");
             result.default_http_client=*route->default_http_client;
         }
+        std::map<std::string,std::string> remote_sha256;
         auto bind_remote_client=[&](BlockRules& spec) -> std::expected<void,std::string> {
             if (spec.url.empty()) return {};
             if (spec.http_client.empty()) spec.http_client=result.default_http_client;
             if (spec.http_client.empty() ||
                 std::ranges::find(result.http_clients,spec.http_client,&NamedHttpClient::name)==result.http_clients.end())
                 return error("remote rule-set requires a configured http-client or routing default-http-client");
+            auto [it,inserted]=remote_sha256.emplace(kdl::normalize_remote_url(spec.url),spec.sha256);
+            if (!inserted && it->second!=spec.sha256)
+                return error("conflicting sha256 declarations for remote rule-set URL: "+spec.url);
             return {};
         };
         for (auto& file : route->files)

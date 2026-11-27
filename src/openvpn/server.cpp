@@ -241,12 +241,15 @@ namespace openvpn {
             return out;
         }
         if (state_ == ServerState::awaiting_push_request || state_ == ServerState::established) {
+            constexpr std::string_view kPushReqNul{"PUSH_REQUEST\0", 13};
             std::string_view sv(reinterpret_cast<char const*>(app_rx_buf_.data()), app_rx_buf_.size());
-            if (sv.starts_with("PUSH_REQUEST")) {
-                auto res = handle_push_request(out);
-                crypto::cleanse(app_rx_buf_);
-                app_rx_buf_.clear();
-                if (!res) return std::unexpected(res.error());
+            if (auto nul = sv.find('\0'); nul != std::string_view::npos) {
+                bool const is_push = (sv.substr(0, nul + 1) == kPushReqNul);
+                app_rx_buf_.erase(app_rx_buf_.begin(), app_rx_buf_.begin() + static_cast<std::ptrdiff_t>(nul + 1));
+                if (is_push) {
+                    auto res = handle_push_request(out);
+                    if (!res) return std::unexpected(res.error());
+                }
             }
         }
         return out;

@@ -46,7 +46,10 @@ export namespace acme {
         ChallengeType challenge = ChallengeType::http01;
         std::filesystem::path state_dir;
         std::int64_t renew_before_seconds = 30 * 24 * 3600;
-        std::uint32_t max_poll_attempts = 10;
+        std::uint32_t max_poll_attempts = 64;
+        std::uint32_t poll_initial_backoff_ms = 250;
+        std::uint32_t poll_max_backoff_ms = 5000;
+        std::uint32_t poll_deadline_ms = 120000;
         std::optional<EabCredentials> eab;
     };
 
@@ -102,6 +105,7 @@ export namespace acme {
         std::optional<functional::function_ref<bool(std::string_view token, std::string_view key_auth)>> publish_http01;
         std::optional<functional::function_ref<bool(std::string_view domain, std::string_view cert_pem, std::string_view key_pem)>> publish_alpn01;
         std::optional<functional::function_ref<bool(std::string_view domain, std::string_view txt_value)>> publish_dns01;
+        std::optional<functional::function_ref<std::expected<void, std::string>(CertificateBundle const&)>> publish_certificate;
         std::optional<functional::function_ref<void()>> cleanup;
     };
 }

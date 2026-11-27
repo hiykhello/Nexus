@@ -6,6 +6,7 @@ import cli.control;
 import cli.dns_live_query;
 import cli.proxy_control_operations;
 import cli.proxy_group_health;
+import cli.proxy_listener;
 import cli.proxy_mode;
 import cli.proxy_outbound_probe;
 import cli.proxy_run_state;
@@ -61,7 +62,9 @@ export namespace cli::run_detail {
         std::optional<std::uint64_t> listener_generation, platform::network::Snapshot const* network,
         OutboundGroupHealth* health, ControlRole role, ControlOperations& operations, LocalControl const& control,
         dns::ReverseCache* reverse_cache = nullptr, RuntimeRouteModeController* route_mode = nullptr,
-        AdHocOutboundProber* prober = nullptr, bool reload_supported = true)
+        AdHocOutboundProber* prober = nullptr, bool reload_supported = true,
+        std::span<std::unique_ptr<RetiredTcpGeneration> const> retired_tcp = {},
+        std::pair<std::uint64_t, std::uint64_t> reclaimed_bytes = {0, 0})
         -> std::expected<std::string, std::string> {
         auto command = args.front();
         if (role == ControlRole::reader && command != "status" && command != "operation" &&
@@ -74,32 +77,39 @@ export namespace cli::run_detail {
             auto id = control_number(args[1]);
             if (!id || !*id) return std::unexpected("invalid-id");
             auto now = std::chrono::steady_clock::now();
+            auto format_row = [&](std::size_t idx, relay::ActiveConnection const& row) -> std::string {
+                auto dur = now >= row.started ? std::chrono::duration_cast<std::chrono::milliseconds>(now - row.started).count() : 0;
+                auto out = std::format("id={} listener={} protocol={} path={} destination-port={} duration-ms={} can-close={} upload={} download={}",
+                    row.id, idx, relay::traffic_protocol_name(row.protocol), control_path(row.path),
+                    row.destination_port, dur, row.can_close ? 1 : 0, row.bytes.upload, row.bytes.download);
+                if (!row.inbound_name.empty()) out += std::format(" inbound={}", control_name(row.inbound_name));
+                if (row.source) out += std::format(" source={}", control_endpoint(*row.source));
+                if (!row.process_path.empty()) out += std::format(" process-path={:?}", row.process_path);
+                if (row.source_uid) out += std::format(" source-uid={}", *row.source_uid);
+                if (row.route) {
+                    out += std::format(" target={} route-mode={} route-rule={}", control_endpoint(row.route->target),
+                        row.route->mode == relay::TrafficRouteMode::ordered ? "ordered" : "indexed",
+                        row.route->rule ? std::to_string(*row.route->rule + 1) : "default");
+                    if (row.route->outbound < outbound_names.size())
+                        out += std::format(" outbound={}", control_name(outbound_names[row.route->outbound]));
+                }
+                return out + "\n";
+            };
             for (std::size_t idx = 0; idx < listeners.size(); ++idx) {
                 auto snap = listeners[idx].server->traffic_snapshot();
-                for (auto const& row : snap.active) {
-                    if (row.id != *id) continue;
-                    auto dur = now >= row.started ? std::chrono::duration_cast<std::chrono::milliseconds>(now - row.started).count() : 0;
-                    auto out = std::format("id={} listener={} protocol={} path={} destination-port={} duration-ms={} can-close={} upload={} download={}",
-                        row.id, idx, relay::traffic_protocol_name(row.protocol), control_path(row.path),
-                        row.destination_port, dur, row.can_close ? 1 : 0, row.bytes.upload, row.bytes.download);
-                    if (!row.inbound_name.empty()) out += std::format(" inbound={}", control_name(row.inbound_name));
-                    if (row.source) out += std::format(" source={}", control_endpoint(*row.source));
-                    if (!row.process_path.empty()) out += std::format(" process-path={:?}", row.process_path);
-                    if (row.source_uid) out += std::format(" source-uid={}", *row.source_uid);
-                    if (row.route) {
-                        out += std::format(" target={} route-mode={} route-rule={}", control_endpoint(row.route->target),
-                            row.route->mode == relay::TrafficRouteMode::ordered ? "ordered" : "indexed",
-                            row.route->rule ? std::to_string(*row.route->rule + 1) : "default");
-                        if (row.route->outbound < outbound_names.size())
-                            out += std::format(" outbound={}", control_name(outbound_names[row.route->outbound]));
-                    }
-                    return out + "\n";
+                for (auto const& row : snap.active) if (row.id == *id) return format_row(idx, row);
+            }
+            for (auto const& gen : retired_tcp) {
+                if (!gen) continue;
+                for (std::size_t idx = 0; idx < gen->listeners.size(); ++idx) {
+                    auto snap = gen->listeners[idx].server->traffic_snapshot();
+                    for (auto const& row : snap.active) if (row.id == *id) return format_row(idx, row);
                 }
             }
             return std::unexpected("unknown-connection");
         }
         if (command == "events" && args.size() <= 3)
-            return operations.events(args, control.instance());
+            return operations.events(args, operations.resolve_instance(control.instance()));
         if (command == "diagnostics" && args.size() == 1) {
             auto info = control.diagnostics();
             return std::format("authorized={} unauthorized={} expired={} reply-failed={}\n",
@@ -177,25 +187,31 @@ export namespace cli::run_detail {
             auto id = control_number(args[1]);
             if (!id || !*id) return std::unexpected("invalid-id");
             bool unavailable = false;
-            for (auto& listener : listeners) {
-                switch (listener.server->request_traffic_close(*id)) {
+            auto try_close = [&](auto& srv) -> std::optional<std::string> {
+                switch (srv.request_traffic_close(*id)) {
                 case relay::TrafficCloseRequest::queued:
                     operations.record(ControlOperations::EventKind::close_queued);
                     return std::string("queued\n");
-                case relay::TrafficCloseRequest::missing: break;
-                case relay::TrafficCloseRequest::unavailable: unavailable = true; break;
+                case relay::TrafficCloseRequest::missing: return std::nullopt;
+                case relay::TrafficCloseRequest::unavailable: unavailable = true; return std::nullopt;
                 }
-            }
+                return std::nullopt;
+            };
+            for (auto& listener : listeners) if (auto r = try_close(*listener.server)) return *r;
+            for (auto const& gen : retired_tcp)
+                if (gen) for (auto& listener : gen->listeners) if (auto r = try_close(*listener.server)) return *r;
             return std::unexpected(unavailable ? "close-unavailable" : "unknown-connection");
         }
         if (command == "close-all" && args.size() == 1) {
             std::size_t closed = 0;
-            for (auto& listener : listeners) {
-                auto snapshot = listener.server->traffic_snapshot();
-                for (auto const& row : snapshot.active) {
-                    if (listener.server->request_traffic_close(row.id) == relay::TrafficCloseRequest::queued) ++closed;
-                }
-            }
+            auto close_srv = [&](auto& srv) {
+                auto snapshot = srv.traffic_snapshot();
+                for (auto const& row : snapshot.active)
+                    if (srv.request_traffic_close(row.id) == relay::TrafficCloseRequest::queued) ++closed;
+            };
+            for (auto& listener : listeners) close_srv(*listener.server);
+            for (auto const& gen : retired_tcp)
+                if (gen) for (auto& listener : gen->listeners) close_srv(*listener.server);
             if (closed > 0) operations.record(ControlOperations::EventKind::close_queued);
             return std::format("closed={}\n", closed);
         }
@@ -239,7 +255,7 @@ export namespace cli::run_detail {
             auto group = std::ranges::find(running->selectors, args[1], &config::OutboundSelector::name);
             if (group == running->selectors.end()) return std::unexpected("unknown-group");
             auto index = static_cast<std::size_t>(group - running->selectors.begin());
-            auto generation = running->direct_network && network ? std::optional(network->generation) : std::nullopt;
+            auto generation = network ? std::optional(network->generation) : std::nullopt;
             auto overridden = health && health->override_member(index).has_value();
             auto result = std::format("group={} mode={} selected={}{}\n",
                 control_name(group->name), control_group_mode(group->mode), control_name(group->selected),
@@ -280,7 +296,7 @@ export namespace cli::run_detail {
         }
         if (command == "status" && args.size() == 1) {
             std::string result = std::format("state=running workers={} listeners={}\n", workers, listeners.size());
-            result += std::format("control-generation={}\ninstance={}\n", operations.generation(), control.instance());
+            result += std::format("control-generation={}\ninstance={}\n", operations.generation(), operations.resolve_instance(control.instance()));
             if (listener_generation) result += std::format("listener-generation={}\n", *listener_generation);
             if (network) {
                 std::size_t ipv4_defaults = 0, ipv6_defaults = 0;
@@ -292,11 +308,31 @@ export namespace cli::run_detail {
                 result += std::format("network-generation={} links={} addresses={} default-ipv4-routes={} default-ipv6-routes={}\n",
                     network->generation, network->links.size(), network->addresses.size(), ipv4_defaults, ipv6_defaults);
             } else result += "network-generation=unknown\n";
-            for (std::size_t index = 0; index < listeners.size(); ++index) {
-                auto const& listener = listeners[index];
+            struct ListenerTotals { std::uint16_t port; std::size_t active; std::uint64_t upload, download; };
+            std::vector<ListenerTotals> totals;
+            totals.reserve(listeners.size());
+            for (auto const& listener : listeners) {
                 auto snapshot = listener.server->traffic_snapshot();
+                totals.push_back({listener.port, snapshot.active.size(), snapshot.bytes.upload, snapshot.bytes.download});
+            }
+            if (!totals.empty()) {
+                for (auto const& gen : retired_tcp) {
+                    if (!gen) continue;
+                    for (std::size_t r = 0; r < gen->listeners.size(); ++r) {
+                        auto rs = gen->listeners[r].server->traffic_snapshot();
+                        auto& slot = totals[std::min(r, totals.size() - 1)];
+                        slot.active += rs.active.size();
+                        slot.upload += rs.bytes.upload;
+                        slot.download += rs.bytes.download;
+                    }
+                }
+                totals.front().upload += reclaimed_bytes.first;
+                totals.front().download += reclaimed_bytes.second;
+            }
+            for (std::size_t index = 0; index < totals.size(); ++index) {
+                auto const& t = totals[index];
                 result += std::format("listener={} port={} active={} upload={} download={}\n",
-                    index, listener.port, snapshot.active.size(), snapshot.bytes.upload, snapshot.bytes.download);
+                    index, t.port, t.active, t.upload, t.download);
             }
             if (running && role == ControlRole::administrator)
                 for (std::size_t idx = 0; idx < running->selectors.size(); ++idx) {
@@ -311,7 +347,7 @@ export namespace cli::run_detail {
         if (mutation && (args.size() == 4 || args.size() == 5)) {
             auto generation = control_number(args[3]);
             if (!generation || !*generation) return std::unexpected("invalid-generation");
-            if (*generation != operations.generation() || (args.size() == 5 && args[4] != control.instance()))
+            if (*generation != operations.generation() || (args.size() == 5 && args[4] != operations.resolve_instance(control.instance())))
                 return std::unexpected("stale-generation");
         }
         if ((command == "connections" && (args.size() == 2 || args.size() == 3)) ||
@@ -322,16 +358,32 @@ export namespace cli::run_detail {
             if (!cursor) return std::unexpected("invalid-id");
             auto& server = *listeners[*index].server;
             if (command == "close") {
-                switch (server.request_traffic_close(*cursor)) {
-                case relay::TrafficCloseRequest::queued:
-                    operations.record(ControlOperations::EventKind::close_queued);
-                    return std::string("queued\n");
-                case relay::TrafficCloseRequest::missing: return std::unexpected("unknown-connection");
-                case relay::TrafficCloseRequest::unavailable: return std::unexpected("close-unavailable");
-                }
+                bool unavailable = false;
+                auto try_close_one = [&](auto& srv) -> std::optional<std::string> {
+                    switch (srv.request_traffic_close(*cursor)) {
+                    case relay::TrafficCloseRequest::queued:
+                        operations.record(ControlOperations::EventKind::close_queued);
+                        return std::string("queued\n");
+                    case relay::TrafficCloseRequest::missing: return std::nullopt;
+                    case relay::TrafficCloseRequest::unavailable: unavailable = true; return std::nullopt;
+                    }
+                    return std::nullopt;
+                };
+                if (auto r = try_close_one(server)) return *r;
+                for (auto const& gen : retired_tcp)
+                    if (gen) for (auto& l : gen->listeners) if (auto r = try_close_one(*l.server)) return *r;
+                return std::unexpected(unavailable ? "close-unavailable" : "unknown-connection");
             }
             auto snapshot = server.traffic_snapshot();
             auto& rows = snapshot.active;
+            for (auto const& gen : retired_tcp) {
+                if (!gen) continue;
+                for (std::size_t r = 0; r < gen->listeners.size(); ++r) {
+                    if (std::min(r, listeners.size() - 1) != *index) continue;
+                    auto rs = gen->listeners[r].server->traffic_snapshot();
+                    rows.insert(rows.end(), std::make_move_iterator(rs.active.begin()), std::make_move_iterator(rs.active.end()));
+                }
+            }
             std::ranges::sort(rows, {}, &relay::ActiveConnection::id);
             auto next = std::ranges::upper_bound(rows, *cursor, {}, &relay::ActiveConnection::id);
             std::string result;
@@ -377,7 +429,7 @@ export namespace cli::run_detail {
             auto index = static_cast<std::size_t>(group - requested.selectors.begin());
             if (group->mode == config::OutboundGroupMode::url_test) {
                 if (!health) return std::unexpected("selection-unavailable");
-                auto generation = running->direct_network && network ? std::optional(network->generation) : std::nullopt;
+                auto generation = network ? std::optional(network->generation) : std::nullopt;
                 bool reset = (args[2] == "--auto");
                 std::string target_member;
                 if (reset) {
@@ -396,6 +448,7 @@ export namespace cli::run_detail {
                 if (reset) health->clear_override(index);
                 else health->set_override(index, target_member);
                 *running = std::move(*candidate);
+                if (route_mode) route_mode->sync(*running);
                 operations.published();
                 operations.record(ControlOperations::EventKind::selector_changed);
                 return std::format("group={} selected={} override={}\n",
@@ -411,6 +464,7 @@ export namespace cli::run_detail {
             auto published = publish(*candidate, args[1], args[2], true);
             if (!published) return std::unexpected(std::move(published.error()));
             *running = std::move(*candidate);
+            if (route_mode) route_mode->sync(*running);
             operations.published();
             operations.record(ControlOperations::EventKind::selector_changed);
             if (!*published) return std::unexpected("selector-active-persistence-uncertain");

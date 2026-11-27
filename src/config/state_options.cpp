@@ -49,7 +49,7 @@ namespace config {
             for (auto path : {std::string_view(options->directory), std::string_view(config.selector_state_directory)}) {
                 if (path.empty()) continue;
                 auto authority = std::filesystem::path(path).lexically_normal();
-                for (auto name : {"dns", "rulesets"}) {
+                for (auto name : {"dns", "rulesets", "nxmm"}) {
                     auto managed = cache / name;
                     if (std::ranges::mismatch(managed, authority).in1 == managed.end())
                         return error("state cache overlaps an authority directory");

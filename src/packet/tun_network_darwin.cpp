@@ -210,109 +210,93 @@ namespace packet {
         impl_->ifindex = ::if_nametoindex(impl_->ifname.c_str());
         if (!impl_->ifindex) return std::unexpected(std::make_error_code(std::errc::no_such_device));
 
-        int s4 = ::socket(AF_INET, SOCK_DGRAM, 0);
-        if (s4 < 0) return std::unexpected(std::error_code{errno, std::generic_category()});
-        struct FdGuard { int fd; ~FdGuard() { if (fd >= 0) ::close(fd); } } g4{s4};
-
-        ifreq mtu_req{};
-        std::strncpy(mtu_req.ifr_name, impl_->ifname.c_str(), IFNAMSIZ - 1);
-        mtu_req.ifr_mtu = static_cast<int>(plan.mtu);
-        if (::ioctl(s4, SIOCSIFMTU, &mtu_req) < 0)
-            return std::unexpected(std::error_code{errno, std::generic_category()});
-
-        bool has_v6_addr = false;
-        for (auto const& addr : plan.addresses) {
-            if (addr.family == 6) { has_v6_addr = true; continue; }
-            if (addr.family == 4) {
-                ifaliasreq a4{};
-                std::strncpy(a4.ifra_name, impl_->ifname.c_str(), IFNAMSIZ - 1);
-                auto* sin = reinterpret_cast<sockaddr_in*>(&a4.ifra_addr);
-                sin->sin_len = sizeof(sockaddr_in); sin->sin_family = AF_INET;
-                std::memcpy(&sin->sin_addr, addr.address.data(), 4);
-                auto* dst = reinterpret_cast<sockaddr_in*>(&a4.ifra_dstaddr);
-                *dst = *sin;
-                mask_from_prefix(addr.prefix, *reinterpret_cast<sockaddr_in*>(&a4.ifra_mask));
-                if (::ioctl(s4, SIOCAIFADDR, &a4) < 0) {
-                    if (errno != EEXIST) {
-                        auto ec = std::error_code{errno, std::generic_category()};
-                        stop();
-                        return std::unexpected(ec);
-                    }
-                } else {
-                    impl_->installed_v4.push_back(addr);
-                }
-            }
+        int rtm = -1;
+        if (!plan.routes.empty()) {
+            rtm = ::socket(PF_ROUTE, SOCK_RAW, 0);
+            if (rtm < 0) return std::unexpected(std::error_code{errno, std::generic_category()});
         }
-        if (has_v6_addr) {
-            int s6 = ::socket(AF_INET6, SOCK_DGRAM, 0);
-            if (s6 < 0) {
-                auto ec = std::error_code{errno, std::generic_category()};
-                stop();
-                return std::unexpected(ec);
-            }
-            FdGuard g6{s6};
+        struct FdGuard { int fd; ~FdGuard() { if (fd >= 0) ::close(fd); } } gr{rtm};
+        int seq = 1;
+        std::optional<GatewayAddr> gw4, gw6;
+        auto resolve_exclude = [&](TunCidr const& exc) -> std::expected<GatewayAddr, std::error_code> {
+            auto& cached = exc.family == 4 ? gw4 : gw6;
+            if (!cached) cached = query_default_gateway(rtm, exc.family, impl_->ifindex, seq++);
+            if (!cached->valid) return std::unexpected(std::make_error_code(std::errc::network_unreachable));
+            return *cached;
+        };
+        auto configure_interface = [&]() -> std::error_code {
+            int s4 = ::socket(AF_INET, SOCK_DGRAM, 0);
+            if (s4 < 0) return {errno, std::generic_category()};
+            FdGuard g4{s4};
+
+            ifreq mtu_req{};
+            std::strncpy(mtu_req.ifr_name, impl_->ifname.c_str(), IFNAMSIZ - 1);
+            mtu_req.ifr_mtu = static_cast<int>(plan.mtu);
+            if (::ioctl(s4, SIOCSIFMTU, &mtu_req) < 0) return {errno, std::generic_category()};
+
+            bool has_v6_addr = false;
             for (auto const& addr : plan.addresses) {
-                if (addr.family != 6) continue;
-                in6_aliasreq a6{};
-                std::strncpy(a6.ifra_name, impl_->ifname.c_str(), IFNAMSIZ - 1);
-                a6.ifra_addr.sin6_len = sizeof(sockaddr_in6); a6.ifra_addr.sin6_family = AF_INET6;
-                std::memcpy(&a6.ifra_addr.sin6_addr, addr.address.data(), 16);
-                mask_from_prefix6(addr.prefix, a6.ifra_prefixmask);
-                a6.ifra_lifetime.ia6t_vltime = ND6_INFINITE_LIFETIME;
-                a6.ifra_lifetime.ia6t_pltime = ND6_INFINITE_LIFETIME;
-                if (::ioctl(s6, SIOCAIFADDR_IN6, &a6) < 0) {
-                    if (errno != EEXIST) {
-                        auto ec = std::error_code{errno, std::generic_category()};
-                        stop();
-                        return std::unexpected(ec);
+                if (addr.family == 6) { has_v6_addr = true; continue; }
+                if (addr.family == 4) {
+                    ifaliasreq a4{};
+                    std::strncpy(a4.ifra_name, impl_->ifname.c_str(), IFNAMSIZ - 1);
+                    auto* sin = reinterpret_cast<sockaddr_in*>(&a4.ifra_addr);
+                    sin->sin_len = sizeof(sockaddr_in); sin->sin_family = AF_INET;
+                    std::memcpy(&sin->sin_addr, addr.address.data(), 4);
+                    auto* dst = reinterpret_cast<sockaddr_in*>(&a4.ifra_dstaddr);
+                    *dst = *sin;
+                    mask_from_prefix(addr.prefix, *reinterpret_cast<sockaddr_in*>(&a4.ifra_mask));
+                    if (::ioctl(s4, SIOCAIFADDR, &a4) < 0) {
+                        if (errno != EEXIST) return {errno, std::generic_category()};
+                    } else {
+                        impl_->installed_v4.push_back(addr);
                     }
-                } else {
-                    impl_->installed_v6.push_back(addr);
                 }
             }
-        }
-        ifreq flags_req{};
-        std::strncpy(flags_req.ifr_name, impl_->ifname.c_str(), IFNAMSIZ - 1);
-        if (::ioctl(s4, SIOCGIFFLAGS, &flags_req) == 0) {
-            flags_req.ifr_flags |= IFF_UP | IFF_RUNNING;
-            (void)::ioctl(s4, SIOCSIFFLAGS, &flags_req);
-        }
-        if (!plan.routes.empty() || !plan.excludes.empty()) {
-            int rtm = ::socket(PF_ROUTE, SOCK_RAW, 0);
-            if (rtm < 0) {
-                auto ec = std::error_code{errno, std::generic_category()};
-                stop();
-                return std::unexpected(ec);
-            }
-            FdGuard gr{rtm};
-            int seq = 1;
-            GatewayAddr gw4{}, gw6{};
-            if (!plan.excludes.empty()) {
-                bool need4 = std::ranges::any_of(plan.excludes, [](auto const& c) { return c.family == 4; });
-                bool need6 = std::ranges::any_of(plan.excludes, [](auto const& c) { return c.family == 6; });
-                if (need4) gw4 = query_default_gateway(rtm, 4, impl_->ifindex, seq++);
-                if (need6) gw6 = query_default_gateway(rtm, 6, impl_->ifindex, seq++);
-            }
-            for (auto const& exc : plan.excludes) {
-                auto const& gw = exc.family == 4 ? gw4 : gw6;
-                if (!gw.valid) continue;
-                auto err = route_msg(rtm, RTM_ADD, exc, gw, seq++);
-                if (!err) impl_->installed_routes.push_back({exc, gw});
-                else if (err != std::errc::file_exists) {
-                    stop();
-                    return std::unexpected(err);
+            if (has_v6_addr) {
+                int s6 = ::socket(AF_INET6, SOCK_DGRAM, 0);
+                if (s6 < 0) return {errno, std::generic_category()};
+                FdGuard g6{s6};
+                for (auto const& addr : plan.addresses) {
+                    if (addr.family != 6) continue;
+                    in6_aliasreq a6{};
+                    std::strncpy(a6.ifra_name, impl_->ifname.c_str(), IFNAMSIZ - 1);
+                    a6.ifra_addr.sin6_len = sizeof(sockaddr_in6); a6.ifra_addr.sin6_family = AF_INET6;
+                    std::memcpy(&a6.ifra_addr.sin6_addr, addr.address.data(), 16);
+                    mask_from_prefix6(addr.prefix, a6.ifra_prefixmask);
+                    a6.ifra_lifetime.ia6t_vltime = ND6_INFINITE_LIFETIME;
+                    a6.ifra_lifetime.ia6t_pltime = ND6_INFINITE_LIFETIME;
+                    if (::ioctl(s6, SIOCAIFADDR_IN6, &a6) < 0) {
+                        if (errno != EEXIST) return {errno, std::generic_category()};
+                    } else {
+                        impl_->installed_v6.push_back(addr);
+                    }
                 }
             }
-            auto tun_gw = make_iface_gateway(impl_->ifindex);
-            for (auto const& rt : plan.routes) {
-                auto err = route_msg(rtm, RTM_ADD, rt, tun_gw, seq++);
-                if (!err) impl_->installed_routes.push_back({rt, tun_gw});
-                else if (err != std::errc::file_exists) {
-                    stop();
-                    return std::unexpected(err);
-                }
+            ifreq flags_req{};
+            std::strncpy(flags_req.ifr_name, impl_->ifname.c_str(), IFNAMSIZ - 1);
+            if (::ioctl(s4, SIOCGIFFLAGS, &flags_req) == 0) {
+                flags_req.ifr_flags |= IFF_UP | IFF_RUNNING;
+                (void)::ioctl(s4, SIOCSIFFLAGS, &flags_req);
             }
-        }
+            return {};
+        };
+        auto install_exclude = [&](TunCidr const& exc, GatewayAddr const& gw) -> std::error_code {
+            auto err = route_msg(rtm, RTM_ADD, exc, gw, seq++);
+            if (!err) impl_->installed_routes.push_back({exc, gw});
+            else if (err != std::errc::file_exists) return err;
+            return {};
+        };
+        auto tun_gw = make_iface_gateway(impl_->ifindex);
+        auto install_capture = [&](TunCidr const& rt) -> std::error_code {
+            auto err = route_msg(rtm, RTM_ADD, rt, tun_gw, seq++);
+            if (!err) impl_->installed_routes.push_back({rt, tun_gw});
+            else if (err != std::errc::file_exists) return err;
+            return {};
+        };
+        auto applied = apply_tun_route_plan(
+            plan, resolve_exclude, configure_interface, install_exclude, install_capture, [&]() noexcept { stop(); });
+        if (!applied) return std::unexpected(applied.error());
         impl_->active = true;
         return {};
     }

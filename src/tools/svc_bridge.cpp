@@ -28,6 +28,7 @@ import logging;
 import logging.cli;
 import packet;
 import packet.bridge;
+import platform.network_state;
 
 namespace cli {
     namespace {
@@ -56,27 +57,47 @@ namespace cli {
             int phys_ifindex = 0;
             int wake_pipe[2]{-1, -1};
             std::atomic_bool stopping{false};
+            std::uint64_t tx_ok_v4 = 0;
+            std::uint64_t tx_ok_v6 = 0;
+            std::uint64_t tx_err = 0;
             std::atomic<std::uint64_t> forwarded_v4{0};
             std::atomic<std::uint64_t> forwarded_v6{0};
             std::atomic<std::uint64_t> dropped_ttl{0};
             std::atomic<std::uint64_t> dropped_mtu{0};
             std::atomic<std::uint64_t> dropped_loop{0};
             std::atomic<std::uint64_t> dropped_filtered{0};
+            std::atomic<std::uint64_t> dropped_tx{0};
+#ifdef __linux__
+            std::optional<platform::network::Monitor> net_monitor;
+            std::uint64_t cached_net_gen = 0;
+            std::chrono::steady_clock::time_point last_net_poll{};
+            std::vector<packet::bridge::RouteHint> cached_routes;
+            std::vector<packet::bridge::NeighborEntry> cached_neighbors;
+            std::vector<packet::bridge::NeighborEntry> learned_neighbors;
+#endif
             std::jthread worker;
 
             BridgeState(packet::bridge::BridgeConfig cfg, int tfd, int pfd, bool af_pkt, int ifidx)
-                : bridge(std::move(cfg)), tun_fd(tfd), phys_fd(pfd), phys_is_af_packet(af_pkt), phys_ifindex(ifidx) {}
+                : bridge(std::move(cfg)), tun_fd(tfd), phys_fd(pfd), phys_is_af_packet(af_pkt), phys_ifindex(ifidx) {
+#ifdef __linux__
+                if (phys_is_af_packet && phys_ifindex > 0) {
+                    net_monitor.emplace(true);
+                    (void)net_monitor->start(platform::network::Clock::now() + std::chrono::milliseconds(25));
+                }
+#endif
+            }
 
             ~BridgeState() { stop(); }
 
             auto sync_stats() noexcept -> void {
                 auto const& s = bridge.stats();
-                forwarded_v4.store(s.forwarded_v4, std::memory_order_relaxed);
-                forwarded_v6.store(s.forwarded_v6, std::memory_order_relaxed);
+                forwarded_v4.store(tx_ok_v4, std::memory_order_relaxed);
+                forwarded_v6.store(tx_ok_v6, std::memory_order_relaxed);
                 dropped_ttl.store(s.dropped_ttl, std::memory_order_relaxed);
                 dropped_mtu.store(s.dropped_mtu, std::memory_order_relaxed);
                 dropped_loop.store(s.dropped_loop, std::memory_order_relaxed);
                 dropped_filtered.store(s.dropped_filtered, std::memory_order_relaxed);
+                dropped_tx.store(tx_err, std::memory_order_relaxed);
             }
 
             auto stop() noexcept -> void {
@@ -87,27 +108,109 @@ namespace cli {
                     }
                 }
                 if (worker.joinable()) worker.join();
+#ifdef __linux__
+                if (net_monitor) net_monitor->stop();
+#endif
                 if (wake_pipe[0] >= 0) { ::close(wake_pipe[0]); wake_pipe[0] = -1; }
                 if (wake_pipe[1] >= 0) { ::close(wake_pipe[1]); wake_pipe[1] = -1; }
                 if (tun_fd >= 0) { ::close(tun_fd); tun_fd = -1; }
                 if (phys_fd >= 0) { ::close(phys_fd); phys_fd = -1; }
             }
 
-            auto send_to_phys(std::span<std::uint8_t const> pkt) noexcept -> void {
-                if (pkt.empty()) return;
+#ifdef __linux__
+            auto refresh_neighbor_cache() noexcept -> void {
+                if (!net_monitor) return;
+                auto now = platform::network::Clock::now();
+                if (last_net_poll != platform::network::Clock::time_point{} &&
+                    now - last_net_poll < std::chrono::milliseconds(250)) {
+                    return;
+                }
+                last_net_poll = now;
+                if (!net_monitor->started()) (void)net_monitor->start(now + std::chrono::milliseconds(25));
+                else (void)net_monitor->poll(now + std::chrono::milliseconds(10));
+                auto snap = net_monitor->get();
+                if (!snap || snap->generation == cached_net_gen) return;
+                cached_net_gen = snap->generation;
+                cached_routes.clear();
+                cached_neighbors.clear();
+                auto const target_idx = static_cast<std::uint32_t>(phys_ifindex);
+                for (auto const& r : snap->routes) {
+                    if (r.index != target_idx || r.table != platform::network::constants::rt_table_main ||
+                        r.source_prefix != 0 || r.type != platform::network::constants::rtn_unicast ||
+                        (r.flags & platform::network::constants::rtnh_f_linkdown)) continue;
+                    std::uint8_t fam = r.family == platform::network::constants::af_inet ? 4 :
+                        (r.family == platform::network::constants::af_inet6 ? 6 : 0);
+                    if (!fam) continue;
+                    cached_routes.push_back({r.destination, r.gateway, r.priority, fam, r.prefix});
+                }
+                for (auto const& n : snap->neighbors) {
+                    if (n.index != target_idx) continue;
+                    std::uint8_t fam = n.family == platform::network::constants::af_inet ? 4 :
+                        (n.family == platform::network::constants::af_inet6 ? 6 : 0);
+                    if (!fam) continue;
+                    cached_neighbors.push_back({n.address, n.mac, fam});
+                }
+            }
+
+            auto learn_source_mac(std::span<std::uint8_t const> pkt, std::array<std::uint8_t, 6> mac) noexcept -> void {
+                if (pkt.empty() || (mac[0] & 0x01u) != 0 || std::ranges::all_of(mac, [](std::uint8_t b) { return b == 0; }))
+                    return;
+                auto const ver = static_cast<std::uint8_t>((pkt[0] >> 4) & 0x0f);
+                packet::bridge::NeighborEntry entry{.mac = mac};
+                if (ver == 4 && pkt.size() >= 20) {
+                    entry.family = 4;
+                    std::copy_n(pkt.data() + 12, 4, entry.address.begin());
+                } else if (ver == 6 && pkt.size() >= 40) {
+                    entry.family = 6;
+                    std::copy_n(pkt.data() + 8, 16, entry.address.begin());
+                } else return;
+                auto const len = entry.family == 4 ? 4uz : 16uz;
+                for (auto& existing : learned_neighbors) {
+                    if (existing.family == entry.family &&
+                        std::ranges::equal(std::span(existing.address).first(len), std::span(entry.address).first(len))) {
+                        existing.mac = mac;
+                        return;
+                    }
+                }
+                if (learned_neighbors.size() >= 256) learned_neighbors.erase(learned_neighbors.begin());
+                learned_neighbors.push_back(entry);
+            }
+
+            [[nodiscard]] auto resolve_egress_mac(std::span<std::uint8_t const> pkt) noexcept
+                -> std::optional<packet::bridge::MacAddress> {
+                refresh_neighbor_cache();
+                if (auto mac = packet::bridge::resolve_destination_mac(pkt, cached_routes, cached_neighbors))
+                    return mac;
+                return packet::bridge::resolve_destination_mac(pkt, cached_routes, learned_neighbors);
+            }
+#endif
+
+            [[nodiscard]] auto send_to_phys(std::span<std::uint8_t const> pkt) noexcept -> bool {
+                if (pkt.empty()) return false;
 #ifdef __linux__
                 if (phys_is_af_packet) {
+                    auto mac = resolve_egress_mac(pkt);
+                    if (!mac) return false;
                     sockaddr_ll sll{};
                     sll.sll_family = AF_PACKET;
                     sll.sll_ifindex = phys_ifindex;
                     auto ver = static_cast<std::uint8_t>((pkt[0] >> 4) & 0x0f);
                     sll.sll_protocol = htons(ver == 6 ? ETH_P_IPV6 : ETH_P_IP);
-                    (void)::sendto(phys_fd, pkt.data(), pkt.size(), MSG_DONTWAIT,
+                    sll.sll_halen = ETH_ALEN;
+                    std::memcpy(sll.sll_addr, mac->data(), ETH_ALEN);
+                    ssize_t sent = ::sendto(phys_fd, pkt.data(), pkt.size(), MSG_DONTWAIT,
                         reinterpret_cast<sockaddr*>(&sll), sizeof(sll));
-                    return;
+                    return sent == static_cast<ssize_t>(pkt.size());
                 }
 #endif
-                (void)::write(phys_fd, pkt.data(), pkt.size());
+                ssize_t written = ::write(phys_fd, pkt.data(), pkt.size());
+                return written == static_cast<ssize_t>(pkt.size());
+            }
+
+            auto record_egress(std::span<std::uint8_t const> pkt, bool ok) noexcept -> void {
+                if (!ok) { ++tx_err; return; }
+                bool const is_v6 = !pkt.empty() && (((pkt[0] >> 4) & 0x0f) == 6);
+                if (is_v6) ++tx_ok_v6; else ++tx_ok_v4;
             }
 
             auto pump_loop() -> void {
@@ -130,7 +233,7 @@ namespace cli {
                             if (n <= 0) break;
                             auto fwd = bridge.forward(packet::bridge::Direction::tun_to_phys,
                                 bridge.config().tun_interface, std::span(buf.data(), static_cast<std::size_t>(n)));
-                            if (fwd) send_to_phys(*fwd);
+                            if (fwd) record_egress(*fwd, send_to_phys(*fwd));
                             sync_stats();
                         }
                     }
@@ -156,10 +259,16 @@ namespace cli {
                                 n = ::read(phys_fd, buf.data(), buf.size());
                                 if (n <= 0) break;
                             }
+                            auto raw = std::span(buf.data(), static_cast<std::size_t>(n));
+#ifdef __linux__
+                            if (phys_is_af_packet && src_mac) learn_source_mac(raw, *src_mac);
+#endif
                             auto fwd = bridge.forward(packet::bridge::Direction::phys_to_tun,
-                                bridge.config().physical_interface,
-                                std::span(buf.data(), static_cast<std::size_t>(n)), src_mac);
-                            if (fwd) (void)::write(tun_fd, fwd->data(), fwd->size());
+                                bridge.config().physical_interface, raw, src_mac);
+                            if (fwd) {
+                                ssize_t written = ::write(tun_fd, fwd->data(), fwd->size());
+                                record_egress(*fwd, written == static_cast<ssize_t>(fwd->size()));
+                            }
                             sync_stats();
                         }
                     }
@@ -251,6 +360,7 @@ namespace cli {
             st->dropped_mtu.load(std::memory_order_relaxed),
             st->dropped_loop.load(std::memory_order_relaxed),
             st->dropped_filtered.load(std::memory_order_relaxed),
+            st->dropped_tx.load(std::memory_order_relaxed),
         };
 #else
         (void)h;

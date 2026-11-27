@@ -72,8 +72,8 @@ export namespace openvpn {
         std::optional<std::uint32_t> peer_id;
         std::optional<Cipher> cipher;
         std::optional<std::uint16_t> mtu;
-        std::uint16_t ping_s = 10;
-        std::uint16_t ping_restart_s = 60;
+        std::optional<std::uint16_t> ping_s;
+        std::optional<std::uint16_t> ping_restart_s;
         std::optional<std::array<std::uint8_t, 4>> netmask_v4;
         std::uint8_t prefix_v6 = 64;
         std::optional<std::array<std::uint8_t, 4>> gateway_v4;
@@ -86,6 +86,12 @@ export namespace openvpn {
         bool redirect_gateway_v6 = false;
         bool topology_subnet = false;
     };
+
+    inline auto apply_push_keepalive(std::uint16_t& ping_s, std::uint16_t& ping_restart_s,
+                                     PushConfig const& pushed) noexcept -> void {
+        if (pushed.ping_s) ping_s = *pushed.ping_s;
+        if (pushed.ping_restart_s) ping_restart_s = *pushed.ping_restart_s;
+    }
 
     struct Config {
         std::string remote_host;

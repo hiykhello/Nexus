@@ -117,12 +117,28 @@ namespace cli {
                 }
             }
 
-            auto publish_live_credential(acme::CertificateBundle const& bundle) -> void {
-                if (auto gen = live_credential->update_pem(bundle.cert_pem, bundle.key_pem); gen) {
-                    if (hooks.on_credential_updated) hooks.on_credential_updated(bundle.cert_pem, bundle.key_pem);
-                    if (logs) logs->emit(logging::Level::info, logging::Domain::core, 102, {},
-                        "acme hot-swapped TLS ServerCredential (generation={})", *gen);
+            static auto cred_error_name(tls::ServerCredentialError err) noexcept -> std::string_view {
+                switch (err) {
+                case tls::ServerCredentialError::invalid_certificate: return "invalid_certificate";
+                case tls::ServerCredentialError::invalid_private_key: return "invalid_private_key";
+                case tls::ServerCredentialError::key_mismatch: return "key_mismatch";
+                case tls::ServerCredentialError::unsupported_key: return "unsupported_key";
+                case tls::ServerCredentialError::invalid_transcript: return "invalid_transcript";
+                case tls::ServerCredentialError::invalid_state: return "invalid_state";
+                case tls::ServerCredentialError::crypto_error: return "crypto_error";
                 }
+                return "unknown";
+            }
+
+            auto publish_live_credential(acme::CertificateBundle const& bundle)
+                -> std::expected<void, std::string> {
+                auto gen = live_credential->update_pem(bundle.cert_pem, bundle.key_pem);
+                if (!gen)
+                    return std::unexpected(std::format("TLS credential rejected ({})", cred_error_name(gen.error())));
+                if (hooks.on_credential_updated) hooks.on_credential_updated(bundle.cert_pem, bundle.key_pem);
+                if (logs) logs->emit(logging::Level::info, logging::Domain::core, 102, {},
+                    "acme hot-swapped TLS ServerCredential (generation={})", *gen);
+                return {};
             }
 
             auto run_renewal_once() -> void {
@@ -172,16 +188,18 @@ namespace cli {
                     std::lock_guard lk(ch_mu);
                     http01_tokens.clear();
                 };
+                auto pub_cert = [this](acme::CertificateBundle const& bundle) -> std::expected<void, std::string> {
+                    return publish_live_credential(bundle);
+                };
                 acme::ChallengeHooks ch_hooks{
                     .publish_http01 = pub_http,
                     .publish_alpn01 = pub_alpn,
                     .publish_dns01 = pub_dns,
+                    .publish_certificate = pub_cert,
                     .cleanup = clean,
                 };
                 auto res = acme::ensure_certificate(cfg, store, account_key, http_fn, ch_hooks, now_epoch());
-                if (res && *res) {
-                    if (auto cur = store.current()) publish_live_credential(*cur);
-                } else if (!res && logs) {
+                if (!res && logs) {
                     logs->emit(logging::Level::warn, logging::Domain::core, 108, {}, "acme renewal attempt: {}", res.error());
                 }
             }
@@ -242,8 +260,12 @@ namespace cli {
             std::move(*acct_key), std::move(*dns_prov), std::move(shared_cred), std::move(hooks), &logs);
 
         if (auto loaded = acme::CertificateStore::load_from_dir(cfg.state_dir); loaded) {
-            st->store.install(*loaded);
-            st->publish_live_credential(*loaded);
+            if (auto pub = st->publish_live_credential(*loaded); pub) {
+                st->store.install(std::move(*loaded));
+            } else {
+                logs.emit(logging::Level::warn, logging::Domain::core, 108, {},
+                    "acme ignoring invalid persisted credential: {}", pub.error());
+            }
         }
 
         auto bind_acc = [](corosio::tcp_acceptor& acc, std::string_view host, std::uint16_t port, std::string_view tag)

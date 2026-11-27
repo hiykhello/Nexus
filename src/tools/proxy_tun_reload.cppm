@@ -13,6 +13,7 @@ import cli.tun_enabled;
 import config;
 import dns.policy;
 import dns.reverse;
+import functional;
 import logging.cli;
 import relay;
 
@@ -133,6 +134,11 @@ export namespace cli::run_detail {
             std::vector<std::string> includes;
             std::vector<std::string> excludes;
         };
+        struct PendingTunUpdate {
+            std::size_t index;
+            config::TunInbound tun;
+            AppliedRouteSets sets;
+        };
         std::string tun_live_identity;
         bool identity_initialized = false;
         std::vector<AppliedRouteSets> applied_route_sets;
@@ -143,13 +149,73 @@ export namespace cli::run_detail {
             applied_route_sets.resize(cfg.inbounds.size());
             for (std::size_t i = 0; i < cfg.inbounds.size(); ++i) {
                 auto const& in = cfg.inbounds[i];
-                if (!in.tun || (in.tun->route_address_sets.empty() && in.tun->route_exclude_address_sets.empty()))
-                    continue;
+                if (!in.tun) continue;
                 auto copy = *in.tun;
-                if (auto ok = cli::apply_tun_route_sets(copy, files); !ok) return ok;
+                if (!copy.route_address_sets.empty() || !copy.route_exclude_address_sets.empty()) {
+                    if (auto ok = cli::apply_tun_route_sets(copy, files); !ok) return ok;
+                }
                 applied_route_sets[i] = {std::move(copy.route_includes), std::move(copy.route_excludes)};
             }
             return {};
+        }
+
+        auto plan_route_set_updates(config::Config const& cfg, RouteFiles const& files) const
+            -> std::expected<std::vector<PendingTunUpdate>, std::string> {
+            std::vector<PendingTunUpdate> pending;
+            for (std::size_t i = 0; i < cfg.inbounds.size(); ++i) {
+                auto const& in = cfg.inbounds[i];
+                if (!in.tun) continue;
+                bool has_sets = !in.tun->route_address_sets.empty() || !in.tun->route_exclude_address_sets.empty();
+                bool had_applied = i < applied_route_sets.size() &&
+                    (!applied_route_sets[i].includes.empty() || !applied_route_sets[i].excludes.empty());
+                if (!has_sets && !had_applied) continue;
+                auto copy = *in.tun;
+                if (has_sets) {
+                    if (auto ok = cli::apply_tun_route_sets(copy, files); !ok) return std::unexpected(std::move(ok.error()));
+                }
+                if (i >= applied_route_sets.size() ||
+                    copy.route_includes != applied_route_sets[i].includes ||
+                    copy.route_excludes != applied_route_sets[i].excludes) {
+                    AppliedRouteSets next_sets{copy.route_includes, copy.route_excludes};
+                    pending.push_back({i, std::move(copy), std::move(next_sets)});
+                }
+            }
+            return pending;
+        }
+
+        auto commit_route_set_updates(std::span<PendingTunUpdate> pending, std::size_t inbound_count, auto&& apply_fn)
+            -> std::expected<void, std::string> {
+            if (pending.empty()) return {};
+            if (applied_route_sets.size() < inbound_count) applied_route_sets.resize(inbound_count);
+            for (auto& upd : pending) {
+                auto applied = apply_fn(upd.index, upd.tun);
+                if (!applied) return std::unexpected("TUN live route-set update failed: " + applied.error());
+                if (!*applied) return std::unexpected("changing TUN kernel route address sets requires restart");
+                applied_route_sets[upd.index] = std::move(upd.sets);
+            }
+            return {};
+        }
+
+        auto publish_same_config_routes_with(auto const& listeners, relay::RouteSnapshots& snapshots,
+            config::Config const& cfg, RouteFiles const& files, bool replace_dns_policy,
+            OutboundGroupHealth const* health, auto&& apply_fn) -> std::expected<void, std::string> {
+            auto pending = plan_route_set_updates(cfg, files);
+            if (!pending) return std::unexpected(std::move(pending.error()));
+            auto apply_tun = [&]() -> std::expected<void, std::string> {
+                return commit_route_set_updates(*pending, cfg.inbounds.size(), apply_fn);
+            };
+            using Hook = functional::function_ref<std::expected<void, std::string>()>;
+            return publish_group_routes(listeners, snapshots, cfg, files, replace_dns_policy,
+                pending->empty() ? std::optional<Hook>{} : std::optional<Hook>{apply_tun}, health);
+        }
+
+        auto publish_same_config_routes(auto const& listeners, relay::RouteSnapshots& snapshots,
+            config::Config const& cfg, RouteFiles const& files, bool replace_dns_policy,
+            OutboundGroupHealth const* health) -> std::expected<void, std::string> {
+            return publish_same_config_routes_with(listeners, snapshots, cfg, files, replace_dns_policy, health,
+                [&](std::size_t idx, config::TunInbound const& tun) {
+                    return cli::tun_enabled::update_active_tun_route_sets(listeners[idx].server.get(), tun);
+                });
         }
 
         auto ensure_identity(std::string_view source) -> std::expected<void, std::string> {
@@ -162,7 +228,7 @@ export namespace cli::run_detail {
         }
 
         auto apply(TunReloadRuntime rt, std::string_view config_path, config::Config requested,
-            config::ReloadIdentities ids, std::span<SelectorChoice const> choices)
+            config::ReloadIdentities ids, std::span<SelectorChoice const> choices, std::string_view input = {})
             -> std::expected<void, std::string> {
             if (!rt.reload_config || !rt.route_snapshots)
                 return std::unexpected("configuration change requires restart");
@@ -210,7 +276,8 @@ export namespace cli::run_detail {
             }
 
             cli::RuleFileInput rule_input(config_path);
-            rt.remote_rulesets.seed_cached(rule_input);
+            auto staged_remote = rt.remote_rulesets.prepare_reload(next_cfg, input, rule_input);
+            if (!staged_remote) return std::unexpected(std::move(staged_remote.error()));
             if (next_cfg.dns) {
                 if (auto loaded = load_dns_rules(*next_cfg.dns, rule_input); !loaded)
                     return std::unexpected(std::move(loaded.error()));
@@ -223,25 +290,8 @@ export namespace cli::run_detail {
 #endif
             auto files = cli::load_route_files(next_cfg, rule_input);
             if (!files) return std::unexpected(std::move(files.error()));
-            struct PendingTunUpdate {
-                std::size_t index;
-                config::TunInbound tun;
-                AppliedRouteSets sets;
-            };
-            std::vector<PendingTunUpdate> pending_tun_updates;
-            for (std::size_t i = 0; i < next_cfg.inbounds.size(); ++i) {
-                auto const& in = next_cfg.inbounds[i];
-                if (!in.tun || (in.tun->route_address_sets.empty() && in.tun->route_exclude_address_sets.empty()))
-                    continue;
-                auto copy = *in.tun;
-                if (auto ok = cli::apply_tun_route_sets(copy, *files); !ok) return ok;
-                if (i >= applied_route_sets.size() ||
-                    copy.route_includes != applied_route_sets[i].includes ||
-                    copy.route_excludes != applied_route_sets[i].excludes) {
-                    AppliedRouteSets next_sets{copy.route_includes, copy.route_excludes};
-                    pending_tun_updates.push_back({i, std::move(copy), std::move(next_sets)});
-                }
-            }
+            auto pending_tun = plan_route_set_updates(next_cfg, *files);
+            if (!pending_tun) return std::unexpected(std::move(pending_tun.error()));
 
             auto protections = cli::prepare_dns_transports(next_cfg);
             if (!protections) return std::unexpected(std::move(protections.error()));
@@ -291,19 +341,15 @@ export namespace cli::run_detail {
                 next->push_back(std::move(*candidate));
             }
 
-            for (auto const& upd : pending_tun_updates) {
-                auto applied = cli::tun_enabled::update_active_tun_route_sets(
-                    rt.listeners[upd.index].server.get(), upd.tun);
-                if (!applied) return std::unexpected("TUN live route-set update failed: " + applied.error());
-                if (!*applied) return std::unexpected("changing TUN kernel route address sets requires restart");
-            }
-            if (applied_route_sets.size() < next_cfg.inbounds.size())
-                applied_route_sets.resize(next_cfg.inbounds.size());
-            for (auto& upd : pending_tun_updates) applied_route_sets[upd.index] = std::move(upd.sets);
+            if (auto committed = commit_route_set_updates(*pending_tun, next_cfg.inbounds.size(),
+                    [&](std::size_t idx, config::TunInbound const& tun) {
+                        return cli::tun_enabled::update_active_tun_route_sets(rt.listeners[idx].server.get(), tun);
+                    }); !committed) return committed;
             rt.route_snapshots->store(std::move(next), std::memory_order_release);
             if (candidate_messages) rt.dns_messages.replace_program(*candidate_messages);
             rt.reload_identity = std::move(ids.full);
             rt.reload_config = std::move(next_cfg);
+            rt.remote_rulesets.commit_reload(std::move(*staged_remote));
             if (rt.group_route_files) *rt.group_route_files = std::move(*files);
             return {};
         }

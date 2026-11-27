@@ -1,5 +1,13 @@
 module;
-#if !defined(_WIN32)
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <iphlpapi.h>
+#include <netioapi.h>
+#pragma comment(lib, "iphlpapi.lib")
+#else
 #include <net/if.h>
 #endif
 module dns.dhcp_upstream;
@@ -28,27 +36,46 @@ namespace dns {
             return !s.empty() && std::ranges::all_of(s, [](char c) { return c >= '0' && c <= '9'; });
         }
 
-        auto append_unique(containers::inplace_vector<DhcpServerEntry, 8>& out, platform::IpAddress addr, std::uint32_t ttl) -> void {
+        auto append_unique(containers::inplace_vector<DhcpServerEntry, 8>& out, platform::IpAddress addr,
+            std::uint32_t ttl, std::string_view scope = {}) -> void {
+            std::string_view effective_scope = (addr.size == 16) ? scope : std::string_view{};
             for (auto const& e : out) {
-                if (e.address.size == addr.size && std::ranges::equal(e.address.view(), addr.view())) return;
+                if (e.address.size == addr.size && std::ranges::equal(e.address.view(), addr.view()) &&
+                    e.scope == effective_scope) {
+                    return;
+                }
             }
-            (void)out.try_emplace_back(DhcpServerEntry{addr, ttl});
+            (void)out.try_emplace_back(DhcpServerEntry{addr, ttl, std::string(effective_scope)});
         }
 
-        auto parse_token_addresses(std::string_view list_text, std::uint32_t ttl, containers::inplace_vector<DhcpServerEntry, 8>& out) -> void {
+        auto parse_token_addresses(std::string_view list_text, std::uint32_t ttl,
+            containers::inplace_vector<DhcpServerEntry, 8>& out) -> void {
             while (!list_text.empty()) {
                 auto sep = list_text.find_first_of(", \t");
                 auto tok = trim(sep == std::string_view::npos ? list_text : list_text.substr(0, sep));
                 if (!tok.empty()) {
-                    if (auto pct = tok.find('%'); pct != std::string_view::npos) tok = tok.substr(0, pct);
-                    if (auto ip = platform::parse_ip_address(tok)) append_unique(out, *ip, ttl);
+                    std::string_view zone;
+                    if (auto pct = tok.find('%'); pct != std::string_view::npos) {
+                        zone = tok.substr(pct + 1);
+                        tok = tok.substr(0, pct);
+                    }
+                    if (auto ip = platform::parse_ip_address(tok)) {
+                        append_unique(out, *ip, ttl, ip->size == 16 ? zone : std::string_view{});
+                    }
                 }
                 if (sep == std::string_view::npos) break;
                 list_text.remove_prefix(sep + 1);
             }
         }
 
-        auto parse_lease_text_impl(std::string_view text, std::string_view interface_filter, bool allow_untagged_flat)
+        auto effective_entry_scope(DhcpServerEntry const& entry, std::string_view fallback_scope) noexcept -> std::string_view {
+            if (entry.address.size != 16) return {};
+            if (!entry.scope.empty()) return entry.scope;
+            return is_ipv6_link_local(entry.address) ? fallback_scope : std::string_view{};
+        }
+
+        auto parse_lease_text_impl(std::string_view text, std::string_view interface_filter,
+            bool allow_untagged_flat, std::string_view fallback_scope = {})
             -> containers::inplace_vector<DhcpServerEntry, 8> {
             containers::inplace_vector<DhcpServerEntry, 8> out;
             containers::inplace_vector<DhcpServerEntry, 8> flat_servers;
@@ -134,15 +161,40 @@ namespace dns {
             if (block_depth > 0) commit_block();
             for (auto const& entry : latest_blocks) {
                 if (!interface_filter.empty() && entry.iface != interface_filter) continue;
-                for (auto const& e : entry.servers) append_unique(out, e.address, e.lease_ttl_seconds);
+                std::string_view block_scope = !entry.iface.empty()
+                    ? std::string_view(entry.iface)
+                    : (!interface_filter.empty() ? interface_filter : fallback_scope);
+                for (auto const& e : entry.servers) {
+                    append_unique(out, e.address, e.lease_ttl_seconds, effective_entry_scope(e, block_scope));
+                }
             }
             bool flat_ok = interface_filter.empty() ||
                 (!flat_iface.empty() ? flat_iface == interface_filter : allow_untagged_flat);
             if (flat_ok) {
-                for (auto const& e : flat_servers) append_unique(out, e.address, e.lease_ttl_seconds);
+                std::string_view flat_scope = !flat_iface.empty()
+                    ? std::string_view(flat_iface)
+                    : (!interface_filter.empty() ? interface_filter : fallback_scope);
+                for (auto const& e : flat_servers) {
+                    append_unique(out, e.address, e.lease_ttl_seconds, effective_entry_scope(e, flat_scope));
+                }
             }
             return out;
         }
+    }
+
+    auto is_ipv6_link_local(platform::IpAddress const& addr) noexcept -> bool {
+        return addr.size == 16 && addr.bytes[0] == 0xfeu && (addr.bytes[1] & 0xc0u) == 0x80u;
+    }
+
+    auto resolve_ipv6_scope_id(std::string_view scope) noexcept -> std::uint32_t {
+        if (scope.empty() || scope.find('\0') != std::string_view::npos) return 0;
+        std::uint32_t numeric = 0;
+        auto [end, ec] = std::from_chars(scope.data(), scope.data() + scope.size(), numeric);
+        if (ec == std::errc{} && end == scope.data() + scope.size()) return numeric;
+        if (scope.size() >= 64) return 0;
+        std::array<char, 64> name{};
+        std::ranges::copy(scope, name.begin());
+        return static_cast<std::uint32_t>(::if_nametoindex(name.data()));
     }
 
     auto parse_dhcp_option6(std::span<std::uint8_t const> bytes, std::uint32_t lease_ttl_seconds)
@@ -159,7 +211,7 @@ namespace dns {
 
     auto parse_dhcp_lease_text(std::string_view text, std::string_view interface_filter)
         -> containers::inplace_vector<DhcpServerEntry, 8> {
-        return parse_lease_text_impl(text, interface_filter, interface_filter.empty());
+        return parse_lease_text_impl(text, interface_filter, interface_filter.empty(), interface_filter);
     }
 
     auto discover_dhcp_dns_servers(std::span<std::string_view const> candidate_paths, std::string_view interface_filter)
@@ -174,19 +226,16 @@ namespace dns {
         bool const using_defaults = candidate_paths.empty();
         auto paths = using_defaults ? std::span<std::string_view const>(kDefaults) : candidate_paths;
         std::string idx_name;
-#if !defined(_WIN32)
         if (!interface_filter.empty()) {
-            std::string owned(interface_filter);
-            if (unsigned idx = ::if_nametoindex(owned.c_str()); idx != 0) idx_name = std::to_string(idx);
+            if (auto idx = resolve_ipv6_scope_id(interface_filter); idx != 0) idx_name = std::to_string(idx);
         }
-#endif
         containers::inplace_vector<DhcpServerEntry, 8> out;
         for (auto raw_path : paths) {
             if (using_defaults && raw_path == "/etc/resolv.conf" && (!out.empty() || !interface_filter.empty()))
                 continue;
             std::filesystem::path p(raw_path);
             std::error_code ec;
-            auto merge_file = [&](std::filesystem::path const& file, bool allow_untagged_flat) {
+            auto merge_file = [&](std::filesystem::path const& file, bool allow_untagged_flat, std::string_view fallback_scope) {
                 std::ifstream in(file, std::ios::binary);
                 if (!in) return;
                 std::string content(kMaxLeaseFileBytes + 1, '\0');
@@ -194,8 +243,8 @@ namespace dns {
                 auto got = static_cast<std::size_t>(in.gcount());
                 if (got == 0 || got > kMaxLeaseFileBytes) return;
                 content.resize(got);
-                for (auto const& e : parse_lease_text_impl(content, interface_filter, allow_untagged_flat))
-                    append_unique(out, e.address, e.lease_ttl_seconds);
+                for (auto const& e : parse_lease_text_impl(content, interface_filter, allow_untagged_flat, fallback_scope))
+                    append_unique(out, e.address, e.lease_ttl_seconds, e.scope);
             };
             if (std::filesystem::is_directory(p, ec)) {
                 std::size_t scanned = 0;
@@ -207,17 +256,19 @@ namespace dns {
                         bool name_match = (fname == interface_filter) || (!idx_name.empty() && fname == idx_name);
                         if (!name_match && is_all_digits(fname)) continue;
                         ++scanned;
-                        merge_file(ent.path(), name_match);
+                        merge_file(ent.path(), name_match, interface_filter);
                     } else {
                         ++scanned;
-                        merge_file(ent.path(), true);
+                        std::string_view dir_scope = (is_all_digits(fname) || resolve_ipv6_scope_id(fname) != 0)
+                            ? std::string_view(fname) : std::string_view{};
+                        merge_file(ent.path(), true, dir_scope);
                     }
                 }
             } else if (std::filesystem::is_regular_file(p, ec)) {
                 auto fname = p.filename().string();
                 bool name_match = interface_filter.empty() || fname == interface_filter ||
                     (!idx_name.empty() && fname == idx_name);
-                merge_file(p, name_match);
+                merge_file(p, name_match, interface_filter);
             }
         }
         return out;

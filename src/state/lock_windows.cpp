@@ -20,7 +20,7 @@ namespace state {
 
         inline auto lock_dir_and_file(std::filesystem::path const& dir_path, DWORD& err) noexcept
             -> std::pair<void*, void*> {
-            HANDLE dir_h = ::CreateFileW(dir_path.c_str(), FILE_LIST_DIRECTORY | SYNCHRONIZE,
+            HANDLE dir_h = ::CreateFileW(dir_path.c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                 FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
             if (dir_h == INVALID_HANDLE_VALUE) { err = ::GetLastError(); return {nullptr, nullptr}; }

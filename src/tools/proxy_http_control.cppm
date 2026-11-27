@@ -5,6 +5,7 @@ import cli.control;
 import cli.proxy_control;
 import cli.proxy_control_operations;
 import cli.proxy_group_health;
+import cli.proxy_listener;
 import cli.proxy_mode;
 import config;
 import control_api;
@@ -105,7 +106,9 @@ export namespace cli::run_detail {
         LocalControl const& control,
         RuntimeRouteModeController const* route_mode = nullptr,
         control_api::SnapshotFields fields = control_api::SnapshotFields::all,
-        std::optional<std::uint64_t> target_connection_id = std::nullopt) -> control_api::ControlSnapshot {
+        std::optional<std::uint64_t> target_connection_id = std::nullopt,
+        std::span<std::unique_ptr<RetiredTcpGeneration> const> retired_tcp = {},
+        std::pair<std::uint64_t, std::uint64_t> reclaimed_bytes = {0, 0}) -> control_api::ControlSnapshot {
         control_api::ControlSnapshot snap{};
         bool need_meta = control_api::has_field(fields, control_api::SnapshotFields::meta);
         bool need_listeners = control_api::has_field(fields, control_api::SnapshotFields::listeners);
@@ -119,7 +122,7 @@ export namespace cli::run_detail {
             } else if (running) {
                 snap.global_outbound = running->default_outbound_name;
             }
-            snap.instance = std::string(control.instance());
+            snap.instance = std::string(operations.resolve_instance(control.instance()));
             snap.workers = workers;
             snap.control_generation = operations.generation();
         }
@@ -132,14 +135,9 @@ export namespace cli::run_detail {
         if (need_listeners || need_connections) {
             auto now = std::chrono::steady_clock::now();
             if (need_listeners) snap.listeners.reserve(listeners.size());
-            for (std::size_t index = 0; index < listeners.size(); ++index) {
-                auto const& listener = listeners[index];
-                auto traffic = listener.server->traffic_snapshot();
-                if (need_listeners)
-                    snap.listeners.push_back({index, listener.port, traffic.active.size(),
-                        traffic.bytes.upload, traffic.bytes.download});
-                if (!need_connections) continue;
-                for (auto const& row : traffic.active) {
+            auto collect_rows = [&](std::size_t index, std::span<relay::ActiveConnection const> active_rows) -> bool {
+                if (!need_connections) return false;
+                for (auto const& row : active_rows) {
                     if (target_connection_id) {
                         if (row.id != *target_connection_id) continue;
                     } else if (snap.connections.size() >= 1024) break;
@@ -167,12 +165,38 @@ export namespace cli::run_detail {
                             cm.outbound = outbound_names[row.route->outbound];
                     }
                     snap.connections.push_back(std::move(cm));
-                    if (target_connection_id) return snap;
+                    if (target_connection_id) return true;
                 }
+                return false;
+            };
+            for (std::size_t index = 0; index < listeners.size(); ++index) {
+                auto const& listener = listeners[index];
+                auto traffic = listener.server->traffic_snapshot();
+                if (need_listeners)
+                    snap.listeners.push_back({index, listener.port, traffic.active.size(),
+                        traffic.bytes.upload, traffic.bytes.download});
+                if (collect_rows(index, traffic.active)) return snap;
+            }
+            for (auto const& gen : retired_tcp) {
+                if (!gen) continue;
+                for (std::size_t index = 0; index < gen->listeners.size(); ++index) {
+                    auto traffic = gen->listeners[index].server->traffic_snapshot();
+                    if (need_listeners && !snap.listeners.empty()) {
+                        auto& slot = snap.listeners[std::min(index, snap.listeners.size() - 1)];
+                        slot.active_sessions += traffic.active.size();
+                        slot.upload_bytes += traffic.bytes.upload;
+                        slot.download_bytes += traffic.bytes.download;
+                    }
+                    if (collect_rows(index, traffic.active)) return snap;
+                }
+            }
+            if (need_listeners && !snap.listeners.empty()) {
+                snap.listeners.front().upload_bytes += reclaimed_bytes.first;
+                snap.listeners.front().download_bytes += reclaimed_bytes.second;
             }
         }
         if (need_groups && running) {
-            auto generation = running->direct_network && network ? std::optional(network->generation) : std::nullopt;
+            auto generation = network ? std::optional(network->generation) : std::nullopt;
             for (std::size_t idx = 0; idx < running->selectors.size(); ++idx) {
                 auto const& group = running->selectors[idx];
                 control_api::GroupMetric gm{group.name, std::string(control_group_mode(group.mode)),

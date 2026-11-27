@@ -169,9 +169,21 @@ namespace provider::detail {
         return out;
     }
 
-    [[nodiscard]] auto write_provider_secret(ConvertOptions const& opts, std::set<std::string>& used_secrets,
-        std::string_view hint, std::string_view content, bool* wrote_file = nullptr)
+    struct StagedSecret {
+        std::string unique;
+        std::string path;
+        std::string content;
+    };
+
+    [[nodiscard]] auto stage_provider_secret(ConvertOptions const& opts,
+        std::set<std::string> const& committed_secrets, std::set<std::string>& pending_secrets,
+        std::vector<StagedSecret>& staged, std::string_view hint, std::string_view content)
         -> std::expected<std::string, std::string>;
+
+    [[nodiscard]] auto commit_provider_secrets(ConvertOptions const& opts,
+        std::set<std::string>& committed_secrets, std::vector<StagedSecret> const& staged,
+        std::vector<std::string>* written_paths = nullptr)
+        -> std::expected<void, std::string>;
 
     [[nodiscard]] auto parse_yaml_dom(std::string_view body) -> std::expected<YamlVal, std::string>;
     [[nodiscard]] auto parse_uri_list(std::string_view body, bool was_base64)

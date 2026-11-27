@@ -59,6 +59,10 @@ namespace ssh {
             if (!out.empty()) b::BN_bn2bin(v, out.data());
             return out;
         }
+        auto first_csv_item(std::string_view csv) noexcept -> std::string_view {
+            auto comma = csv.find(',');
+            return comma == std::string_view::npos ? csv : csv.substr(0, comma);
+        }
     }
 
     PrivateKey::~PrivateKey() { crypto::cleanse(secret_raw); }
@@ -290,6 +294,70 @@ namespace ssh {
         return out;
     }
 
+    SessionKeys::~SessionKeys() {
+        crypto::cleanse(iv_cs); crypto::cleanse(iv_sc); crypto::cleanse(k_cs); crypto::cleanse(k_sc);
+    }
+
+    auto build_client_kexinit(std::string_view ciphers, bool include_strict_kex) -> std::optional<std::vector<std::uint8_t>> {
+        KexInit ci;
+        if (!crypto::random_bytes(ci.cookie)) return std::nullopt;
+        ci.kex_algorithms = include_strict_kex
+            ? ("curve25519-sha256," + std::string(kStrictClientKex))
+            : std::string("curve25519-sha256");
+        ci.server_host_key_algorithms = "ssh-ed25519,ecdsa-sha2-nistp256";
+        ci.enc_c2s = ci.enc_s2c = std::string(ciphers);
+        ci.mac_c2s = ci.mac_s2c = "hmac-sha2-256,hmac-sha2-512";
+        return encode_kexinit(ci);
+    }
+
+    auto negotiate_client_kex(std::string_view ciphers, std::span<std::uint8_t const> server_kexinit)
+        -> std::optional<KexNegotiation> {
+        auto si = decode_kexinit(server_kexinit);
+        if (!si) return std::nullopt;
+        constexpr std::string_view kHostKeys = "ssh-ed25519,ecdsa-sha2-nistp256";
+        auto kex = negotiate_algorithm("curve25519-sha256", si->kex_algorithms);
+        auto hk = negotiate_algorithm(kHostKeys, si->server_host_key_algorithms);
+        auto enc_cs = negotiate_algorithm(ciphers, si->enc_c2s);
+        auto enc_sc = negotiate_algorithm(ciphers, si->enc_s2c);
+        auto c_cs = enc_cs ? parse_cipher_kind(*enc_cs) : std::nullopt;
+        auto c_sc = enc_sc ? parse_cipher_kind(*enc_sc) : std::nullopt;
+        if (!kex || !hk || !c_cs || !c_sc) return std::nullopt;
+        bool skip_guess = si->first_kex_packet_follows &&
+            (first_csv_item(si->kex_algorithms) != *kex || first_csv_item(si->server_host_key_algorithms) != *hk);
+        return KexNegotiation{*c_cs, *c_sc, list_contains(si->kex_algorithms, kStrictServerKex), skip_guess};
+    }
+
+    auto finish_ecdh_kex(std::string_view v_c, std::string_view v_s,
+                         std::span<std::uint8_t const> i_c, std::span<std::uint8_t const> i_s,
+                         std::span<std::uint8_t const> q_c, crypto::X25519Private const& eph,
+                         std::span<std::uint8_t const> reply_payload,
+                         std::span<std::array<std::uint8_t, 32> const> allowed_pins,
+                         std::span<std::uint8_t const> existing_session_id,
+                         CipherKind c_cs, CipherKind c_sc) -> std::optional<SessionKeys> {
+        if (reply_payload.empty() || reply_payload[0] != kMsgKexEcdhReply) return std::nullopt;
+        Reader rr{reply_payload.subspan(1)};
+        auto ks = rr.string(), qs = rr.string(), sig = rr.string();
+        if (!ks || !qs || !sig || !rr.empty() || qs->size() != 32) return std::nullopt;
+        auto shared = eph.agree(*qs);
+        if (!shared) return std::nullopt;
+        auto h = compute_exchange_hash(v_c, v_s, i_c, i_s, *ks, q_c, *qs, shared->view());
+        if (!h || !verify_host_key(*ks, allowed_pins, *h, *sig)) return std::nullopt;
+        std::span<std::uint8_t const> sid = existing_session_id.empty()
+            ? std::span<std::uint8_t const>(*h) : existing_session_id;
+        auto iv_cs = derive_key(shared->view(), *h, 'A', sid, cipher_iv_bytes(c_cs));
+        auto iv_sc = derive_key(shared->view(), *h, 'B', sid, cipher_iv_bytes(c_sc));
+        auto k_cs = derive_key(shared->view(), *h, 'C', sid, cipher_key_bytes(c_cs));
+        auto k_sc = derive_key(shared->view(), *h, 'D', sid, cipher_key_bytes(c_sc));
+        SessionKeys out;
+        out.c_cs = c_cs; out.c_sc = c_sc; out.exchange_hash = *h;
+        if (iv_cs) out.iv_cs = std::move(*iv_cs);
+        if (iv_sc) out.iv_sc = std::move(*iv_sc);
+        if (k_cs) out.k_cs = std::move(*k_cs);
+        if (k_sc) out.k_sc = std::move(*k_sc);
+        if (!iv_cs || !iv_sc || !k_cs || !k_sc) return std::nullopt;
+        return out;
+    }
+
     PacketCipher::~PacketCipher() { crypto::cleanse(key_); crypto::cleanse(iv_); }
 
     auto PacketCipher::increment_iv() noexcept -> void {
@@ -300,6 +368,7 @@ namespace ssh {
     auto PacketCipher::activate(CipherKind kind, std::span<std::uint8_t const> key, std::span<std::uint8_t const> iv) -> bool {
         if (key.size() != cipher_key_bytes(kind) || iv.size() != cipher_iv_bytes(kind)) return false;
         kind_ = kind;
+        packets_ = 0;
         crypto::cleanse(key_); crypto::cleanse(iv_);
         std::ranges::copy(key, key_.begin());
         std::ranges::copy(iv, iv_.begin());
@@ -308,8 +377,8 @@ namespace ssh {
 
     auto PacketCipher::encrypt(std::uint32_t seqno, std::span<std::uint8_t const> payload)
         -> std::expected<std::vector<std::uint8_t>, std::string> {
-        if (kind_ != CipherKind::none && seqno >= (1u << 30))
-            return std::unexpected("SSH packet sequence ceiling reached; rekey required");
+        if (kind_ != CipherKind::none && packets_ >= (1u << 30))
+            return std::unexpected("SSH packet ceiling reached; rekey required");
         std::size_t block = (kind_ == CipherKind::aes128_gcm || kind_ == CipherKind::aes256_gcm) ? 16u : 8u;
         if (payload.size() > kMaxPacketBytes) return std::unexpected("SSH outbound packet too large");
         std::size_t unpadded = (kind_ == CipherKind::none ? 4u : 0u) + 1u + payload.size();
@@ -343,6 +412,7 @@ namespace ssh {
             crypto::cleanse(plain);
             if (!sealed) return std::unexpected("SSH AES-GCM encrypt failed");
             increment_iv();
+            ++packets_;
             std::vector<std::uint8_t> out(4 + sealed->size());
             write_be32(std::span<std::uint8_t, 4>(out.data(), 4), pkt_len);
             std::ranges::copy(*sealed, out.begin() + 4);
@@ -360,6 +430,7 @@ namespace ssh {
         crypto::poly1305_to(tag, otk, std::span(out).first(4u + pkt_len));
         crypto::cleanse(otk);
         std::ranges::copy(tag, out.begin() + 4u + pkt_len);
+        ++packets_;
         return out;
     }
 
@@ -381,6 +452,8 @@ namespace ssh {
     auto PacketCipher::decrypt_body(std::uint32_t seqno, std::span<std::uint8_t const, 4> raw_hdr,
                                     std::span<std::uint8_t const> rest)
         -> std::expected<std::vector<std::uint8_t>, std::string> {
+        if (kind_ != CipherKind::none && packets_ >= (1u << 30))
+            return std::unexpected("SSH receive packet ceiling reached; rekey required");
         auto tag_sz = tag_bytes();
         if (rest.size() <= tag_sz) return std::unexpected("truncated SSH packet body");
         auto cipher_body_sz = rest.size() - tag_sz;
@@ -408,6 +481,7 @@ namespace ssh {
                 return std::unexpected("SSH ChaCha20-Poly1305 authentication failed");
             b::CRYPTO_chacha_20(plain.data(), rest.data(), cipher_body_sz, key_.data(), nonce.data(), 1);
         }
+        if (kind_ != CipherKind::none) ++packets_;
         std::uint8_t pad_len = plain[0];
         if (pad_len < 4 || std::size_t(1u + pad_len) > plain.size()) {
             crypto::cleanse(plain);

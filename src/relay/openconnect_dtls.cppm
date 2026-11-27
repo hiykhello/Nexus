@@ -1,9 +1,13 @@
 // OpenConnect DTLS 1.2/1.3 UDP transport + automatic CSTP fallback helper.
 module;
+#include <boost/capy/task.hpp>
+#include <boost/corosio/delay.hpp>
 #include <boost/corosio/endpoint.hpp>
 
 export module relay:openconnect_dtls;
 import std;
+import capy;
+import corosio;
 import platform.socket_options;
 import net.udp_socket;
 import openconnect.types;
@@ -68,25 +72,35 @@ export namespace relay::oc_detail {
     }
 
     struct DtlsChannel {
-        net::UdpSocket udp;
+        std::optional<net::UdpSocket> udp;
         net::UdpEndpoint target{};
         openconnect::DtlsTransport dtls;
         openconnect::DtlsFallbackController fallback;
+        std::vector<std::uint8_t> client_hello_wire;
+        std::uint64_t last_ch_tx_ms = 0;
         bool enabled = false;
         bool allow_fallback = true;
         bool failed_hard = false;
 
         [[nodiscard]] auto established() const noexcept -> bool {
-            return enabled && dtls.established();
+            return enabled && udp.has_value() && dtls.established();
+        }
+
+        [[nodiscard]] auto strict_mode() const noexcept -> bool {
+            return !allow_fallback;
+        }
+
+        [[nodiscard]] auto may_send_cstp_data() const noexcept -> bool {
+            return allow_fallback;
         }
 
         auto start(net::UdpEndpoint const& peer, openconnect::AuthResult const& parsed,
                    std::array<std::uint8_t, 48> const& secret, platform::SocketBinding const& binding,
                    bool allow_fb, std::uint64_t now_ms, Clock::time_point dl) -> bool {
             close();
-            if (!peer.family || !peer.port || parsed.dtls_session_id.empty()) return false;
             allow_fallback = allow_fb;
             failed_hard = false;
+            if (!peer.family || !peer.port || parsed.dtls_session_id.empty()) return false;
             target = peer;
             if (parsed.dtls_port) target.port = parsed.dtls_port;
 
@@ -97,12 +111,13 @@ export namespace relay::oc_detail {
             } else if (target.family == 6 && binding.inet6_bind_address) {
                 local.address = *binding.inet6_bind_address;
             }
-            if (!udp.open(false, binding.network_namespace)) return false;
-            if (binding.configured() && platform::apply_socket_binding(udp.native_handle(), binding, true, dl)) {
-                udp.close();
+            udp.emplace();
+            if (!udp->open(false, binding.network_namespace)) { close(); return false; }
+            if (binding.configured() && platform::apply_socket_binding(udp->native_handle(), binding, true, dl)) {
+                close();
                 return false;
             }
-            if (!udp.bind(local)) { udp.close(); return false; }
+            if (!udp->bind(local)) { close(); return false; }
 
             openconnect::DtlsConfig cfg{};
             cfg.version = (parsed.dtls_version == openconnect::DtlsVersion::dtls1_3)
@@ -112,10 +127,12 @@ export namespace relay::oc_detail {
             cfg.session_id = decode_session_id(parsed.dtls_session_id);
             cfg.master_secret = secret;
             cfg.mtu = parsed.dtls_mtu ? parsed.dtls_mtu : parsed.mtu;
-            if (!dtls.init(cfg)) { udp.close(); return false; }
+            if (!dtls.init(cfg)) { close(); return false; }
 
             auto ch = dtls.build_client_hello();
-            if (!ch || !udp.send(target, *ch)) { close(); return false; }
+            if (!ch || !udp->send(target, *ch)) { close(); return false; }
+            client_hello_wire = std::move(*ch);
+            last_ch_tx_ms = now_ms;
 
             auto dpd_ms = static_cast<std::uint64_t>(parsed.dtls_dpd_s ? parsed.dtls_dpd_s : parsed.dpd_s) * 1000u;
             fallback = openconnect::DtlsFallbackController(5000, dpd_ms ? dpd_ms : 30000u);
@@ -124,10 +141,31 @@ export namespace relay::oc_detail {
             return true;
         }
 
+        template<class CancelFn>
+        auto await_handshake(openconnect::Session& sess, Clock::time_point dl, CancelFn&& cancelled) -> capy::task<bool> {
+            while (enabled && !dtls.established() && !failed_hard && !cancelled() && Clock::now() < dl) {
+                bool moved = poll_once(sess, oc_now_ms(), [](std::span<std::uint8_t const>) {});
+                if (dtls.established()) co_return true;
+                if (!enabled || failed_hard) co_return false;
+                auto rem = dl - Clock::now();
+                if (rem <= Clock::duration::zero()) break;
+                auto step = std::min(rem, std::chrono::duration_cast<Clock::duration>(
+                    moved ? std::chrono::milliseconds(1) : std::chrono::milliseconds(5)));
+                auto [ec] = co_await io::delay(step);
+                if (ec) co_return false;
+            }
+            if (!established()) {
+                if (!allow_fallback) failed_hard = true;
+                close();
+                co_return false;
+            }
+            co_return true;
+        }
+
         auto send_data(std::span<std::uint8_t const> ip_pkt, openconnect::Session& sess) -> bool {
             if (!established()) return false;
             auto dg = dtls.seal_tunnel_frame(openconnect::CstpType::data, ip_pkt);
-            if (!dg || !udp.send(target, *dg)) {
+            if (!dg || !udp->send(target, *dg)) {
                 if (fallback.on_transport_error(sess) == openconnect::FallbackAction::fallback_to_cstp) {
                     failed_hard = !allow_fallback;
                     close();
@@ -139,11 +177,11 @@ export namespace relay::oc_detail {
 
         template<class OnData>
         auto poll_once(openconnect::Session& sess, std::uint64_t now_ms, OnData&& on_data) -> bool {
-            if (!enabled) return false;
+            if (!enabled || !udp) return false;
             std::array<std::uint8_t, 4096> buf{};
             bool moved = false;
-            for (unsigned i = 0; i < 32 && enabled; ++i) {
-                auto r = udp.receive(buf);
+            for (unsigned i = 0; i < 32 && enabled && udp; ++i) {
+                auto r = udp->receive(buf);
                 if (!r) {
                     if (fallback.on_transport_error(sess) == openconnect::FallbackAction::fallback_to_cstp) {
                         failed_hard = !allow_fallback;
@@ -164,7 +202,8 @@ export namespace relay::oc_detail {
                         }
                         continue;
                     }
-                    for (auto const& pkt : *out) (void)udp.send(target, pkt);
+                    client_hello_wire.clear();
+                    for (auto const& pkt : *out) (void)udp->send(target, pkt);
                     if (dtls.established()) fallback.on_established(now_ms);
                 } else {
                     auto frame = dtls.open_tunnel_frame(dg);
@@ -181,7 +220,7 @@ export namespace relay::oc_detail {
                     } else if (frame->type == openconnect::CstpType::dpd_req) {
                         fallback.on_rx_valid(now_ms);
                         if (auto resp = dtls.seal_tunnel_frame(openconnect::CstpType::dpd_resp, frame->payload))
-                            (void)udp.send(target, *resp);
+                            (void)udp->send(target, *resp);
                     } else if (frame->type == openconnect::CstpType::dpd_resp) {
                         fallback.on_dpd_response(now_ms);
                     } else if (frame->type == openconnect::CstpType::keepalive) {
@@ -193,11 +232,15 @@ export namespace relay::oc_detail {
                     }
                 }
             }
-            if (enabled) {
+            if (enabled && udp) {
+                if (!dtls.established() && !client_hello_wire.empty() && now_ms >= last_ch_tx_ms + 250u) {
+                    (void)udp->send(target, client_hello_wire);
+                    last_ch_tx_ms = now_ms;
+                }
                 auto act = fallback.poll(now_ms, sess);
                 if (act == openconnect::FallbackAction::send_dpd_req && dtls.established()) {
                     if (auto req = dtls.seal_tunnel_frame(openconnect::CstpType::dpd_req, {}))
-                        (void)udp.send(target, *req);
+                        (void)udp->send(target, *req);
                 } else if (act == openconnect::FallbackAction::fallback_to_cstp) {
                     failed_hard = !allow_fallback;
                     close();
@@ -208,8 +251,9 @@ export namespace relay::oc_detail {
 
         auto close() noexcept -> void {
             enabled = false;
+            client_hello_wire.clear();
             dtls.reset();
-            udp.close();
+            udp.reset();
         }
     };
 }

@@ -29,7 +29,7 @@ namespace relay::vless_xhttp {
         TcpSocketOptions options_;
         std::shared_ptr<Worker> worker_;
         typename Pool::Lease up_, down_;
-        std::optional<Ticket> upload_, download_;
+        xhttp::StreamTickets<Ticket> tickets_;
         xhttp::Mode mode_;
         std::string id_;
         std::uint64_t sequence_ = 0;
@@ -101,9 +101,9 @@ namespace relay::vless_xhttp {
             if (mode_ == xhttp::Mode::stream_one) {
                 up_ = co_await worker_->up.acquire(session_, profile_.up, profile_.bootstrap, options_, until);
                 if (!up_ || stopped_ || !up_.request()) co_return false;
-                upload_ = co_await open(up_, profile_.up, xhttp::RequestKind::stream, {{}, false}, until);
-                download_ = upload_;
-                co_return upload_.has_value() && !stopped_;
+                if (auto stream = co_await open(up_, profile_.up, xhttp::RequestKind::stream, {{}, false}, until))
+                    tickets_.bind_shared(*stream);
+                co_return tickets_.upload.has_value() && !stopped_;
             }
             std::array<std::uint8_t, 16> random;
             if (!crypto::random_bytes(random)) co_return false;
@@ -111,13 +111,15 @@ namespace relay::vless_xhttp {
             auto const& peer = profile_.down ? *profile_.down : profile_.up;
             down_ = co_await worker_->down.acquire(session_, peer, profile_.bootstrap, options_, until);
             if (!down_ || stopped_ || !down_.request()) co_return false;
-            download_ = co_await open(down_, peer, xhttp::RequestKind::download, {}, until);
-            if (!download_ || stopped_) co_return false;
+            if (auto dl = co_await open(down_, peer, xhttp::RequestKind::download, {}, until))
+                tickets_.bind_download(*dl);
+            if (!tickets_.download || stopped_) co_return false;
             if (mode_ == xhttp::Mode::packet_up) co_return true;
             up_ = co_await worker_->up.acquire(session_, profile_.up, profile_.bootstrap, options_, until);
             if (!up_ || stopped_ || !up_.request()) co_return false;
-            upload_ = co_await open(up_, profile_.up, xhttp::RequestKind::upload, {{}, false}, until);
-            co_return upload_.has_value() && !stopped_;
+            if (auto ul = co_await open(up_, profile_.up, xhttp::RequestKind::upload, {{}, false}, until))
+                tickets_.bind_upload(*ul);
+            co_return tickets_.upload.has_value() && !stopped_;
         }
     public:
         auto start(Clock::time_point until) -> capy::task<bool> {
@@ -126,8 +128,8 @@ namespace relay::vless_xhttp {
         auto last_http_status() const noexcept -> std::uint16_t { return last_http_status_; }
         auto read(std::span<std::uint8_t> output, Deadline until = {})
             -> capy::task<std::expected<std::size_t, IoError>> {
-            if (!download_ || stopped_) co_return std::unexpected(IoError::state);
-            auto result = co_await downlink()->read(*download_, output, until);
+            if (!tickets_.download || stopped_) co_return std::unexpected(IoError::state);
+            auto result = co_await downlink()->read(*tickets_.download, output, until);
             if (!result) note_status(downlink());
             co_return result;
         }
@@ -135,7 +137,7 @@ namespace relay::vless_xhttp {
         auto send_impl(std::span<std::uint8_t const> input, Deadline until) -> capy::task<bool> {
             if (stopped_ || output_closed_) co_return false;
             bool ok = true;
-            if (upload_) ok = co_await up_->transmit(*upload_, {input, false}, until);
+            if (tickets_.upload) ok = co_await up_->transmit(*tickets_.upload, {input, false}, until);
             else while (!input.empty()) {
                 auto size = std::min(profile_.transport.limits.post_bytes, input.size());
                 auto stop = until.value_or(Clock::now() + std::chrono::milliseconds(profile_.timeout));
@@ -156,18 +158,17 @@ namespace relay::vless_xhttp {
             if (stopped_) co_return false;
             if (output_closed_) co_return true;
             output_closed_ = true;
-            if (!upload_) co_return true;
-            auto ok = co_await up_->transmit(*upload_, {{}, true}, until);
+            if (!tickets_.upload) co_return true;
+            auto ok = co_await up_->transmit(*tickets_.upload, {{}, true}, until);
             if (!ok) note_status(up_);
             co_return ok;
         }
         auto cancel() noexcept -> void {
             stopped_ = true;
             stop_.request_stop();
-            auto download = std::exchange(download_, {});
-            auto upload = std::exchange(upload_, {});
-            if (download) downlink()->release(*download);
-            if (upload && upload != download) up_->release(*upload);
+            tickets_.release_all(
+                [this](Ticket const& t) noexcept { if (auto& dl = downlink()) dl->release(t); },
+                [this](Ticket const& t) noexcept { if (up_) up_->release(t); });
         }
     };
 }

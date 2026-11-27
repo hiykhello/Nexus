@@ -120,16 +120,23 @@ extern "C" {
                 storage.emplace_back(arg);
             }
             if (storage.empty()) return 2;
+            std::optional<std::filesystem::path> prev_working_dir;
+            bool changed_working_dir = false;
             {
                 std::lock_guard lk(g_lifecycle_mu);
                 if (g_core_running.load(std::memory_order_acquire)) return 1;
-                if (pending_dir) cli::set_working_directory(std::move(*pending_dir));
+                if (pending_dir) {
+                    prev_working_dir = cli::working_directory();
+                    cli::set_working_directory(std::move(*pending_dir));
+                    changed_working_dir = true;
+                }
                 cli::ensure_http_fetchers_registered();
                 cli::reset_proxy_signals();
                 g_core_running.store(true, std::memory_order_release);
             }
             utility::scope_exit reset_flag([&] {
                 std::lock_guard lk(g_lifecycle_mu);
+                if (changed_working_dir) cli::restore_working_directory(std::move(prev_working_dir));
                 g_core_running.store(false, std::memory_order_release);
             });
             std::vector<char*> mutable_argv;
@@ -181,12 +188,14 @@ extern "C" {
     int nexus_core_tun_bridge_pop_outbound(unsigned char* out_buf, size_t capacity, size_t* out_len) {
         try {
             if (out_len) *out_len = 0;
-            if (!out_buf || capacity == 0) return -1;
+            if ((!out_buf && capacity > 0) || (!out_buf && !out_len)) return -1;
             auto bridge = platform::global_tun_bridge();
             if (!bridge) return -2;
-            auto copied = bridge->pop_outbound(std::span<std::uint8_t>(out_buf, capacity));
-            if (!copied) return 1;
-            if (out_len) *out_len = *copied;
+            auto res = bridge->pop_outbound_checked(
+                out_buf ? std::span<std::uint8_t>(out_buf, capacity) : std::span<std::uint8_t>{});
+            if (res.status == platform::PopOutboundStatus::empty) return 1;
+            if (out_len) *out_len = res.size;
+            if (res.status == platform::PopOutboundStatus::buffer_too_small) return -4;
             return 0;
         } catch (...) {
             return -1;

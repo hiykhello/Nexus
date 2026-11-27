@@ -51,7 +51,7 @@ namespace cli {
             std::optional<DnsCacheState::Scope> cache_scope;
             std::optional<UnifiedDnsCache> unified_cache;
             bool restored=false;
-            std::optional<std::uint64_t> observed_view;
+            std::optional<std::uint64_t> observed_view, cache_state_view;
             dns::MessageRuleSource rules;
             dns::MessageUpstreamSnapshot resolver{};
             bool proxy_routes=false;
@@ -62,31 +62,25 @@ namespace cli {
 
 #ifdef NEXUS_ENABLE_FAKEIP
             auto initialize_fakeip(config::DnsFakeIp const& spec) -> std::expected<void,std::string> {
-                auto mode=spec.initialize ? dns::FakeIpHistoryStoreMode::create_new :
-                    dns::FakeIpHistoryStoreMode::open_existing;
+                auto mode=spec.initialize ? dns::FakeIpHistoryStoreMode::create_new : dns::FakeIpHistoryStoreMode::open_existing;
                 std::optional<dns::FakeIpIpv6Range> ipv6;
                 if (spec.ipv6) ipv6.emplace(spec.ipv6->first,spec.ipv6->second);
                 if (spec.unified) {
                     auto owner=unified_fakeip(spec,ipv6);
                     if (!owner) return std::unexpected(std::move(owner.error()));
-                    fakeip=std::move(*owner);
-                    return {};
+                    fakeip=std::move(*owner); return {};
                 }
                 auto store=dns::FakeIpHistoryStore::open_with_credentials(spec.state_directory,mode,ipv6);
-                if (!store) return std::unexpected("cannot open FakeIP history ("+
-                    std::to_string(static_cast<int>(store.error()))+")");
+                if (!store) return std::unexpected("cannot open FakeIP history ("+std::to_string(static_cast<int>(store.error()))+")");
                 auto first=spec.first, last=spec.last;
                 if (last-first>=3) {++first;--last;}
-                auto ttl=std::chrono::seconds(spec.ttl_seconds);
                 auto grace=std::chrono::seconds(5);
-                auto owner=dns::start_fakeip(std::move(*store),{spec.first,spec.last,first,last,ttl,grace,ipv6},grace);
+                auto owner=dns::start_fakeip(std::move(*store),{spec.first,spec.last,first,last,std::chrono::seconds(spec.ttl_seconds),grace,ipv6},grace);
                 if (!owner) return std::unexpected("cannot prepare FakeIP history");
-                fakeip=std::move(*owner);
-                return {};
+                fakeip=std::move(*owner); return {};
             }
 
-            auto configure_fakeip(config::DnsFakeIp const& spec,Impl const* previous)
-                -> std::expected<void,std::string> {
+            auto configure_fakeip(config::DnsFakeIp const& spec,Impl const* previous) -> std::expected<void,std::string> {
                 if (previous) {
                     auto const& running=previous->program_;
                     if (!running || !running->routing.fakeip) return std::unexpected("adding FakeIP requires restart");
@@ -96,13 +90,9 @@ namespace cli {
                         active.unified!=spec.unified || active.per_mapping!=spec.per_mapping)
                         return std::unexpected("changing the FakeIP pool or history requires restart");
                     fakeip=running->fakeip;
-                } else {
-                    auto initialized=initialize_fakeip(spec);
-                    if (!initialized) return initialized;
-                }
+                } else if (auto initialized=initialize_fakeip(spec); !initialized) return initialized;
                 publisher.emplace(*fakeip,spec.first,spec.ttl_seconds,0,spec.ipv6.has_value());
-                upstreams[spec.upstream].fakeip=&*publisher;
-                return {};
+                upstreams[spec.upstream].fakeip=&*publisher; return {};
             }
 #endif
         };
@@ -204,7 +194,7 @@ namespace cli {
 
         auto snapshot() const -> dns::MessageRuleSnapshot {
             auto program=program_;
-            auto snapshot=program->rules && !program->cache_scope ? program->rules() : dns::MessageRuleSnapshot{};
+            auto snapshot=program->rules ? program->rules() : dns::MessageRuleSnapshot{};
             if (!snapshot.rules) snapshot.rules={program,&program->routing.rules};
             if (snapshot.transports) {
                 if (!resolver_view_ || resolver_view_->program!=program || resolver_view_->transports!=snapshot.transports)
@@ -214,14 +204,13 @@ namespace cli {
                 resolver_view_.reset();
                 snapshot.resolver={program,&program->resolver};
             }
-            if (program->cache_state) snapshot.view=0;
-            if (program->unified_cache) {
-                auto view=snapshot.view.value_or(0);
-                program->observed_view=view;
+            if (program->cache_state || program->unified_cache) {
+                auto view=snapshot.view.value_or(0); program->observed_view=view;
                 if (!std::exchange(program->restored,true)) {
-                    auto restored=program->unified_cache->restore(*program->cache,view);
-                    if (!restored) logs_.emit(logging::Level::warn,logging::Domain::dns,120,{},
-                        "DNS message cache restore failed: {}",logs_.private_text(restored.error()));
+                    if (program->cache_state) program->cache_state_view=view;
+                    auto restored=program->unified_cache ? program->unified_cache->restore(*program->cache,view)
+                        : program->cache_state->restore(*program->cache,*program->cache_scope,view);
+                    if (!restored) logs_.emit(logging::Level::warn,logging::Domain::dns,120,{},"DNS message cache restore failed: {}",logs_.private_text(restored.error()));
                 }
             }
             return snapshot;
@@ -293,14 +282,16 @@ namespace cli {
                 if (previous && previous->program_ && previous->program_->routing.message_cache_directory==path) {
                     auto const& running=*previous->program_;
                     program->cache_state=running.cache_state;
-                    if (endpoint(*running.routing.listen)==endpoint(*routing.listen) && program->cache_scope->identity==running.cache_scope->identity)
+                    if (endpoint(*running.routing.listen)==endpoint(*routing.listen) && program->cache_scope->identity==running.cache_scope->identity) {
                         program->cache=running.cache;
+                        program->restored=running.restored;
+                        program->observed_view=running.observed_view;
+                        program->cache_state_view=running.cache_state_view;
+                    }
                 } else {
                     auto opened=DnsCacheState::open(path);
                     if (!opened) return std::unexpected(std::move(opened.error()));
                     program->cache_state=std::move(*opened);
-                    if (auto restored=program->cache_state->restore(*program->cache,*program->cache_scope); !restored)
-                        logs_.emit(logging::Level::warn,logging::Domain::dns,120,{},"DNS message cache restore failed: {}",logs_.private_text(restored.error()));
                 }
             }
             program->reverse_cache=std::move(reverse);
@@ -359,7 +350,7 @@ namespace cli {
         auto has_listeners() const noexcept -> bool {return bool(tcp_);}
 
         auto save_checkpoint() noexcept -> void {
-            if (!program_ || (!program_->cache_state && !program_->observed_view)) return;
+            if (!program_ || !program_->observed_view) return;
             try {
                 auto log_err = [this](std::string const& e) {
                     logs_.emit(logging::Level::warn, logging::Domain::dns, 121, {}, "DNS message cache checkpoint failed: {}", logs_.private_text(e));
@@ -367,10 +358,11 @@ namespace cli {
                 if (program_->unified_cache) {
                     if (auto p = program_->unified_cache->prepare_save(*program_->cache, *program_->observed_view))
                         checkpointer_.submit([pr = program_, item = std::move(*p), log_err] { if (auto s = pr->unified_cache->commit_save(item); !s) log_err(s.error()); });
-                } else if (auto wire = program_->cache_state->prepare_save(*program_->cache, *program_->cache_scope); !wire) {
-                    log_err(wire.error());
-                } else {
-                    checkpointer_.submit([pr = program_, data = std::move(*wire), log_err] { if (auto s = pr->cache_state->commit_save(data); !s) log_err(s.error()); });
+                } else if (program_->cache_state && program_->cache_state_view && *program_->observed_view == *program_->cache_state_view) {
+                    if (auto wire = program_->cache_state->prepare_save(*program_->cache, *program_->cache_scope, *program_->observed_view); !wire)
+                        log_err(wire.error());
+                    else
+                        checkpointer_.submit([pr = program_, data = std::move(*wire), log_err] { if (auto s = pr->cache_state->commit_save(data); !s) log_err(s.error()); });
                 }
             } catch (std::bad_alloc const&) {
                 logs_.emit(logging::Level::error, logging::Domain::dns, 121, {}, "DNS message cache checkpoint: out of memory");
@@ -413,7 +405,24 @@ namespace cli {
                     std::move(q.name), q.qtype, q.timeout_ms, std::move(q.finish));
             }
         }
-        auto clear_live_cache() noexcept -> void { reclaim_memory(true); }
+        auto clear_live_cache() noexcept -> void {
+            auto run_clear = [this]() noexcept {
+                try {
+                    if (tcp_ || udp_) {
+                        auto& io = executor();
+                        dns::reap_idle_tls_queries(io, std::chrono::steady_clock::time_point::max());
+                        dns::reap_idle_https_queries(io, std::chrono::steady_clock::time_point::max());
+                    }
+                    if (program_ && program_->cache) program_->cache->clear();
+                    if (program_ && program_->unified_cache) {
+                        if (auto r = program_->unified_cache->refresh_epoch(); !r)
+                            logs_.emit(logging::Level::warn, logging::Domain::dns, 121, {}, "DNS message cache epoch refresh failed: {}", logs_.private_text(r.error()));
+                    }
+                } catch (...) {}
+            };
+            if (worker_.joinable() && std::this_thread::get_id() != worker_.get_id()) synchronize(run_clear);
+            else run_clear();
+        }
 #ifdef NEXUS_ENABLE_FAKEIP
         auto flush_fakeip_unpinned() noexcept -> std::optional<std::size_t> {
             return (program_ && program_->fakeip) ? std::optional(program_->fakeip->flush_unpinned()) : std::nullopt;

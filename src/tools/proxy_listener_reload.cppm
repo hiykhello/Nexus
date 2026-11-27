@@ -50,6 +50,35 @@ export namespace cli::run_detail {
         cli::CertReloaderHub* cert_reloaders = nullptr;
     };
 
+    inline auto provider_refresh_process_options_match(config::Config const& a, config::Config const& b) noexcept -> bool {
+        auto same_state = [](std::optional<config::StateOptions> const& x, std::optional<config::StateOptions> const& y) noexcept {
+            if (x.has_value() != y.has_value()) return false;
+            if (!x) return true;
+            return x->directory == y->directory && x->cache_directory == y->cache_directory &&
+                x->dns_cache_max_bytes == y->dns_cache_max_bytes &&
+                x->ruleset_cache_max_bytes == y->ruleset_cache_max_bytes &&
+                x->fakeip_per_mapping == y->fakeip_per_mapping;
+        };
+        auto same_ntp = [](std::optional<config::NtpConfig> const& x, std::optional<config::NtpConfig> const& y) noexcept {
+            if (x.has_value() != y.has_value()) return false;
+            if (!x) return true;
+            return x->host == y->host && x->port == y->port &&
+                x->interval_ms == y->interval_ms && x->timeout_ms == y->timeout_ms;
+        };
+        return a.workers == b.workers &&
+            a.control_socket == b.control_socket &&
+            a.control_read_uid == b.control_read_uid &&
+            a.control_http == b.control_http &&
+            a.selector_state_directory == b.selector_state_directory &&
+            a.shutdown_grace_ms == b.shutdown_grace_ms &&
+            a.sessions_per_listener == b.sessions_per_listener &&
+            a.tcp_splice_pipes == b.tcp_splice_pipes &&
+            same_state(a.state, b.state) &&
+            same_ntp(a.ntp, b.ntp) &&
+            a.services == b.services &&
+            a.direct_network == b.direct_network;
+    }
+
     struct ListenerReload {
         std::string process_identity, dns_policy_identity;
         bool identities_initialized = false;
@@ -93,13 +122,7 @@ export namespace cli::run_detail {
             auto& dns_key = precomputed->dns_policy;
             auto config = config::parse_kdl(input);
             if (!config) return std::unexpected(std::move(config.error()));
-            if (provider_refresh && (config->workers != reload_config->workers ||
-                config->control_socket != reload_config->control_socket ||
-                config->control_read_uid != reload_config->control_read_uid ||
-                config->control_http != reload_config->control_http ||
-                config->shutdown_grace_ms != reload_config->shutdown_grace_ms ||
-                config->sessions_per_listener != reload_config->sessions_per_listener ||
-                config->tcp_splice_pipes != reload_config->tcp_splice_pipes))
+            if (provider_refresh && !provider_refresh_process_options_match(*config, *reload_config))
                 return std::unexpected("configuration change requires restart");
             config->direct_tcp_options.binding.network = reload_config->direct_tcp_options.binding.network;
             if (!reloadable_tcp(*config)) return std::unexpected("listener change requires restart");
@@ -127,7 +150,8 @@ export namespace cli::run_detail {
                 candidate_health.emplace(std::move(*rebuilt));
             }
             RuleFileInput rule_input(path);
-            remote_rulesets.seed_cached(rule_input);
+            auto staged_remote = remote_rulesets.prepare_reload(*config, input, rule_input);
+            if (!staged_remote) return std::unexpected(std::move(staged_remote.error()));
             if (config->dns) {
                 auto loaded = load_dns_rules(*config->dns, rule_input);
                 if (!loaded) return std::unexpected(std::move(loaded.error()));
@@ -158,7 +182,7 @@ export namespace cli::run_detail {
             } catch (std::out_of_range const& e) {
                 return std::unexpected("DNS shared setup: " + std::string(e.what()));
             }
-            if (route_snapshots || uses_dns_groups(config->dns) ||
+            if (route_snapshots || uses_dns_groups(config->dns) || !config->selectors.empty() ||
                 (config->dns && (!config->dns->rule_files.empty() || config->dns->fakeip))) {
                 candidate.routes = std::make_shared<relay::RouteSnapshots>();
                 if (route_snapshots)
@@ -291,7 +315,8 @@ export namespace cli::run_detail {
             reverse_cache = std::move(candidate_reverse);
             reload_config = std::move(*config);
             group_health = std::move(candidate_health);
-            if (group_route_files || group_health) group_route_files = std::move(*files);
+            remote_rulesets.commit_reload(std::move(*staged_remote));
+            if (group_route_files || group_health || !reload_config->selectors.empty()) group_route_files = std::move(*files);
             return {};
         }
     };

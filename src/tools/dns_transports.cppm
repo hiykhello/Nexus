@@ -2,6 +2,9 @@ export module cli.dns_transports;
 import std;
 import config;
 import dns.corosio_query;
+import dns.input_budget;
+import dns.message;
+import platform.ip_address;
 
 namespace cli {
     auto prepare_encrypted_dns_transport(config::DnsTls const& profile,config::TcpSocketOptions const&,
@@ -20,6 +23,16 @@ namespace cli {
 
 export namespace cli {
     using DnsProtection=dns::detail::Protection;
+
+    [[nodiscard]] auto dns_system_trust_identity() -> std::expected<std::string, std::string>;
+    [[nodiscard]] auto convert_mdns_response(dns::Question const& question, std::uint16_t id,
+        std::span<std::uint8_t const> mdns_wire) -> std::expected<std::optional<dns::Response>, dns::detail::UdpError>;
+    [[nodiscard]] auto resolve_dhcp_endpoint(platform::IpAddress const& ip, std::string_view scope,
+        std::string_view fallback_iface = {}, std::uint16_t port = 53) noexcept -> std::optional<corosio::endpoint>;
+    [[nodiscard]] auto query_dhcp_endpoints(corosio::io_context& context,
+        std::span<corosio::endpoint const> endpoints, dns::QueryMessage const& query, std::uint16_t id,
+        std::chrono::steady_clock::time_point deadline, dns::InputBudget& budget, std::stop_token stop)
+        -> capy::task<std::expected<dns::Response, dns::detail::UdpError>>;
 
     [[nodiscard]] inline auto uses_dns_groups(std::optional<config::DnsRouting> const& dns) noexcept -> bool {
         return dns && std::ranges::any_of(dns->servers,[](auto const& entry) {

@@ -205,8 +205,8 @@ namespace openvpn {
         for (auto const& dns : cfg.dns_servers) if (safe_tok(dns)) out += std::format(",dhcp-option DNS {}", dns);
         for (auto const& dom : cfg.search_domains) if (safe_tok(dom)) out += std::format(",dhcp-option DOMAIN {}", dom);
         if (cfg.mtu) out += std::format(",tun-mtu {}", *cfg.mtu);
-        if (cfg.ping_s) out += std::format(",ping {}", cfg.ping_s);
-        if (cfg.ping_restart_s) out += std::format(",ping-restart {}", cfg.ping_restart_s);
+        if (cfg.ping_s) out += std::format(",ping {}", *cfg.ping_s);
+        if (cfg.ping_restart_s) out += std::format(",ping-restart {}", *cfg.ping_restart_s);
         if (cfg.peer_id) out += std::format(",peer-id {}", *cfg.peer_id);
         if (cfg.cipher) {
             out += ",cipher ";

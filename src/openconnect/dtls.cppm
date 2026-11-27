@@ -149,3 +149,16 @@ export namespace openconnect {
 
     [[nodiscard]] auto parse_dtls_cipher_name(std::string_view name) noexcept -> DtlsCipher;
 }
+
+namespace openconnect::detail {
+    auto append_supported_versions_ch(std::vector<std::uint8_t>& body, DtlsVersion version) -> void;
+    auto append_supported_versions_sh(std::vector<std::uint8_t>& body, DtlsVersion version) -> void;
+    [[nodiscard]] auto validate_client_hello_version(std::span<std::uint8_t const> body,
+                                                     std::size_t after_session_id,
+                                                     DtlsVersion expected) noexcept
+        -> std::expected<void, std::string>;
+    [[nodiscard]] auto validate_server_hello_version(std::span<std::uint8_t const> body,
+                                                     std::size_t after_session_id,
+                                                     DtlsVersion expected) noexcept
+        -> std::expected<void, std::string>;
+}

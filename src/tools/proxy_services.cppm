@@ -57,6 +57,7 @@ export namespace cli {
         std::uint64_t dropped_mtu = 0;
         std::uint64_t dropped_loop = 0;
         std::uint64_t dropped_filtered = 0;
+        std::uint64_t dropped_tx = 0;
     };
 
     class OptionalServicesRuntime {

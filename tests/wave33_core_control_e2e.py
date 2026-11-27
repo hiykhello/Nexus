@@ -372,7 +372,8 @@ routing {{
             # 2. Control REST API
             assert http_req(http_port, "GET", "/v1/status")[0] == 401
             st, _, body = http_req(http_port, "GET", "/v1/status", auth)
-            assert st == 200 and json.loads(body).get("state") == "running", (st, body)
+            status1 = json.loads(body)
+            assert st == 200 and status1.get("state") == "running" and len(status1.get("instance", "")) >= 16, (st, body)
             st, _, body = http_req(http_port, "GET", "/v1/mode", auth)
             assert st == 200 and json.loads(body).get("mode") == "rule", (st, body)
             st, _, body = http_req(http_port, "GET", "/v1/rules", auth)
@@ -467,6 +468,8 @@ routing {{
             assert st == 200 and json.loads(body).get("mode") == "direct" and (state_dir / "route-mode.state").is_file(), (st, body)
             stop_nexus(proc)
             proc = start_nexus(nexus_bin, cfg, http_port, auth)
+            status2 = json.loads(http_req(http_port, "GET", "/v1/status", auth)[2])
+            assert len(status2.get("instance", "")) >= 16 and status2["instance"] != status1["instance"], (status1, status2)
             m1 = json.loads(http_req(http_port, "GET", "/v1/mode", auth)[2])
             assert m1.get("mode") == "direct", m1
 

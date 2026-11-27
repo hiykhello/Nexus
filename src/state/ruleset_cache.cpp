@@ -53,6 +53,26 @@ namespace state {
                 (error.stage == Stage::open && (error.os == std::errc::no_such_file_or_directory ||
                                                error.os == std::errc::too_many_symbolic_link_levels));
         }
+
+        auto clear_derived_nxmm(std::filesystem::path const& root) -> std::expected<void, StateError> {
+            auto dir = open_directory(root / "nxmm");
+            if (!dir) {
+                if (dir.error().os == std::errc::no_such_file_or_directory) return {};
+                return std::unexpected(dir.error());
+            }
+            auto candidates = directory_entries(dir->get(), [](std::string_view name) {
+                return name.ends_with(".nxmm") || name.contains(".nxmm.tmp.");
+            });
+            if (!candidates) return std::unexpected(candidates.error());
+            bool changed = false;
+            for (auto const& item : *candidates) {
+                auto deleted = unlink_dir_file(dir->get(), item.name, Stage::remove_blob);
+                if (!deleted) return deleted;
+                changed = true;
+            }
+            if (changed) return sync_handle(dir->get(), Stage::sync_directory, true);
+            return {};
+        }
     }
 
     auto RulesetCache::lookup(this RulesetCache const& self, RulesetKey const& key)
@@ -157,6 +177,8 @@ namespace state {
         index->rows.clear();
         auto saved = save_rulesets(*lock, *index);
         if (!saved) return saved;
-        return sweep_rule_blobs(lock->directory(), index->rows);
+        auto swept = sweep_rule_blobs(lock->directory(), index->rows);
+        if (!swept) return swept;
+        return clear_derived_nxmm(self.root_);
     }
 }

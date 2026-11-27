@@ -48,6 +48,7 @@ export namespace tcp {
         unsigned dup_acks_ = 0, rto_retries_ = 0;
         bool initialized_ = false, rtt_valid_ = false, rtt_tracking_ = false, fast_retransmit_ = false;
         std::optional<std::uint64_t> deadline_;
+        std::optional<std::uint32_t> last_peer_window_;
         explicit TimedSend(SendBuffer buffer) : buffer_(std::move(buffer)) {}
         auto advance(std::uint64_t now) noexcept -> std::expected<void, SendError>;
         auto arm(std::uint64_t now) noexcept -> void;
@@ -60,8 +61,11 @@ export namespace tcp {
         [[nodiscard]] auto retransmit(std::size_t maximum) const -> SendSlice { return buffer_.retransmit(maximum); }
         [[nodiscard]] auto unsent_view(std::size_t maximum) const noexcept -> SendView { return buffer_.unsent_view(maximum); }
         [[nodiscard]] auto retransmit_view(std::size_t maximum) const noexcept -> SendView { return buffer_.retransmit_view(maximum); }
+        auto set_peer_window(std::uint32_t peer_window) noexcept -> void { last_peer_window_ = peer_window; }
         [[nodiscard]] auto sent(std::size_t count, std::uint64_t now) noexcept -> std::expected<void, SendError>;
-        [[nodiscard]] auto acknowledge(std::uint32_t ack, std::uint64_t now) noexcept -> std::expected<std::size_t, SendError>;
+        [[nodiscard]] auto acknowledge(std::uint32_t ack, std::uint64_t now,
+            bool carries_data_or_ctrl = false,
+            std::optional<std::uint32_t> peer_window = std::nullopt) noexcept -> std::expected<std::size_t, SendError>;
         [[nodiscard]] auto due(std::uint64_t now, std::size_t maximum) -> std::expected<std::optional<SendSlice>, SendError>;
         [[nodiscard]] auto due_view(std::uint64_t now, std::size_t maximum) noexcept -> std::expected<std::optional<SendView>, SendError>;
         [[nodiscard]] auto retransmitted(std::uint64_t now) noexcept -> std::expected<void, SendError>;
@@ -69,6 +73,7 @@ export namespace tcp {
         [[nodiscard]] auto deadline() const noexcept -> std::optional<std::uint64_t> { return deadline_; }
         [[nodiscard]] auto rto() const noexcept -> std::uint64_t { return rto_; }
         [[nodiscard]] auto retries() const noexcept -> unsigned { return rto_retries_; }
+        [[nodiscard]] auto dup_acks() const noexcept -> unsigned { return dup_acks_; }
         [[nodiscard]] auto expired(std::uint64_t now) const noexcept -> bool {
             return rto_retries_ >= kMaxRetries && deadline_ && now >= *deadline_;
         }

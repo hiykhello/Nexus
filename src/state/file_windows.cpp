@@ -14,7 +14,7 @@ namespace state {
             return ::CloseHandle(static_cast<HANDLE>(h)) != 0;
         }
         inline auto open_dir_handle(std::filesystem::path const& path, DWORD& err) noexcept -> void* {
-            HANDLE h = ::CreateFileW(path.c_str(), FILE_LIST_DIRECTORY | SYNCHRONIZE,
+            HANDLE h = ::CreateFileW(path.c_str(), FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
                 FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
                 FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
             if (h == INVALID_HANDLE_VALUE) { err = ::GetLastError(); return nullptr; }
@@ -283,6 +283,7 @@ namespace state {
         if (!closed) { (void)unlink_dir_file(dir, tmp_prefix, Stage::remove_stage); return closed; }
         auto moved = rename_dir_file(dir, tmp_prefix, name, false, stage);
         if (!moved) { (void)unlink_dir_file(dir, tmp_prefix, Stage::remove_stage); return moved; }
+        if (auto synced = sync_handle(dir, Stage::sync_directory, true); !synced) return synced;
         return {};
     }
 }

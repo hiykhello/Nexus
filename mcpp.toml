@@ -167,7 +167,7 @@ h2mux = ["http2", "protocols/h2mux", "relay-runtime/h2mux"]
 hy2-cli = { implies = ["hy2-client", "hysteria2-listener", "relay-runtime/hy2-inbound"], defines = ["NEXUS_ENABLE_HY2"], sources = ["src/tools/hy2_cli.cppm", "src/tools/hy2_cli.cpp", "!src/tools/hy2_cli_enabled_disabled.cppm"] }
 dns-response = { implies = ["relay-runtime/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
 dns-response-ss = { implies = ["dns-response", "ss2022", "ss-udp-runtime/dns-response", "dns-group-udp/dns-response"], defines = ["NEXUS_DNS_RESPONSE"] }
-ss2022 = { implies = ["crypto", "protocols/ss2022", "relay-runtime/ss2022"], sources = ["src/tools/udp_cli_enabled.cpp"] }
+ss2022 = { implies = ["crypto", "protocols/ss2022", "relay-runtime/ss2022"], sources = ["src/tools/udp_cli_enabled.cppm", "src/tools/udp_cli_runtime.cpp", "src/tools/udp_cli_enabled.cpp"] }
 shadowtls = ["crypto", "protocols/shadowtls"]
 shadowtls-proxy = { implies = ["tls", "protocols/shadowtls-runtime", "relay-runtime/shadowtls"], defines = ["NEXUS_ENABLE_SHADOWTLS"] }
 tuic-core = ["crypto", "tls", "protocols/tuic-core"]
@@ -1210,6 +1210,7 @@ discover = [
     "tests/proxy.cpp", "tests/proxy_limits.cpp", "tests/proxy_single_worker.cpp", "tests/proxy_feature_api.cpp", "tests/udp_cli_disabled.cpp",
     "tests/session_quota.cpp", "tests/session_registry.cpp",
     "tests/wave32_workspace_schema_unit.cpp",
+    "tests/wave34_provider_audit_unit.cpp",
 ]
 
 [target.'cfg(not(os = "linux"))'.test]
@@ -1823,3 +1824,43 @@ required_features = ["tailscale-endpoint", "wireguard-endpoint", "test-bins"]
 kind = "bin"
 main = "tests/wave33_openvpn_openconnect_unit.cpp"
 required_features = ["openvpn", "openconnect", "test-bins"]
+
+[targets.wave36-core-audit-dns-udp-unit]
+kind = "bin"
+main = "tests/wave36_core_audit_dns_udp_unit.cpp"
+required_features = ["dns-tls", "dns-mdns", "test-bins"]
+
+[targets.wave36-core-audit-r4-unit]
+kind = "bin"
+main = "tests/wave36_core_audit_r4_unit.cpp"
+required_features = ["control-http", "test-bins"]
+
+[targets.wave36-core-audit-r6-cache-unit]
+kind = "bin"
+main = "tests/wave36_core_audit_r6_cache_unit.cpp"
+required_features = ["http-client", "srs", "test-bins"]
+
+[targets.wave36-r6-udp-audit-unit]
+kind = "bin"
+main = "tests/wave36_r6_udp_audit_unit.cpp"
+required_features = ["ss2022", "test-bins"]
+
+[targets.wave36-r8-bridge-mdns-watchdog-unit]
+kind = "bin"
+main = "tests/wave36_r8_bridge_mdns_watchdog_unit.cpp"
+required_features = ["bridge", "dns-mdns", "memory-budget", "test-bins"]
+
+[targets.wave36-core-audit-r7-unit]
+kind = "bin"
+main = "tests/wave36_core_audit_r7_unit.cpp"
+required_features = ["tun-inbound", "test-bins"]
+
+[targets.wave36-core-audit-r8-track-a-unit]
+kind = "bin"
+main = "tests/wave36_core_audit_r8_track_a_unit.cpp"
+required_features = ["ssh", "xhttp-vless", "logging", "test-bins"]
+
+[targets.wave36-core-audit-r7-async-unit]
+kind = "bin"
+main = "tests/wave36_core_audit_r7_async_unit.cpp"
+required_features = ["ntp", "dns-dhcp", "tun-inbound", "dns-fakeip", "test-bins"]

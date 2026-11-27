@@ -36,6 +36,22 @@ export namespace cli::run_detail {
         std::uint64_t last_ = 0;
         std::uint64_t generation_ = 1;
         Reload* pending_ = nullptr;
+        std::string fallback_instance_;
+
+        static auto generate_instance_id() -> std::string {
+            static std::atomic<std::uint64_t> seq{0};
+            std::uint64_t a = 0, b = 0;
+            try {
+                std::random_device rd;
+                a = (std::uint64_t{rd()} << 32) | rd();
+                b = (std::uint64_t{rd()} << 32) | rd();
+            } catch (...) {}
+            auto now = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
+            auto n = seq.fetch_add(1, std::memory_order_relaxed) + 1;
+            a ^= now ^ (n * 0x9e3779b97f4a7c15ull);
+            b ^= (now << 17) ^ (n * 0xbf58476d1ce4e5b9ull);
+            return std::format("{:016x}{:016x}", a, b);
+        }
 
         auto event_name(EventKind kind) const noexcept -> std::string_view {
             switch (kind) {
@@ -53,6 +69,10 @@ export namespace cli::run_detail {
         }
 
     public:
+        ControlOperations() : fallback_instance_(generate_instance_id()) {}
+        [[nodiscard]] auto resolve_instance(std::string_view local_instance) const noexcept -> std::string_view {
+            return local_instance.empty() ? std::string_view(fallback_instance_) : local_instance;
+        }
         [[nodiscard]] auto generation() const noexcept -> std::uint64_t { return generation_; }
         [[nodiscard]] auto pending() const noexcept -> bool { return pending_ != nullptr; }
         auto published() noexcept -> void { ++generation_; }

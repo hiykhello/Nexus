@@ -31,6 +31,21 @@ export namespace cli::run_detail {
         });
     }
 
+    inline auto reclaim_retired_generations(std::vector<std::unique_ptr<RetiredTcpGeneration>>& retired,
+        bool shared_driven, std::uint64_t& reclaimed_upload, std::uint64_t& reclaimed_download) -> bool {
+        std::erase_if(retired, [&](auto const& generation) {
+            if (!generation->poll(shared_driven)) return false;
+            for (auto const& l : generation->listeners) {
+                if (!l.server) continue;
+                auto snap = l.server->traffic_snapshot();
+                reclaimed_upload += snap.bytes.upload;
+                reclaimed_download += snap.bytes.download;
+            }
+            return true;
+        });
+        return retired.empty();
+    }
+
     template<class Listeners, class Udp, class Hy2, class Masque, class Tuic, class Tun>
     struct ProxyHost {
         Listeners& listeners;
@@ -48,6 +63,11 @@ export namespace cli::run_detail {
         ControlEventBridge* control_wake = nullptr;
         dns::TlsQueryMaintenance shared_dns_maint{};
         std::optional<config::TorServiceConfig> tor_service{};
+        std::uint64_t reclaimed_upload_bytes = 0, reclaimed_download_bytes = 0;
+
+        [[nodiscard]] auto reclaimed_traffic() const noexcept -> std::pair<std::uint64_t, std::uint64_t> {
+            return {reclaimed_upload_bytes, reclaimed_download_bytes};
+        }
 
         auto attach_memory_shed(std::shared_ptr<std::atomic_bool> flag) noexcept -> void {
             memory_shed = std::move(flag);
@@ -221,8 +241,7 @@ export namespace cli::run_detail {
         }
 
         auto poll_retired() -> bool {
-            std::erase_if(retired, [this](auto const& generation) { return generation->poll(shared_io != nullptr); });
-            return retired.empty();
+            return reclaim_retired_generations(retired, shared_io != nullptr, reclaimed_upload_bytes, reclaimed_download_bytes);
         }
 
         auto poll_drain() -> bool {

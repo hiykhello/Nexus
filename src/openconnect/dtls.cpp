@@ -52,7 +52,12 @@ namespace openconnect {
             return c == DtlsCipher::aes_256_gcm ? crypto::Hash::sha384 : crypto::Hash::sha256;
         }
 
-        auto cipher_suite_id(DtlsCipher c) noexcept -> std::uint16_t {
+        auto cipher_suite_id(DtlsVersion v, DtlsCipher c) noexcept -> std::uint16_t {
+            if (v == DtlsVersion::dtls1_3) {
+                if (c == DtlsCipher::aes_128_gcm) return 0x1301u;
+                if (c == DtlsCipher::chacha20_poly1305) return 0x1303u;
+                return 0x1302u;
+            }
             if (c == DtlsCipher::aes_128_gcm) return 0xc02fu;
             if (c == DtlsCipher::chacha20_poly1305) return 0xcca8u;
             return 0xc030u;
@@ -220,14 +225,15 @@ namespace openconnect {
         if (server_role_ || state_ != DtlsState::idle) return std::unexpected("DTLS ClientHello invalid state");
         if (!crypto::random_bytes(client_random_)) return std::unexpected("DTLS RNG failure");
         std::vector<std::uint8_t> body;
-        append_be16(body, static_cast<std::uint16_t>(version_));
+        append_be16(body, 0xfefdu); // RFC 9147 §5.3: legacy_version is always DTLS 1.2 (0xfefd)
         body.insert(body.end(), client_random_.begin(), client_random_.end());
         body.push_back(static_cast<std::uint8_t>(session_id_.size()));
         body.insert(body.end(), session_id_.begin(), session_id_.end());
         body.push_back(0); // empty cookie
         append_be16(body, 2);
-        append_be16(body, cipher_suite_id(cipher_));
+        append_be16(body, cipher_suite_id(version_, cipher_));
         body.push_back(1); body.push_back(0);
+        detail::append_supported_versions_ch(body, version_);
         auto hs = build_dtls_handshake_msg(kHsClientHello, 0, body);
         handshake_transcript_.assign(hs.begin(), hs.end());
         state_ = DtlsState::client_hello_sent;
@@ -359,23 +365,24 @@ namespace openconnect {
             auto hs = datagram.subspan(13, frag_len);
             if (hs.size() < 12 + 35 || hs[0] != kHsClientHello) return std::unexpected("invalid DTLS ClientHello");
             auto body = hs.subspan(12);
-            if (static_cast<DtlsVersion>(read_be16(body, 0)) != version_)
-                return std::unexpected("DTLS version mismatch");
-            std::copy_n(body.begin() + 2, 32, client_random_.begin());
             auto sid_len = body[34];
             if (body.size() < 35u + sid_len || sid_len != session_id_.size() ||
                 !crypto::constant_time_equal(body.subspan(35, sid_len), session_id_))
                 return std::unexpected("DTLS session ID mismatch");
+            if (auto vok = detail::validate_client_hello_version(body, 35u + sid_len, version_); !vok)
+                return std::unexpected(vok.error());
+            std::copy_n(body.begin() + 2, 32, client_random_.begin());
             handshake_transcript_.assign(hs.begin(), hs.end());
             if (!crypto::random_bytes(server_random_)) return std::unexpected("DTLS RNG failure");
 
             std::vector<std::uint8_t> sh_body;
-            append_be16(sh_body, static_cast<std::uint16_t>(version_));
+            append_be16(sh_body, 0xfefdu); // RFC 9147 §5.3: legacy_version is always DTLS 1.2 (0xfefd)
             sh_body.insert(sh_body.end(), server_random_.begin(), server_random_.end());
             sh_body.push_back(static_cast<std::uint8_t>(session_id_.size()));
             sh_body.insert(sh_body.end(), session_id_.begin(), session_id_.end());
-            append_be16(sh_body, cipher_suite_id(cipher_));
+            append_be16(sh_body, cipher_suite_id(version_, cipher_));
             sh_body.push_back(0);
+            detail::append_supported_versions_sh(sh_body, version_);
             auto sh = build_dtls_handshake_msg(kHsServerHello, 0, sh_body);
             handshake_transcript_.insert(handshake_transcript_.end(), sh.begin(), sh.end());
             replies.push_back(build_dtls_plaintext_record(kCtHandshake, 0xfefd, 0, tx_seq_++, sh));
@@ -406,13 +413,13 @@ namespace openconnect {
                 auto hs = datagram.subspan(13, frag_len);
                 if (hs.size() < 12 + 35 || hs[0] != kHsServerHello) return std::unexpected("invalid DTLS ServerHello");
                 auto body = hs.subspan(12);
-                if (static_cast<DtlsVersion>(read_be16(body, 0)) != version_)
-                    return std::unexpected("DTLS ServerHello version mismatch");
-                std::copy_n(body.begin() + 2, 32, server_random_.begin());
                 auto sid_len = body[34];
                 if (body.size() < 35u + sid_len || sid_len != session_id_.size() ||
                     !crypto::constant_time_equal(body.subspan(35, sid_len), session_id_))
                     return std::unexpected("DTLS ServerHello session ID mismatch");
+                if (auto vok = detail::validate_server_hello_version(body, 35u + sid_len, version_); !vok)
+                    return std::unexpected(vok.error());
+                std::copy_n(body.begin() + 2, 32, server_random_.begin());
                 handshake_transcript_.insert(handshake_transcript_.end(), hs.begin(), hs.end());
                 if (auto derived = derive_traffic_keys(); !derived) return std::unexpected(derived.error());
                 rx_epoch_ = 1; rx_replay_.reset();

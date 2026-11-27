@@ -343,6 +343,103 @@ namespace {
         srv.stop();
     }
 #endif
+
+    void test_log_backlog_cursor_pagination() {
+        auto now = StreamClock::now();
+        auto snap_fn = [](SnapshotFields, std::optional<std::uint64_t>) -> ControlSnapshot { return {}; };
+        auto parse_kv = [](std::span<std::string_view const> args, std::string_view prefix) -> std::uint64_t {
+            for (auto a : args) {
+                if (!a.starts_with(prefix)) continue;
+                std::uint64_t v = 0;
+                auto s = a.substr(prefix.size());
+                std::from_chars(s.data(), s.data() + s.size(), v);
+                return v;
+            }
+            return 0;
+        };
+        auto backlog_cmd = [&](std::span<std::string_view const> args) -> std::expected<std::string, std::string> {
+            auto since = parse_kv(args, "since=");
+            auto limit = parse_kv(args, "limit=");
+            if (!limit) limit = 64;
+            constexpr std::uint64_t kTotal = 100;
+            std::vector<std::uint64_t> seqs;
+            for (std::uint64_t seq = since + 1; seq <= kTotal && seqs.size() < limit; ++seq) seqs.push_back(seq);
+            std::string out = std::format("latest={} evicted=0 count={}\n", kTotal, seqs.size());
+            for (auto seq : seqs)
+                out += std::format("seq={} ts={} level=info domain=core event=100 session=0 msg=\"entry-{}\"\n", seq, seq, seq);
+            return out;
+        };
+
+        // 1. WebSocket log subscription drains 100 un-evicted entries across 2 pages (1..64, 65..100) without skipping.
+        {
+            WsPeer p{}; p.auth = WsAuthState::authenticated; p.channels = kWsChanLogs;
+            p.idle_deadline = now + kWsIdleTimeout; p.last_ping_sent = now;
+            push_ws_logs(p, backlog_cmd);
+            require(p.log_cursor == "64", "WS page 1 advances cursor to last delivered seq 64, not 100");
+            std::vector<std::uint64_t> got;
+            while (auto f = pop_server_frame(p.out)) {
+                auto pos = f->payload.find(R"("seq":)");
+                require(pos != std::string::npos, "WS log frame has seq");
+                std::uint64_t seq = 0;
+                std::from_chars(f->payload.data() + pos + 6, f->payload.data() + f->payload.size(), seq);
+                got.push_back(seq);
+            }
+            require(got.size() == 64 && got.front() == 1 && got.back() == 64, "WS page 1 delivers 1..64");
+
+            push_ws_logs(p, backlog_cmd);
+            require(p.log_cursor == "100", "WS page 2 advances cursor to 100");
+            while (auto f = pop_server_frame(p.out)) {
+                auto pos = f->payload.find(R"("seq":)");
+                require(pos != std::string::npos, "WS page 2 log frame has seq");
+                std::uint64_t seq = 0;
+                std::from_chars(f->payload.data() + pos + 6, f->payload.data() + f->payload.size(), seq);
+                got.push_back(seq);
+            }
+            require(got.size() == 100 && got.back() == 100, "WS delivers all 100 entries without gaps");
+            for (std::uint64_t i = 0; i < 100; ++i) require(got[i] == i + 1, "WS entries strictly contiguous 1..100");
+
+            push_ws_logs(p, backlog_cmd);
+            require(p.log_cursor == "100" && p.out.empty(), "WS page 3 caught up");
+        }
+
+        // 2. SSE log subscription drains 100 un-evicted entries across 2 pages (1..64, 65..100) without skipping.
+        {
+            Peer p{}; p.stream = StreamKind::logs; p.last_sse_write = now;
+            tick_sse_peer(p, now, snap_fn, backlog_cmd);
+            require(p.stream_cursor == "64", "SSE page 1 advances cursor to 64, not 100");
+            std::vector<std::uint64_t> got;
+            auto collect_sse = [&](std::string_view wire) {
+                std::size_t pos = 0;
+                while ((pos = wire.find(R"("seq":)", pos)) != std::string_view::npos) {
+                    std::uint64_t seq = 0;
+                    std::from_chars(wire.data() + pos + 6, wire.data() + wire.size(), seq);
+                    got.push_back(seq);
+                    pos += 6;
+                }
+            };
+            collect_sse(p.out);
+            require(got.size() == 64 && got.front() == 1 && got.back() == 64, "SSE page 1 delivers 1..64");
+
+            tick_sse_peer(p, now + std::chrono::milliseconds(100), snap_fn, backlog_cmd);
+            require(p.stream_cursor == "100", "SSE page 2 advances cursor to 100");
+            collect_sse(p.out);
+            require(got.size() == 100 && got.back() == 100, "SSE delivers all 100 entries without gaps");
+            for (std::uint64_t i = 0; i < 100; ++i) require(got[i] == i + 1, "SSE entries strictly contiguous 1..100");
+        }
+
+        // 3. Empty evicted/filtered batch advances to latest_seq; future cursor never regresses; partial 60 KiB batch uses last entry seq.
+        {
+            std::string c1 = "0";
+            auto out1 = format_sse_logs("latest=150 evicted=50 count=0\n", c1);
+            require(out1.empty() && c1 == "150", "empty evicted batch advances cursor to latest_seq");
+            std::string c2 = "500";
+            (void)format_sse_logs("latest=150 evicted=0 count=0\n", c2);
+            require(c2 == "500", "future cursor never regresses on smaller latest_seq");
+            std::string c3 = "0";
+            (void)format_sse_logs("latest=100 evicted=0 count=64\nseq=1 ts=1 level=info domain=core event=1 session=0 msg=\"a\"\nseq=30 ts=2 level=info domain=core event=1 session=0 msg=\"b\"\n", c3);
+            require(c3 == "30", "truncated wire batch advances cursor to last parsed entry seq 30");
+        }
+    }
 }
 
 int main() {
@@ -352,6 +449,7 @@ int main() {
 #if !defined(_WIN32)
     test_live_loopback_http_control_ws();
 #endif
+    test_log_backlog_cursor_pagination();
     std::println("wave33_control_ws_unit: PASS");
     return 0;
 }

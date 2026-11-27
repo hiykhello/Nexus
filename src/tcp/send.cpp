@@ -106,10 +106,19 @@ namespace tcp {
         if (was_empty && count) arm(now);
         return {};
     }
-    auto TimedSend::acknowledge(std::uint32_t ack, std::uint64_t now) noexcept -> std::expected<std::size_t, SendError> {
+    auto TimedSend::acknowledge(std::uint32_t ack, std::uint64_t now,
+        bool carries_data_or_ctrl, std::optional<std::uint32_t> peer_window) noexcept
+        -> std::expected<std::size_t, SendError> {
         if (auto time = advance(now); !time) return std::unexpected(time.error());
         auto count = buffer_.acknowledge(ack);
         if (!count) return count;
+        // RFC 5681 §2: A duplicate ACK must carry no data, have SYN/FIN clear,
+        // keep SND.UNA unchanged with outstanding data, and keep the advertised window unchanged.
+        bool window_unchanged = true;
+        if (peer_window.has_value()) {
+            window_unchanged = last_peer_window_.has_value() && (*peer_window == *last_peer_window_);
+            last_peer_window_ = *peer_window;
+        }
         if (*count) {
             dup_acks_ = 0;
             rto_retries_ = 0;
@@ -120,7 +129,7 @@ namespace tcp {
             }
             if (buffer_.in_flight()) arm(now);
             else { rto_ = base_rto_; deadline_.reset(); }
-        } else if (buffer_.in_flight() && ack == buffer_.una()) {
+        } else if (buffer_.in_flight() && ack == buffer_.una() && !carries_data_or_ctrl && window_unchanged) {
             ++dup_acks_;
             if (dup_acks_ == 3) fast_retransmit_ = true;
         }

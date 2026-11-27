@@ -38,13 +38,69 @@ export namespace cli::nxmm_detail {
         return true;
     }
 
+    inline auto prune_nxmm_sidecars(std::filesystem::path const& cache_dir, std::uint64_t max_bytes,
+        std::span<std::filesystem::path const> pinned = {}) noexcept -> void {
+        if (cache_dir.empty() || max_bytes == 0) return;
+        try {
+            std::error_code ec;
+            auto dir = cache_dir / "nxmm";
+            if (std::filesystem::is_symlink(dir, ec) || ec || !std::filesystem::is_directory(dir, ec) || ec) return;
+            struct Entry {
+                std::filesystem::path path;
+                std::string name;
+                std::uint64_t size = 0;
+                std::filesystem::file_time_type mtime{};
+                bool pinned = false;
+            };
+            std::vector<Entry> files;
+            std::uint64_t total_bytes = 0;
+            for (auto const& ent : std::filesystem::directory_iterator(dir, ec)) {
+                if (ec) break;
+                std::error_code item_ec;
+                if (ent.is_symlink(item_ec) || item_ec || !ent.is_regular_file(item_ec) || item_ec) continue;
+                auto name = ent.path().filename().string();
+                if (!name.ends_with(".nxmm")) continue;
+                auto sz = ent.file_size(item_ec);
+                if (item_ec) continue;
+                auto mtime = ent.last_write_time(item_ec);
+                if (item_ec) mtime = std::filesystem::file_time_type::min();
+                bool keep = std::ranges::any_of(pinned, [&](std::filesystem::path const& p) {
+                    return p.filename().string() == name;
+                });
+                total_bytes += sz;
+                files.push_back({ent.path(), std::move(name), sz, mtime, keep});
+            }
+            if (total_bytes <= max_bytes) return;
+            std::ranges::sort(files, [](Entry const& a, Entry const& b) {
+                return a.mtime != b.mtime ? a.mtime < b.mtime : a.name < b.name;
+            });
+            for (auto const& f : files) {
+                if (total_bytes <= max_bytes) break;
+                if (f.pinned) continue;
+                std::error_code rm_ec;
+                if (std::filesystem::remove(f.path, rm_ec) && !rm_ec)
+                    total_bytes = total_bytes > f.size ? total_bytes - f.size : 0;
+            }
+        } catch (...) {}
+    }
+
     inline auto write_sidecar_atomic(std::filesystem::path const& path, std::string_view data) noexcept -> bool {
         try {
             std::error_code ec;
             auto dir = path.parent_path();
             if (dir.empty()) return false;
-            std::filesystem::create_directories(dir, ec);
+            auto root = dir.parent_path();
+            if (!root.empty() && !std::filesystem::exists(root, ec) && !ec) {
+                if (std::filesystem::create_directories(root, ec) && !ec)
+                    std::filesystem::permissions(root, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace, ec);
+                if (ec) return false;
+            }
+            ec.clear();
+            bool created = std::filesystem::create_directories(dir, ec);
             if (ec) return false;
+            if (created) std::filesystem::permissions(dir, std::filesystem::perms::owner_all, std::filesystem::perm_options::replace, ec);
+            ec.clear();
+            if (std::filesystem::is_symlink(dir, ec) || ec) return false;
             static std::atomic<std::uint64_t> counter{0};
             auto seq = counter.fetch_add(1, std::memory_order_relaxed);
             auto stamp = static_cast<std::uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count());
@@ -61,6 +117,9 @@ export namespace cli::nxmm_detail {
                     return false;
                 }
             }
+            std::filesystem::permissions(tmp, std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                std::filesystem::perm_options::replace, ec);
+            ec.clear();
             std::filesystem::rename(tmp, path, ec);
             if (ec) {
                 std::error_code rm_ec;
@@ -77,11 +136,19 @@ export namespace cli::nxmm_detail {
     // Returns nullptr cleanly on read-only/unavailable cache dirs or compilation failure so callers
     // transparently fall back to in-memory RuleSet parsing.
     [[nodiscard]] inline auto try_mmap_srs_sidecar(std::filesystem::path const& cache_dir,
-        std::string_view srs_bytes, bool ip_cidr_match_source) -> std::shared_ptr<rules::MmapMatcher const> {
+        std::string_view srs_bytes, bool ip_cidr_match_source,
+        std::uint64_t max_bytes = 64ull * 1024 * 1024,
+        std::span<std::filesystem::path const> pinned = {}) -> std::shared_ptr<rules::MmapMatcher const> {
         if (cache_dir.empty() || srs_bytes.empty()) return {};
         auto path = sidecar_path(cache_dir, srs_bytes, ip_cidr_match_source);
-        if (auto existing = rules::MmapMatcher::open_file(path.string()); existing && verify_mmap_usable(*existing))
+        std::vector<std::filesystem::path> keep(pinned.begin(), pinned.end());
+        keep.push_back(path);
+        if (auto existing = rules::MmapMatcher::open_file(path.string()); existing && verify_mmap_usable(*existing)) {
+            std::error_code ec;
+            std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now(), ec);
+            prune_nxmm_sidecars(cache_dir, max_bytes, keep);
             return std::make_shared<rules::MmapMatcher const>(std::move(*existing));
+        }
         auto parsed = rules::parse_rule_input(srs_bytes, rules::InputFormat::srs, ip_cidr_match_source);
         if (!parsed || parsed->rules.empty()) return {};
         auto nxmm = rules::compile_nxmm(*parsed, ip_cidr_match_source);
@@ -89,13 +156,15 @@ export namespace cli::nxmm_detail {
         auto check = rules::MmapMatcher::open_bytes(*nxmm);
         if (!check || !verify_mmap_usable(*check)) return {};
         if (!write_sidecar_atomic(path, *nxmm)) return {};
+        prune_nxmm_sidecars(cache_dir, max_bytes, keep);
         auto mapped = rules::MmapMatcher::open_file(path.string());
         if (!mapped || !verify_mmap_usable(*mapped)) return {};
         return std::make_shared<rules::MmapMatcher const>(std::move(*mapped));
     }
 
-    inline auto prewarm_srs_sidecar(std::filesystem::path const& cache_dir, std::string_view srs_bytes) noexcept -> void {
-        try { (void)try_mmap_srs_sidecar(cache_dir, srs_bytes, false); } catch (...) {}
+    inline auto prewarm_srs_sidecar(std::filesystem::path const& cache_dir, std::string_view srs_bytes,
+        std::uint64_t max_bytes = 64ull * 1024 * 1024) noexcept -> void {
+        try { (void)try_mmap_srs_sidecar(cache_dir, srs_bytes, false, max_bytes); } catch (...) {}
     }
 
     inline auto action_for_rule(config::OrderedTcpRule const& rule) noexcept -> rules::ProgramActionKind {

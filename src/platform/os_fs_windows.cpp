@@ -10,8 +10,18 @@ import std;
 namespace platform {
     auto sync_native_handle(std::uintptr_t handle) noexcept -> int {
         HANDLE h = reinterpret_cast<HANDLE>(handle);
-        if (!h || h == INVALID_HANDLE_VALUE) return -1;
-        return ::FlushFileBuffers(h) ? 0 : -1;
+        if (!h || h == INVALID_HANDLE_VALUE) {
+            ::SetLastError(ERROR_INVALID_HANDLE);
+            return -1;
+        }
+        if (::FlushFileBuffers(h)) return 0;
+        DWORD const err = ::GetLastError();
+        BY_HANDLE_FILE_INFORMATION info{};
+        bool const is_dir = ::GetFileInformationByHandle(h, &info) != 0 &&
+            (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        if (classify_windows_flush_result(false, is_dir, static_cast<std::uint32_t>(err))) return 0;
+        ::SetLastError(err);
+        return -1;
     }
 
     auto atomic_replace_path(std::filesystem::path const& source,

@@ -152,9 +152,10 @@ namespace control_api {
             }
             if (method == "GET" && path == "/v1/logs") {
                 auto owned = build_log_command_args(query);
+                if (!owned) return with_cors(json_error(400, "Bad Request", owned.error(), "malformed query parameter"));
                 std::vector<std::string_view> args;
-                args.reserve(owned.size());
-                for (auto const& s : owned) args.emplace_back(s);
+                args.reserve(owned->size());
+                for (auto const& s : *owned) args.emplace_back(s);
                 auto res = command(args);
                 if (!res) return with_cors(json_error(400, "Bad Request", res.error(), res.error()));
                 return with_cors(build_http_response(200, "OK", "application/json", render_logs_json(*res)));
@@ -201,21 +202,8 @@ namespace control_api {
                 }
                 return with_cors(build_http_response(200, "OK", "application/json", render_mode_json(fetch(SnapshotFields::meta))));
             }
-            if (method == "PUT" && path.starts_with("/v1/groups/")) {
-                auto tag = url_decode_once(path.substr(11));
-                auto member = extract_json_string(body, "member");
-                if (!tag || tag->empty() || !member || member->empty())
-                    return with_cors(json_error(400, "Bad Request", "invalid-body", "expected {\"member\":\"...\"}"));
-                std::array<std::string_view, 3> args{"select", *tag, *member};
-                auto res = command(args);
-                if (!res) {
-                    int code = res.error() == "unknown-group" ? 404 : 409;
-                    return with_cors(json_error(code, code == 404 ? "Not Found" : "Conflict", res.error(), res.error()));
-                }
-                return with_cors(build_http_response(200, "OK", "application/json",
-                    std::format("{{\"group\":{},\"selected\":{},\"result\":{}}}\n",
-                        json_escape(*tag), json_escape(*member), json_escape(*res))));
-            }
+            if (auto raw_tag = parse_group_select_tag(method, path))
+                return with_cors(handle_group_select(*raw_tag, body, fetch, command));
             if (method == "POST" && path == "/v1/log-level") {
                 auto level = extract_json_string(body, "level");
                 auto domain = extract_json_string(body, "domain").value_or("global");
@@ -419,6 +407,9 @@ namespace control_api {
                                 if (skind != StreamKind::none) {
                                     if (!impl.check_auth(req.headers, req.query)) {
                                         it->out = inject_cors_headers(json_error(401, "Unauthorized", "unauthorized", "missing or invalid bearer token"), it->cors_origin);
+                                        it->writing = true;
+                                    } else if (skind == StreamKind::logs && !build_log_command_args(req.query)) {
+                                        it->out = inject_cors_headers(json_error(400, "Bad Request", "invalid-query", "malformed query parameter"), it->cors_origin);
                                         it->writing = true;
                                     } else setup_sse_peer(*it, skind, req.query, now, fetch);
                                 } else if (req.valid && is_outbound_probe_route(req.method, req.path)) {

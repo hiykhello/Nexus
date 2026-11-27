@@ -100,9 +100,7 @@ export namespace tailscale::map_session {
                     auto relays=cm::derp_nodes(view->derp_map);
                     if(!relays)return fail(Error::parse,total);
                     if(*relays)state_.derp_=std::move(**relays);
-                    auto dns=md::parse_dns_config(view->dns_config,view->domain);
-                    if(!dns)return fail(Error::parse,total);
-                    if(*dns)state_.dns_=std::move(**dns);
+                    if(!md::apply_dns_delta(state_.dns_,view->dns_config,view->domain))return fail(Error::parse,total);
                     if (!view->keep_alive) state_.revision_=ordinal_;
                     candidate_.clear();if(!decoder_.consume())return fail(Error::frame,total);
                 } else if(!part.consumed)return fail(Error::frame,total);

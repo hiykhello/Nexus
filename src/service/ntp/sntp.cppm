@@ -1,5 +1,7 @@
 export module ntp;
 import std;
+import capy;
+import corosio;
 import platform.wall_clock;
 
 export namespace ntp {
@@ -39,7 +41,16 @@ export namespace ntp {
         std::int64_t t1_unix_ms,
         std::int64_t t4_unix_ms) noexcept -> std::expected<SyncSample, SntpError>;
 
-    // Performs one bounded UDP SNTPv4 query against numeric IP or hostname.
+    // Optional hostname resolution hook (primarily for deterministic testing; nullptr uses OS resolution).
+    using HostResolveCallback = std::vector<corosio::endpoint>(*)(std::string_view host, std::uint16_t port, void* ctx);
+    auto set_host_resolve_callback(HostResolveCallback cb, void* ctx = nullptr) noexcept -> void;
+
+    // Performs one bounded async UDP SNTPv4 query (deadline & cancellation cover hostname resolution and UDP I/O).
+    [[nodiscard]] auto sync_once_async(corosio::io_context& io, std::string_view host, std::uint16_t port = 123,
+        std::uint32_t timeout_ms = 5000, std::stop_token stop = {})
+        -> capy::task<std::expected<SyncSample, SntpError>>;
+
+    // Runs sync_once_async on a temporary io_context for non-coroutine callers.
     [[nodiscard]] auto sync_once(std::string_view host, std::uint16_t port = 123,
         std::uint32_t timeout_ms = 5000, std::stop_token stop = {}) -> std::expected<SyncSample, SntpError>;
 
@@ -54,6 +65,11 @@ export namespace ntp {
             self.sync_count_.fetch_add(1, std::memory_order_relaxed);
             if (&self == &global_calibrator()) platform::set_wall_clock_offset_ms(sample.offset_ms);
         }
+        auto reset(this ClockCalibrator& self) noexcept -> void {
+            self.offset_ms_.store(0, std::memory_order_release);
+            self.sync_count_.store(0, std::memory_order_relaxed);
+            if (&self == &global_calibrator()) platform::set_wall_clock_offset_ms(0);
+        }
         [[nodiscard]] auto offset_ms(this ClockCalibrator const& self) noexcept -> std::int64_t {
             return self.offset_ms_.load(std::memory_order_acquire);
         }
@@ -66,4 +82,8 @@ export namespace ntp {
             return (now_ms + self.offset_ms()) / 1000;
         }
     };
+
+    inline auto reset_offset() noexcept -> void {
+        global_calibrator().reset();
+    }
 }

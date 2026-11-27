@@ -26,8 +26,7 @@ namespace {
 
     auto hex_key(std::span<std::uint8_t const, 32> key) -> std::string {
         constexpr char kHex[] = "0123456789abcdef";
-        std::string out;
-        out.reserve(64);
+        std::string out; out.reserve(64);
         for (auto b : key) { out.push_back(kHex[b >> 4]); out.push_back(kHex[b & 0x0f]); }
         return out;
     }
@@ -35,10 +34,8 @@ namespace {
     auto frame_map_json(std::string_view json) -> std::vector<std::uint8_t> {
         std::vector<std::uint8_t> out(4 + json.size());
         auto n = static_cast<std::uint32_t>(json.size());
-        out[0] = static_cast<std::uint8_t>(n & 0xff);
-        out[1] = static_cast<std::uint8_t>((n >> 8) & 0xff);
-        out[2] = static_cast<std::uint8_t>((n >> 16) & 0xff);
-        out[3] = static_cast<std::uint8_t>((n >> 24) & 0xff);
+        out[0] = static_cast<std::uint8_t>(n); out[1] = static_cast<std::uint8_t>(n >> 8);
+        out[2] = static_cast<std::uint8_t>(n >> 16); out[3] = static_cast<std::uint8_t>(n >> 24);
         std::copy(json.begin(), json.end(), out.begin() + 4);
         return out;
     }
@@ -46,22 +43,14 @@ namespace {
     auto make_ipv4_udp(std::array<std::uint8_t, 4> src, std::array<std::uint8_t, 4> dst,
                        std::uint16_t sport, std::uint16_t dport, std::string_view payload)
         -> std::vector<std::uint8_t> {
-        std::uint16_t udp_len = static_cast<std::uint16_t>(8 + payload.size());
-        std::uint16_t total = static_cast<std::uint16_t>(20 + udp_len);
-        std::vector<std::uint8_t> pkt(total, 0);
-        pkt[0] = 0x45;
-        pkt[2] = static_cast<std::uint8_t>(total >> 8);
-        pkt[3] = static_cast<std::uint8_t>(total & 0xff);
-        pkt[8] = 64;
-        pkt[9] = 17;
-        std::ranges::copy(src, pkt.begin() + 12);
-        std::ranges::copy(dst, pkt.begin() + 16);
-        pkt[20] = static_cast<std::uint8_t>(sport >> 8);
-        pkt[21] = static_cast<std::uint8_t>(sport & 0xff);
-        pkt[22] = static_cast<std::uint8_t>(dport >> 8);
-        pkt[23] = static_cast<std::uint8_t>(dport & 0xff);
-        pkt[24] = static_cast<std::uint8_t>(udp_len >> 8);
-        pkt[25] = static_cast<std::uint8_t>(udp_len & 0xff);
+        auto ulen = static_cast<std::uint16_t>(8 + payload.size()), tot = static_cast<std::uint16_t>(20 + ulen);
+        std::vector<std::uint8_t> pkt(tot, 0);
+        pkt[0] = 0x45; pkt[2] = static_cast<std::uint8_t>(tot >> 8); pkt[3] = static_cast<std::uint8_t>(tot);
+        pkt[8] = 64; pkt[9] = 17;
+        std::ranges::copy(src, pkt.begin() + 12); std::ranges::copy(dst, pkt.begin() + 16);
+        pkt[20] = static_cast<std::uint8_t>(sport >> 8); pkt[21] = static_cast<std::uint8_t>(sport);
+        pkt[22] = static_cast<std::uint8_t>(dport >> 8); pkt[23] = static_cast<std::uint8_t>(dport);
+        pkt[24] = static_cast<std::uint8_t>(ulen >> 8); pkt[25] = static_cast<std::uint8_t>(ulen);
         std::copy(payload.begin(), payload.end(), pkt.begin() + 28);
         return pkt;
     }
@@ -69,21 +58,14 @@ namespace {
     auto make_ipv6_udp(std::array<std::uint8_t, 16> src, std::array<std::uint8_t, 16> dst,
                        std::uint16_t sport, std::uint16_t dport, std::string_view payload)
         -> std::vector<std::uint8_t> {
-        std::uint16_t udp_len = static_cast<std::uint16_t>(8 + payload.size());
-        std::vector<std::uint8_t> pkt(40 + udp_len, 0);
-        pkt[0] = 0x60;
-        pkt[4] = static_cast<std::uint8_t>(udp_len >> 8);
-        pkt[5] = static_cast<std::uint8_t>(udp_len & 0xff);
-        pkt[6] = 17;
-        pkt[7] = 64;
-        std::ranges::copy(src, pkt.begin() + 8);
-        std::ranges::copy(dst, pkt.begin() + 24);
-        pkt[40] = static_cast<std::uint8_t>(sport >> 8);
-        pkt[41] = static_cast<std::uint8_t>(sport & 0xff);
-        pkt[42] = static_cast<std::uint8_t>(dport >> 8);
-        pkt[43] = static_cast<std::uint8_t>(dport & 0xff);
-        pkt[44] = static_cast<std::uint8_t>(udp_len >> 8);
-        pkt[45] = static_cast<std::uint8_t>(udp_len & 0xff);
+        auto ulen = static_cast<std::uint16_t>(8 + payload.size());
+        std::vector<std::uint8_t> pkt(40 + ulen, 0);
+        pkt[0] = 0x60; pkt[4] = static_cast<std::uint8_t>(ulen >> 8); pkt[5] = static_cast<std::uint8_t>(ulen);
+        pkt[6] = 17; pkt[7] = 64;
+        std::ranges::copy(src, pkt.begin() + 8); std::ranges::copy(dst, pkt.begin() + 24);
+        pkt[40] = static_cast<std::uint8_t>(sport >> 8); pkt[41] = static_cast<std::uint8_t>(sport);
+        pkt[42] = static_cast<std::uint8_t>(dport >> 8); pkt[43] = static_cast<std::uint8_t>(dport);
+        pkt[44] = static_cast<std::uint8_t>(ulen >> 8); pkt[45] = static_cast<std::uint8_t>(ulen);
         std::copy(payload.begin(), payload.end(), pkt.begin() + 48);
         return pkt;
     }
@@ -221,6 +203,35 @@ namespace {
         for (int i = 0; i < 32; ++i) state->sync_magic_dns(*resolver);
         stop_dns.store(true, std::memory_order_relaxed);
         for (auto& th : dns_readers) th.join();
+
+        // P2-2: Delta MapResponse with Domain and omitted DNSConfig must preserve split-DNS/resolvers/proxied!
+        {
+            auto d1 = frame_map_json(R"({"Domain":"renamed.ts.net"})");
+            auto f1 = session.feed(d1);
+            auto const* cfg1 = state->dns_config();
+            require(!f1.error && cfg1 && cfg1->magic_dns_suffix == "renamed.ts.net" && cfg1->proxied &&
+                    cfg1->resolvers.size() == 1 && cfg1->resolvers[0].addr == "1.1.1.1" &&
+                    cfg1->fallback_resolvers.size() == 1 && cfg1->fallback_resolvers[0].addr == "9.9.9.9" &&
+                    cfg1->search_domains.size() == 1 && cfg1->split_routes.size() == 2,
+                    "P2-2 delta Domain preserves existing DNSConfig");
+            state->sync_magic_dns(*resolver);
+            auto sp = resolver->select_upstreams("api.eng.corp.internal");
+            auto rn = resolver->resolve("ghost.renamed.ts.net", md::QueryType::a);
+            auto rs = resolver->resolve("exit-us", md::QueryType::a);
+            require(resolver->magic_dns_suffix() == "renamed.ts.net" && resolver->proxied() &&
+                    sp.size() == 1 && sp[0].addr == "10.99.1.53" && sp[0].port == 5353 &&
+                    rn.authoritative_local && rn.nxdomain && rs.authoritative_local && rs.ipv4.size() == 1,
+                    "P2-2 synced MagicDNS split-DNS + new suffix");
+            // Delta DNSConfig object without Domain preserves renamed.ts.net; explicit DNSConfig: null clears it!
+            auto d2 = frame_map_json(R"({"DNSConfig":{"Proxied":true,"Domains":["corp.local"],"Resolvers":[{"Addr":"8.8.8.8:53"}]}})");
+            auto f2 = session.feed(d2);
+            auto const* cfg2 = state->dns_config();
+            require(!f2.error && cfg2 && cfg2->magic_dns_suffix == "renamed.ts.net" &&
+                    cfg2->resolvers.size() == 1 && cfg2->resolvers[0].addr == "8.8.8.8", "P2-2 delta DNSConfig keeps prior Domain");
+            auto d3 = frame_map_json(R"({"DNSConfig":null})");
+            auto f3 = session.feed(d3);
+            require(!f3.error && state->dns_config() == nullptr, "P2-2 explicit DNSConfig null clears snapshot");
+        }
     }
 
     auto test_tailscale_multi_worker_hub() -> void {

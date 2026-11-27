@@ -12,6 +12,38 @@ export namespace xhttp {
         std::vector<Field> fields;
     };
 
+    // Tracks upload and download stream tickets explicitly so stream-up mode
+    // always releases both streams even when distinct HTTP/2 or HTTP/3
+    // connections assign colliding numeric stream IDs / tickets.
+    template<class Ticket>
+    struct StreamTickets {
+        std::optional<Ticket> upload;
+        std::optional<Ticket> download;
+        bool shared_stream = false;
+
+        auto bind_shared(Ticket ticket) noexcept -> void {
+            upload = ticket;
+            download = ticket;
+            shared_stream = true;
+        }
+        auto bind_download(Ticket ticket) noexcept -> void {
+            download = ticket;
+            shared_stream = false;
+        }
+        auto bind_upload(Ticket ticket) noexcept -> void {
+            upload = ticket;
+            shared_stream = false;
+        }
+        template<class ReleaseDown, class ReleaseUp>
+        auto release_all(ReleaseDown&& release_down, ReleaseUp&& release_up) noexcept -> void {
+            auto down = std::exchange(download, std::nullopt);
+            auto up = std::exchange(upload, std::nullopt);
+            bool const shared = std::exchange(shared_stream, false);
+            if (down) release_down(*down);
+            if (up && (!shared || !down)) release_up(*up);
+        }
+    };
+
     [[nodiscard]] inline auto request(Profile const& profile,Endpoint const& endpoint,RequestKind kind,
         std::string_view id,std::uint64_t sequence,std::uint64_t entropy,bool secure) -> Request {
         Request result{kind==RequestKind::download ? "GET" : "POST",endpoint.path,profile.headers};

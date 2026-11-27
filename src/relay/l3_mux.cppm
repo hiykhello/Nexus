@@ -244,6 +244,7 @@ export namespace relay {
                 f.recv.emplace(std::move(*rb));
                 f.peer_mss = parse_peer_mss(opts, local_mss(is_v6));
                 f.peer_window = peer_win;
+                f.send->set_peer_window(peer_win);
                 f.state = TcpFlow::State::established;
                 auto const rw = win16(*f.recv);
                 if (emit_tcp(f, f.iss + 1, f.recv->next(), 0x10, rw, {}, {})) f.last_rx_win = rw;
@@ -259,7 +260,8 @@ export namespace relay {
                     f.fin_acked = true;
                     data_ack = f.send->next();
                 }
-                (void)f.send->acknowledge(data_ack, now);
+                bool carries_data_or_ctrl = !payload.empty() || ((flags & 0x03u) != 0);
+                (void)f.send->acknowledge(data_ack, now, carries_data_or_ctrl, static_cast<std::uint32_t>(peer_win));
                 flush_tx(f, now);
                 f.changed.set();
             }

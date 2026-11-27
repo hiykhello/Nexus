@@ -282,7 +282,7 @@ namespace platform {
 #else
         struct LinuxSnap {
             bool valid = false, gnome = false;
-            std::string mode, pac, hh, hp, sh, sp, xh, xp, ignore_hosts, kread, kwrite, ktype, khttp, khttps;
+            std::string mode, pac, hh, hp, sh, sp, xh, xp, ignore_hosts, kread, kwrite, ktype, khttp, khttps, kpac;
         } g_linux_snap;
         struct GnomeField { char const* schema, *key; std::string LinuxSnap::* field; };
         constexpr std::array<GnomeField, 8> kGnomeFields{{
@@ -420,8 +420,10 @@ namespace platform {
             status.supported = true;
             status.backend = kw;
             std::string pt;
-            if (run_capture(kr.c_str(), (char const* const[]){kr.c_str(), "--file", "kioslaverc", "--group", "Proxy Settings", "--key", "ProxyType", nullptr}, &pt, false))
+            if (run_capture(kr.c_str(), (char const* const[]){kr.c_str(), "--file", "kioslaverc", "--group", "Proxy Settings", "--key", "ProxyType", nullptr}, &pt, false)) {
                 status.enabled = (pt == "1" || pt == "2");
+                if (pt == "2") cap_kde(kr, "Proxy Config Script", status.pac_url);
+            }
             return status;
         }
         status.backend = "none";
@@ -453,11 +455,16 @@ namespace platform {
         if (detect_kde(kr, kw)) {
             if (!g_linux_snap.valid) {
                 g_linux_snap = {.valid = true, .gnome = false, .kread = kr, .kwrite = kw};
-                cap_kde(kr, "ProxyType", g_linux_snap.ktype); cap_kde(kr, "httpProxy", g_linux_snap.khttp); cap_kde(kr, "httpsProxy", g_linux_snap.khttps);
+                cap_kde(kr, "ProxyType", g_linux_snap.ktype); cap_kde(kr, "httpProxy", g_linux_snap.khttp);
+                cap_kde(kr, "httpsProxy", g_linux_snap.khttps); cap_kde(kr, "Proxy Config Script", g_linux_snap.kpac);
             }
             bool ok = true;
-            if (cfg.http_port != 0) { auto url = std::format("http://{}:{}", cfg.host, cfg.http_port); ok = set_kde(kw, "httpProxy", url) && set_kde(kw, "httpsProxy", url); }
-            ok = ok && set_kde(kw, "ProxyType", cfg.pac_url.empty() ? "1" : "2");
+            if (!cfg.pac_url.empty()) {
+                ok = set_kde(kw, "Proxy Config Script", cfg.pac_url) && set_kde(kw, "ProxyType", "2");
+            } else {
+                if (cfg.http_port != 0) { auto url = std::format("http://{}:{}", cfg.host, cfg.http_port); ok = set_kde(kw, "httpProxy", url) && set_kde(kw, "httpsProxy", url); }
+                ok = ok && set_kde(kw, "ProxyType", "1");
+            }
             return ok ? std::expected<void, std::string>{} : std::unexpected("failed configuring KDE kioslaverc proxy");
         }
         return std::unexpected("no supported desktop proxy backend (gsettings/kwriteconfig) found; use --shell-env");
@@ -475,6 +482,7 @@ namespace platform {
             }
             if (!g_linux_snap.khttp.empty()) ok = ok && set_kde(g_linux_snap.kwrite, "httpProxy", g_linux_snap.khttp);
             if (!g_linux_snap.khttps.empty()) ok = ok && set_kde(g_linux_snap.kwrite, "httpsProxy", g_linux_snap.khttps);
+            ok = ok && set_kde(g_linux_snap.kwrite, "Proxy Config Script", g_linux_snap.kpac);
             ok = ok && set_kde(g_linux_snap.kwrite, "ProxyType", g_linux_snap.ktype.empty() ? "0" : g_linux_snap.ktype);
             g_linux_snap = {};
             return ok ? std::expected<void, std::string>{} : std::unexpected("failed restoring KDE kioslaverc proxy");
@@ -483,7 +491,7 @@ namespace platform {
         if (run_capture("gsettings", (char const* const[]){"gsettings", "get", "org.gnome.system.proxy", "mode", nullptr}, &out))
             return set_gnome("org.gnome.system.proxy", "mode", "none") ? std::expected<void, std::string>{} : std::unexpected("failed disabling GNOME gsettings proxy");
         if (detect_kde(kr, kw))
-            return set_kde(kw, "ProxyType", "0") ? std::expected<void, std::string>{} : std::unexpected("failed disabling KDE kioslaverc proxy");
+            return (set_kde(kw, "Proxy Config Script", "") && set_kde(kw, "ProxyType", "0")) ? std::expected<void, std::string>{} : std::unexpected("failed disabling KDE kioslaverc proxy");
         return std::unexpected("no supported desktop proxy backend found");
     }
 #endif

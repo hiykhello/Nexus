@@ -129,14 +129,17 @@ export namespace cli::rule_fetch_detail {
     inline auto cache_path_conflict(std::filesystem::path const& root, std::filesystem::path const& path) -> bool {
         if (path.empty()) return false;
         std::error_code error;
-        auto directory = std::filesystem::weakly_canonical(root / "rulesets", error);
-        if (error) return true;
         auto absolute = std::filesystem::absolute(path, error);
         if (error) return true;
         auto other = std::filesystem::weakly_canonical(absolute, error);
         if (error) return true;
-        auto common = std::ranges::mismatch(directory, other);
-        return common.in1 == directory.end() || common.in2 == other.end();
+        for (auto sub : {"rulesets", "nxmm"}) {
+            auto directory = std::filesystem::weakly_canonical(root / sub, error);
+            if (error) return true;
+            auto common = std::ranges::mismatch(directory, other);
+            if (common.in1 == directory.end() || common.in2 == other.end()) return true;
+        }
+        return false;
     }
 
     inline auto epoch_seconds() -> std::uint64_t {
@@ -182,6 +185,7 @@ export namespace cli::rule_fetch_detail {
         ::state::RulesetCacheLimits limits;
         if (options.max_bytes) limits.max_bytes = *options.max_bytes;
         else if (config.state) limits.max_bytes = config.state->ruleset_cache_max_bytes;
+        options.max_bytes = limits.max_bytes;
         auto ready = ::state::ensure_private_directory(options.cache_root);
         if (!ready) return std::unexpected(std::string(::state::describe(ready.error().stage)));
         options.cache.emplace(options.cache_root, limits);
@@ -189,8 +193,8 @@ export namespace cli::rule_fetch_detail {
     }
 
     inline auto prewarm_srs_cache_sidecar(std::filesystem::path const& cache_root, ::rules::InputFormat format,
-                                          std::string_view body) noexcept -> void {
+                                          std::string_view body, std::uint64_t max_bytes = 64ull * 1024 * 1024) noexcept -> void {
         if (format == ::rules::InputFormat::srs && !cache_root.empty())
-            cli::nxmm_detail::prewarm_srs_sidecar(cache_root, body);
+            cli::nxmm_detail::prewarm_srs_sidecar(cache_root, body, max_bytes);
     }
 }

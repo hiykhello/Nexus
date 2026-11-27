@@ -9,6 +9,7 @@ module;
 
 module cli.proxy_providers;
 import std;
+import blake3;
 import cli.route_files;
 import config;
 import logging;
@@ -124,35 +125,105 @@ namespace cli {
         return fn(cfg, spec, previous_etag, offline_fallback, std::move(stop), client_pool);
     }
 
-    auto provider_cache_paths(std::filesystem::path const& cache_root, std::string_view name)
+    auto canonical_provider_url(std::string_view raw) -> std::string {
+        auto hash = raw.find('#');
+        if (hash != raw.npos) raw = raw.substr(0, hash);
+        auto scheme_end = raw.find("://");
+        if (scheme_end == raw.npos) return std::string(raw);
+        std::string scheme(raw.substr(0, scheme_end));
+        for (auto& ch : scheme)
+            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        auto rest = raw.substr(scheme_end + 3);
+        auto sep = rest.find_first_of("/?");
+        auto authority = rest.substr(0, sep);
+        std::string_view target = sep == rest.npos ? std::string_view{} : rest.substr(sep);
+        std::string host, port;
+        if (authority.starts_with('[')) {
+            auto close = authority.find(']');
+            if (close != authority.npos) {
+                host = std::string(authority.substr(0, close + 1));
+                if (close + 1 < authority.size() && authority[close + 1] == ':')
+                    port = std::string(authority.substr(close + 2));
+            } else host = std::string(authority);
+        } else {
+            auto colon = authority.rfind(':');
+            if (colon != authority.npos) {
+                host = std::string(authority.substr(0, colon));
+                port = std::string(authority.substr(colon + 1));
+            } else host = std::string(authority);
+        }
+        for (auto& ch : host)
+            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        if ((scheme == "https" && port == "443") || (scheme == "http" && port == "80")) port.clear();
+        std::string out = scheme + "://" + host;
+        if (!port.empty()) out += ":" + port;
+        if (target.empty()) out += '/';
+        else if (target.starts_with('?')) { out += '/'; out.append(target); }
+        else out.append(target);
+        return out;
+    }
+
+    namespace {
+        auto provider_cache_stem(std::string_view name, std::string_view canonical_url) -> std::string {
+            auto key = sanitize_key(name);
+            if (key.size() > 64) key.resize(64);
+            blake3::blake3_hasher hasher{};
+            blake3::blake3_hasher_init(&hasher);
+            blake3::blake3_hasher_update(&hasher, canonical_url.data(), canonical_url.size());
+            std::array<std::uint8_t, 16> digest{};
+            blake3::blake3_hasher_finalize(&hasher, digest.data(), digest.size());
+            static constexpr char kHex[] = "0123456789abcdef";
+            key.push_back('-');
+            for (auto b : digest) {
+                key.push_back(kHex[b >> 4]);
+                key.push_back(kHex[b & 0x0fu]);
+            }
+            return key;
+        }
+    }
+
+    auto provider_cache_paths(std::filesystem::path const& cache_root, std::string_view name, std::string_view url)
         -> std::tuple<std::filesystem::path, std::filesystem::path, std::filesystem::path> {
         auto dir = cache_root / "providers";
-        auto stem = sanitize_key(name);
+        auto stem = provider_cache_stem(name, canonical_provider_url(url));
         return {dir / (stem + ".sub"), dir / (stem + ".etag"), dir / (stem + ".userinfo")};
     }
 
-    auto read_provider_cache(std::filesystem::path const& cache_root, std::string_view name)
+    auto read_provider_cache(std::filesystem::path const& cache_root, std::string_view name, std::string_view url)
         -> std::optional<ManagedProviderFetchResult> {
-        auto [body_p, etag_p, ui_p] = provider_cache_paths(cache_root, name);
-        auto body = ::rulefile::read_regular_file(body_p.string());
+        auto canon = canonical_provider_url(url);
+        if (canon.empty()) return std::nullopt;
+        auto dir = cache_root / "providers";
+        auto stem = provider_cache_stem(name, canon);
+        auto stored_url = ::rulefile::read_regular_file((dir / (stem + ".url")).string());
+        if (!stored_url || *stored_url != canon) return std::nullopt;
+        auto body = ::rulefile::read_regular_file((dir / (stem + ".sub")).string());
         if (!body || body->empty()) return std::nullopt;
         ManagedProviderFetchResult res;
         res.body = std::move(*body);
         res.unchanged = true;
-        if (auto et = ::rulefile::read_regular_file(etag_p.string())) res.etag = std::move(*et);
-        if (auto ui = ::rulefile::read_regular_file(ui_p.string()))
+        if (auto et = ::rulefile::read_regular_file((dir / (stem + ".etag")).string())) res.etag = std::move(*et);
+        if (auto ui = ::rulefile::read_regular_file((dir / (stem + ".userinfo")).string()))
             res.userinfo = provider::parse_subscription_userinfo(*ui);
         return res;
     }
 
-    auto write_provider_cache(std::filesystem::path const& cache_root, std::string_view name,
+    auto write_provider_cache(std::filesystem::path const& cache_root, std::string_view name, std::string_view url,
         ManagedProviderFetchResult const& res) -> std::expected<void, std::string> {
-        auto [body_p, etag_p, ui_p] = provider_cache_paths(cache_root, name);
-        if (auto ok = ensure_dir_0700(body_p.parent_path()); !ok) return ok;
-        if (auto ok = write_file_0600(body_p, res.body); !ok) return ok;
-        if (auto ok = write_file_0600(etag_p, res.etag); !ok) return ok;
+        auto canon = canonical_provider_url(url);
+        if (canon.empty()) return std::unexpected("provider cache requires resource URL");
+        auto dir = cache_root / "providers";
+        auto stem = provider_cache_stem(name, canon);
+        if (auto ok = ensure_dir_0700(dir); !ok) return ok;
+        if (auto ok = write_file_0600(dir / (stem + ".url"), canon); !ok) return ok;
+        if (auto ok = write_file_0600(dir / (stem + ".sub"), res.body); !ok) return ok;
+        if (auto ok = write_file_0600(dir / (stem + ".etag"), res.etag); !ok) return ok;
+        auto ui_p = dir / (stem + ".userinfo");
         if (res.userinfo) {
             if (auto ok = write_file_0600(ui_p, format_userinfo_file(*res.userinfo)); !ok) return ok;
+        } else {
+            std::error_code ec;
+            std::filesystem::remove(ui_p, ec);
         }
         return {};
     }
@@ -220,25 +291,35 @@ namespace cli {
         std::string pname = sanitize_key(entry.spec.name);
 
         std::set<std::string> used_secrets;
-        provider::SecretWriter writer = [&](std::string_view hint, std::string_view content) -> std::expected<std::string, std::string> {
-            auto stem = pname + "-" + sanitize_key(hint);
-            auto unique = stem;
-            for (std::size_t n = 2; !used_secrets.insert(unique).second; ++n) unique = stem + "-" + std::to_string(n);
-            auto f = sec_abs / (unique + ".secret");
-            if (auto ok = write_file_0600(f, content); !ok) return std::unexpected(ok.error());
-            return f.string();
-        };
+        std::vector<std::pair<std::filesystem::path, std::string>> all_staged_secrets;
         std::string fallback_ca = !entry.spec.filter.ca_file.empty() ? entry.spec.filter.ca_file :
             (manifest.certificate ? manifest.certificate->ca_file : std::string{});
 
         std::vector<std::pair<std::string, std::string>> next_outbounds;
         for (auto const& proxy : doc.proxies) {
+            std::set<std::string> pending_secrets;
+            std::vector<std::pair<std::filesystem::path, std::string>> node_staged;
+            provider::SecretWriter writer = [&](std::string_view hint, std::string_view content) -> std::expected<std::string, std::string> {
+                auto stem = pname + "-" + sanitize_key(hint);
+                auto unique = stem;
+                for (std::size_t n = 2; used_secrets.contains(unique) || pending_secrets.contains(unique); ++n)
+                    unique = stem + "-" + std::to_string(n);
+                pending_secrets.insert(unique);
+                auto f = sec_abs / (unique + ".secret");
+                node_staged.emplace_back(f, std::string(content));
+                return f.string();
+            };
             auto kdl = provider::emit_outbound_kdl(proxy, writer, fallback_ca);
             if (!kdl) { doc.warnings.push_back(kdl.error()); continue; }
+            for (auto const& u : pending_secrets) used_secrets.insert(u);
+            for (auto& item : node_staged) all_staged_secrets.push_back(std::move(item));
             next_outbounds.emplace_back(proxy.tag, std::move(*kdl));
         }
         if (next_outbounds.empty())
             return std::unexpected("proxy-provider '" + entry.spec.name + "' yielded no valid Nexus outbounds");
+        for (auto const& [f, content] : all_staged_secrets) {
+            if (auto ok = write_file_0600(f, content); !ok) return std::unexpected(ok.error());
+        }
 
         entry.body = std::move(next_body);
         entry.etag = std::move(next_etag);
@@ -248,34 +329,54 @@ namespace cli {
         return true;
     }
 
-    auto ProxyProviderManager::prepare_initial(std::string_view raw_kdl, std::string_view config_path,
-        bool offline_fallback) -> std::expected<std::string, std::string> {
+    auto ProxyProviderManager::prepare_candidate(std::string_view raw_kdl, std::string_view config_path,
+        bool offline_fallback) const -> std::expected<StagedReload, std::string> {
         auto manifest = config::parse_provider_manifest(raw_kdl);
         if (!manifest) return std::unexpected(manifest.error());
-        if (manifest->proxy_providers.empty()) {
-            std::lock_guard lock(mutex_);
-            manifest_ = std::move(*manifest);
-            entries_.clear();
-            ++generation_;
-            return std::string(raw_kdl);
+        StagedReload staged{};
+        staged.manifest_ = std::move(*manifest);
+        if (staged.manifest_.proxy_providers.empty()) {
+            staged.expanded_kdl.assign(raw_kdl);
+            return staged;
         }
         auto bdir = base_directory_for(config_path);
         std::vector<Entry> next_entries;
-        next_entries.reserve(manifest->proxy_providers.size());
+        next_entries.reserve(staged.manifest_.proxy_providers.size());
         auto now = std::chrono::steady_clock::now();
-        for (auto const& spec : manifest->proxy_providers) {
+        std::map<std::string, std::vector<std::pair<std::string, std::string>>> map;
+        for (auto const& spec : staged.manifest_.proxy_providers) {
             Entry e{.spec = spec, .next_refresh = now + std::chrono::milliseconds(spec.update_interval_ms)};
-            if (auto ok = load_entry(e, *manifest, bdir, offline_fallback); !ok) return std::unexpected(ok.error());
+            if (auto ok = load_entry(e, staged.manifest_, bdir, offline_fallback); !ok) return std::unexpected(ok.error());
+            map.emplace(e.spec.name, e.outbounds_kdl);
             next_entries.push_back(std::move(e));
         }
+        auto expanded = provider::expand_providers_in_kdl(raw_kdl, map);
+        if (!expanded) return std::unexpected(std::move(expanded.error()));
+        staged.base_dir_ = std::move(bdir);
+        staged.entries_ = std::move(next_entries);
+        staged.expanded_kdl = std::move(*expanded);
+        return staged;
+    }
+
+    auto ProxyProviderManager::commit_candidate(StagedReload&& staged) -> void {
+        bool now_empty = staged.entries_.empty();
         {
             std::lock_guard lock(mutex_);
-            manifest_ = std::move(*manifest);
-            base_dir_ = std::move(bdir);
-            entries_ = std::move(next_entries);
+            manifest_ = std::move(staged.manifest_);
+            base_dir_ = std::move(staged.base_dir_);
+            entries_ = std::move(staged.entries_);
             ++generation_;
         }
-        return expand_kdl(raw_kdl);
+        if (now_empty) stop();
+    }
+
+    auto ProxyProviderManager::prepare_initial(std::string_view raw_kdl, std::string_view config_path,
+        bool offline_fallback) -> std::expected<std::string, std::string> {
+        auto staged = prepare_candidate(raw_kdl, config_path, offline_fallback);
+        if (!staged) return std::unexpected(std::move(staged.error()));
+        auto out = std::move(staged->expanded_kdl);
+        commit_candidate(std::move(*staged));
+        return out;
     }
 
     auto ProxyProviderManager::expand_kdl(std::string_view raw_kdl) const -> std::expected<std::string, std::string> {

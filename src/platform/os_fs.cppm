@@ -3,6 +3,17 @@ import std;
 
 export namespace platform {
     [[nodiscard]] auto sync_native_handle(std::uintptr_t handle) noexcept -> int;
+    // On Windows, FlushFileBuffers on a non-writable directory handle returns ERROR_ACCESS_DENIED (5)
+    // or ERROR_INVALID_FUNCTION (1); durability for atomic replace is provided by FlushFileBuffers
+    // on the temp file + MoveFileExW(..., MOVEFILE_WRITE_THROUGH). Real I/O faults and all regular-file
+    // errors must still fail.
+    [[nodiscard]] constexpr auto classify_windows_flush_result(
+        bool flush_ok, bool is_directory, std::uint32_t win32_error) noexcept -> bool {
+        if (flush_ok) return true;
+        constexpr std::uint32_t kErrorInvalidFunction = 1u;
+        constexpr std::uint32_t kErrorAccessDenied = 5u;
+        return is_directory && (win32_error == kErrorAccessDenied || win32_error == kErrorInvalidFunction);
+    }
     [[nodiscard]] auto atomic_replace_path(std::filesystem::path const& source,
         std::filesystem::path const& destination) -> std::error_code;
     [[nodiscard]] auto is_reparse_or_symlink(std::filesystem::path const& path) noexcept

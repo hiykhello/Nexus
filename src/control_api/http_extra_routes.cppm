@@ -98,14 +98,137 @@ export namespace control_api::http_detail {
             std::format("{{\"flushed\":{},\"fakeip\":true}}\n", flushed.empty() ? "0" : flushed));
     }
 
-    inline auto handle_clear_cache(std::string_view query, std::string_view body, StreamCommandFn command) -> std::string {
-        std::string target = "all";
-        if (auto scope = parse_query_param(query, "scope"); scope && !scope->empty()) {
-            target = std::move(*scope);
-        } else if (auto t = extract_json_string(body, "target"); t && !t->empty()) {
-            target = std::move(*t);
+    inline auto parse_json_bool(std::string_view body, std::string_view key) -> std::optional<bool> {
+        auto pos = find_json_field_pos(body, key);
+        if (!pos || *pos >= body.size()) return std::nullopt;
+        auto rest = body.substr(*pos);
+        auto valid_term = [](std::string_view tail) noexcept -> bool {
+            if (tail.empty()) return true;
+            char c = tail.front();
+            return c == ',' || c == '}' || c == ' ' || c == '\t' || c == '\r' || c == '\n';
+        };
+        if (rest.starts_with("true") && valid_term(rest.substr(4))) return true;
+        if (rest.starts_with("false") && valid_term(rest.substr(5))) return false;
+        return std::nullopt;
+    }
+
+    inline auto parse_wire_selected(std::string_view wire) -> std::optional<std::string> {
+        auto nl = wire.find('\n');
+        auto line = nl == std::string_view::npos ? wire : wire.substr(0, nl);
+        std::size_t pos = line.starts_with("selected=") ? 0 : line.find(" selected=");
+        if (pos == std::string_view::npos) return std::nullopt;
+        pos += line[pos] == ' ' ? 10 : 9;
+        if (pos >= line.size()) return std::nullopt;
+        if (line[pos] == '"') {
+            std::string val;
+            if (parse_json_string_at(line, pos, val)) return val;
+            return std::nullopt;
         }
-        if (target != "all" && target != "dns" && target != "rulesets" && target != "fakeip") {
+        auto sp = line.find(' ', pos);
+        auto tok = sp == std::string_view::npos ? line.substr(pos) : line.substr(pos, sp - pos);
+        return tok.empty() ? std::nullopt : std::optional<std::string>(std::string(tok));
+    }
+
+    inline auto parse_group_select_tag(std::string_view method, std::string_view path) noexcept
+        -> std::optional<std::string_view> {
+        if (method == "PUT" && path.starts_with("/v1/groups/")) {
+            auto tag = path.substr(11);
+            if (!tag.empty() && !tag.contains('/')) return tag;
+        }
+        if (method == "POST" && path.size() > 18 && path.starts_with("/v1/groups/") && path.ends_with("/select")) {
+            auto tag = path.substr(11, path.size() - 18);
+            if (!tag.empty() && !tag.contains('/')) return tag;
+        }
+        return std::nullopt;
+    }
+
+    inline auto handle_group_select(std::string_view raw_tag, std::string_view body,
+        StreamSnapshotFn fetch, StreamCommandFn command) -> std::string {
+        auto tag = url_decode_once(raw_tag);
+        if (!tag || tag->empty())
+            return json_error(400, "Bad Request", "invalid-group", "expected group name");
+        if (!is_valid_json_object(body))
+            return json_error(400, "Bad Request", "invalid-body", "expected JSON object");
+        std::optional<bool> auto_flag;
+        if (find_json_field_pos(body, "auto")) {
+            auto_flag = parse_json_bool(body, "auto");
+            if (!auto_flag)
+                return json_error(400, "Bad Request", "invalid-body", "expected boolean \"auto\"");
+        }
+        std::optional<std::string> member;
+        if (find_json_field_pos(body, "member")) {
+            member = extract_json_string(body, "member");
+            if (!member || member->empty())
+                return json_error(400, "Bad Request", "invalid-body", "expected non-empty string \"member\"");
+        }
+        bool is_auto = false;
+        std::string arg_member;
+        if (auto_flag.value_or(false)) {
+            if (member && *member != "--auto")
+                return json_error(400, "Bad Request", "invalid-body", "cannot specify both \"auto\":true and \"member\"");
+            is_auto = true;
+            arg_member = "--auto";
+        } else {
+            if (!member)
+                return json_error(400, "Bad Request", "invalid-body", "expected {\"member\":\"...\"} or {\"auto\":true}");
+            is_auto = (*member == "--auto");
+            arg_member = *member;
+        }
+        std::array<std::string_view, 3> args{"select", *tag, arg_member};
+        auto res = command(args);
+        if (!res) {
+            int code = res.error() == "unknown-group" ? 404 : 409;
+            return json_error(code, code == 404 ? "Not Found" : "Conflict", res.error(), res.error());
+        }
+        std::string resolved;
+        if (auto parsed = parse_wire_selected(*res); parsed && !parsed->empty() && *parsed != "--auto") {
+            resolved = std::move(*parsed);
+        } else if (is_auto) {
+            auto snap = fetch(SnapshotFields::groups, std::nullopt);
+            if (auto it = std::ranges::find(snap.groups, *tag, &control_api::GroupMetric::name);
+                it != snap.groups.end() && it->selected != "--auto") {
+                resolved = it->selected;
+            }
+        } else {
+            resolved = arg_member;
+        }
+        return build_http_response(200, "OK", "application/json",
+            std::format("{{\"group\":{},\"selected\":{},\"result\":{}}}\n",
+                json_escape(*tag), json_escape(resolved), json_escape(*res)));
+    }
+
+    inline auto handle_clear_cache(std::string_view query, std::string_view body, StreamCommandFn command) -> std::string {
+        auto valid_target = [](std::string_view t) noexcept -> bool {
+            return t == "all" || t == "dns" || t == "rulesets" || t == "fakeip";
+        };
+        std::string target = "all";
+        bool has_scope = false;
+        if (auto raw_scope = find_query_param_raw(query, "scope")) {
+            auto decoded = url_decode_once(*raw_scope, true);
+            if (!decoded)
+                return json_error(400, "Bad Request", "invalid-target", "malformed scope query parameter");
+            if (!decoded->empty()) {
+                target = std::move(*decoded);
+                has_scope = true;
+            }
+        }
+        std::string_view trimmed = body;
+        while (!trimmed.empty() && (trimmed.front() == ' ' || trimmed.front() == '\t' || trimmed.front() == '\r' || trimmed.front() == '\n'))
+            trimmed.remove_prefix(1);
+        while (!trimmed.empty() && (trimmed.back() == ' ' || trimmed.back() == '\t' || trimmed.back() == '\r' || trimmed.back() == '\n'))
+            trimmed.remove_suffix(1);
+        if (!trimmed.empty()) {
+            if (!is_valid_json_object(trimmed))
+                return json_error(400, "Bad Request", "invalid-body", "expected JSON object");
+            if (find_json_field_pos(trimmed, "target")) {
+                auto t = extract_json_string(trimmed, "target");
+                if (!t || !valid_target(*t))
+                    return json_error(400, "Bad Request", "invalid-target",
+                        "expected target/scope in {\"all\",\"dns\",\"rulesets\",\"fakeip\"}");
+                if (!has_scope) target = std::move(*t);
+            }
+        }
+        if (!valid_target(target)) {
             return json_error(400, "Bad Request", "invalid-target",
                 "expected target/scope in {\"all\",\"dns\",\"rulesets\",\"fakeip\"}");
         }

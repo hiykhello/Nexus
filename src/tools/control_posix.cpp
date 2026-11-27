@@ -435,12 +435,8 @@ namespace cli {
                 auto res=send_control_once(*address,owner,tokens);
                 if (!res) { std::cerr << res.error().second << (res.error().second.ends_with('\n') ? "" : "\n"); return res.error().first; }
                 auto nl=res->find('\n');
-                auto head=nl==std::string::npos ? std::string_view(*res) : std::string_view(*res).substr(0,nl);
                 auto body=nl==std::string::npos ? std::string_view{} : std::string_view(*res).substr(nl+1);
-                if (head.starts_with("latest=")) {
-                    auto sp=head.find(' ');
-                    since=std::string(head.substr(7,sp==std::string_view::npos ? std::string_view::npos : sp-7));
-                }
+                since=advance_control_logs_cursor(since,*res);
                 if (!follow) { std::cout << *res; return 0; }
                 if (!body.empty()) { std::cout << body << std::flush; }
                 std::this_thread::sleep_for(std::chrono::milliseconds(150));

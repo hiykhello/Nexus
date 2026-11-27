@@ -24,6 +24,7 @@ import rules;
 import http.connect;
 import uot;
 import net.datagram_frame;
+import net.udp_connect;
 import net.udp_socket;
 import platform.ip_address;
 import platform.udp_batch;
@@ -99,7 +100,7 @@ namespace relay {
                 auto got = platform::recv_udp_batch(fd, slots);
                 if (!got || *got == 0) break;
                 for (std::size_t i = 0; i < *got && keep_going(); ++i) {
-                    if (slots[i].truncated || !slots[i].received) continue;
+                    if (slots[i].truncated) continue;
                     if (auto ep = sockaddr_to_io_endpoint(slots[i].peer, slots[i].peer_len))
                         on_packet(*ep, std::span(slots[i].data, slots[i].received));
                 }
@@ -122,6 +123,7 @@ namespace relay {
             }
         };
 
+        auto raw_bytes_ptr(std::vector<std::uint8_t> const& v) noexcept -> std::uint8_t const* { static constexpr std::uint8_t kEmpty = 0; return v.empty() ? &kEmpty : v.data(); }
         auto endpoint_to_udp(io::endpoint const& ep) noexcept -> net::UdpEndpoint {
             net::UdpEndpoint u{}; u.port = ep.port();
             if (ep.address().is_v6()) { u.family = 6; std::ranges::copy(ep.address().to_v6().to_bytes(), u.address.begin()); }
@@ -173,7 +175,7 @@ namespace relay {
             if (server_active_flag_) *server_active_flag_ = (active_tasks_ > 0 || !flows_.empty() || !tx_down_.empty());
         }
         auto enqueue_reply(io::endpoint const& client, std::span<std::uint8_t const> bytes) noexcept -> void {
-            if (stopping_ || bytes.empty() || tx_down_.size() >= kMaxDownQueue) return;
+            if (stopping_ || tx_down_.size() >= kMaxDownQueue) return;
             try { tx_down_.push_back({client, buf_pool_.acquire(bytes)}); tx_down_ev_.set(); } catch (...) {}
         }
         auto down_writer_loop() -> capy::task<> {
@@ -193,7 +195,7 @@ namespace relay {
                     std::array<platform::UdpSendSlot, platform::kUdpBatchMax> slots{};
                     for (std::size_t i = 0; i < n; ++i) {
                         auto plen = io_endpoint_to_sockaddr(tx_down_[i].to, peers[i]);
-                        slots[i] = {reinterpret_cast<sockaddr const*>(&peers[i]), plen, tx_down_[i].data.data(), tx_down_[i].data.size()};
+                        slots[i] = {reinterpret_cast<sockaddr const*>(&peers[i]), plen, raw_bytes_ptr(tx_down_[i].data), tx_down_[i].data.size()};
                     }
                     if (auto sent = platform::send_udp_batch(fd, std::span(slots).first(n)); sent && *sent > 0) {
                         for (std::size_t i = 0; i < *sent; ++i) { buf_pool_.release(std::move(tx_down_.front().data)); tx_down_.pop_front(); }
@@ -202,16 +204,18 @@ namespace relay {
                 }
 #endif
                 auto pkt = std::move(tx_down_.front()); tx_down_.pop_front();
-                (void)co_await socket_.send_to(capy::const_buffer(pkt.data.data(), pkt.data.size()), pkt.to);
+                (void)co_await socket_.send_to(capy::const_buffer(raw_bytes_ptr(pkt.data), pkt.data.size()), pkt.to);
                 buf_pool_.release(std::move(pkt.data));
             }
         }
         auto decide_route(Flow& flow, std::span<std::uint8_t const> payload) -> std::optional<std::size_t> {
             auto const& policy = flow.session.route_snapshot ? flow.session.route_snapshot->matcher : server_.routing_policy();
+            auto pick = [&](std::size_t out) -> std::optional<std::size_t> { auto c = policy.choose_outbound(out, target_host_); return c == 1 ? std::nullopt : std::optional(c); };
+            if (auto ov = flow.session.mode_override_outbound(target_host_)) return pick(*ov);
             auto proto = detect_udp_protocol(payload);
             if (flow.session.ordered_tcp && flow.session.ordered_tcp->udp) {
                 auto const& ord = *flow.session.ordered_tcp;
-                rules::ProgramInput input{.port = target_port_, .network = rules::Network::udp, .protocol = proto, .source_port = flow.client.port()};
+                rules::ProgramInput input{.port = target_port_, .network = rules::Network::udp, .protocol = proto, .source_port = flow.client.port(), .route_mode = flow.session.active_route_mode()};
                 if (target_addr_.family == net::ProxyAddressFamily::domain) input.explicit_domain = target_host_; else input.ip = target_host_;
                 if (flow.session.inbound) input.inbound = *flow.session.inbound;
                 auto src_str = flow.client.address().to_string(); input.source_ip = src_str;
@@ -223,16 +227,13 @@ namespace relay {
                         if (ord.unknown_policy != sniff::UnknownRoutePolicy::skip || !cursor.skip_unknown(next->rule_index)) return std::nullopt;
                         continue;
                     }
-                    if (next->kind == rules::ProgramPreflightKind::exhausted) return policy.choose_outbound(ord.fallback, target_host_);
+                    if (next->kind == rules::ProgramPreflightKind::exhausted) return pick(ord.fallback);
                     auto step = *next->step;
                     if (step.action.udp_timeout_ms) flow.idle_timeout = std::chrono::milliseconds(step.action.udp_timeout_ms);
                     else if (step.action.udp_adaptive_timeout)
                         flow.idle_timeout = std::chrono::milliseconds(rules::adaptive_udp_timeout_ms(proto, target_port_, static_cast<std::uint32_t>(idle_timeout_.count())));
                     if (step.action.kind == rules::ProgramActionKind::reject) return std::nullopt;
-                    if (step.action.kind == rules::ProgramActionKind::route || step.action.kind == rules::ProgramActionKind::bypass) {
-                        auto chosen = policy.choose_outbound(step.action.outbound, target_host_);
-                        return chosen == 1 ? std::nullopt : std::optional(chosen);
-                    }
+                    if (step.action.kind == rules::ProgramActionKind::route || step.action.kind == rules::ProgramActionKind::bypass) return pick(step.action.outbound);
                     if (!cursor.complete(step)) return std::nullopt;
                 }
             }
@@ -270,8 +271,7 @@ namespace relay {
                     dst = {io::ipv4_address(b), target_port_};
                 }
                 flow->resolved_target = dst; flow->upstream.emplace(ctx);
-                if (flow->upstream->open(dst.address().is_v6() ? io::family::v6 : io::family::v4)) co_return;
-                if (flow->upstream->bind(dst.address().is_v6() ? io::endpoint(io::ipv6_address::any(), 0) : io::endpoint(io::ipv4_address::any(), 0))) co_return;
+                if (net::prepare_udp_socket(*flow->upstream, dst, flow->session.direct_tcp_options ? &flow->session.direct_tcp_options->binding : nullptr, deadline)) co_return;
                 flow->connected = true;
                 auto writer = [&]() -> capy::task<capy::results<>> {
 #if !defined(_WIN32)
@@ -284,14 +284,14 @@ namespace relay {
                             auto const n = std::min(flow->tx_queue.size(), platform::kUdpBatchMax);
                             std::array<platform::UdpSendSlot, platform::kUdpBatchMax> slots{};
                             for (std::size_t i = 0; i < n; ++i)
-                                slots[i] = {reinterpret_cast<sockaddr const*>(&dst_ss), dst_len, flow->tx_queue[i].data(), flow->tx_queue[i].size()};
+                                slots[i] = {reinterpret_cast<sockaddr const*>(&dst_ss), dst_len, raw_bytes_ptr(flow->tx_queue[i]), flow->tx_queue[i].size()};
                             auto sent = platform::send_udp_batch(fd, std::span(slots).first(n));
                             if (sent && *sent > 0) {
                                 std::size_t total = 0;
                                 for (std::size_t i = 0; i < *sent; ++i) {
                                     total += flow->tx_queue.front().size(); buf_pool_.release(std::move(flow->tx_queue.front())); flow->tx_queue.pop_front();
                                 }
-                                flow->session.touched = flow->last_active = Clock::now(); flow->session.count_traffic(true, total); continue;
+                                flow->session.touched = flow->last_active = Clock::now(); if (total) flow->session.count_traffic(true, total); continue;
                             }
                             if (!sent) {
                                 if (sent.error() != std::errc::message_size) break;
@@ -300,10 +300,10 @@ namespace relay {
                         }
 #endif
                         auto pkt = std::move(flow->tx_queue.front()); flow->tx_queue.pop_front();
-                        auto [ec, n] = co_await flow->upstream->send_to(capy::const_buffer(pkt.data(), pkt.size()), flow->resolved_target);
+                        auto [ec, n] = co_await flow->upstream->send_to(capy::const_buffer(raw_bytes_ptr(pkt), pkt.size()), flow->resolved_target);
                         buf_pool_.release(std::move(pkt));
                         if (ec) { if (ec == std::errc::message_size) continue; break; }
-                        flow->session.touched = flow->last_active = Clock::now(); flow->session.count_traffic(true, n);
+                        flow->session.touched = flow->last_active = Clock::now(); if (n) flow->session.count_traffic(true, n);
                     }
                     flow->cancel(); co_return capy::results<>{};
                 };
@@ -312,16 +312,16 @@ namespace relay {
                     while (!stopping_ && flow->active) {
                         io::endpoint peer;
                         auto [ec, n] = co_await flow->upstream->recv_from(capy::mutable_buffer(buf.data(), buf.size()), peer);
-                        if (ec || !n || stopping_ || !flow->active) break;
-                        auto now = Clock::now(); std::size_t batch_bytes = 0;
+                        if (ec || stopping_ || !flow->active) break;
+                        auto now = Clock::now(); std::size_t batch_bytes = 0; bool saw_reply = false;
                         auto on_reply = [&](io::endpoint const& p, std::span<std::uint8_t const> d) {
-                            if (p == flow->resolved_target) { batch_bytes += d.size(); enqueue_reply(flow->client, d); }
+                            if (p == flow->resolved_target) { saw_reply = true; batch_bytes += d.size(); enqueue_reply(flow->client, d); }
                         };
                         on_reply(peer, std::span(buf.data(), n));
 #if !defined(_WIN32)
                         drain_udp_recv_batch(flow->upstream->native_handle(), 1, [&] { return !stopping_ && flow->active; }, on_reply);
 #endif
-                        if (batch_bytes) { flow->session.touched = flow->last_active = now; flow->session.count_traffic(false, batch_bytes); }
+                        if (saw_reply) { flow->session.touched = flow->last_active = now; if (batch_bytes) flow->session.count_traffic(false, batch_bytes); }
                     }
                     flow->cancel();
                     co_return capy::results<>{};
@@ -388,7 +388,7 @@ namespace relay {
         }
 
         auto handle_incoming(io::endpoint const& client, std::span<std::uint8_t const> payload, Clock::time_point now) -> void {
-            if (payload.empty() || !client.port()) return;
+            if (!client.port()) return;
             auto const key = make_endpoint_key(client);
             std::shared_ptr<Flow> flow;
             if (auto it = flows_.find(key); it != flows_.end() && it->second->active) flow = it->second;

@@ -41,8 +41,11 @@ namespace cli {
                 s->hooks.shed_new_sessions->store(lvl == memory::PressureLevel::emergency, std::memory_order_release);
             if (lvl != s->last_level) {
                 s->last_level = lvl;
+                auto const& st = s->dog.stats();
                 rt.emit(lvl == memory::PressureLevel::emergency ? logging::Level::warn : logging::Level::info,
-                    logging::Domain::core, 109, {}, "memory-watchdog pressure_level={}", static_cast<int>(lvl));
+                    logging::Domain::core, 109, {},
+                    "memory-watchdog pressure_level={} rss_bytes={} cgroup_bytes={}",
+                    static_cast<int>(lvl), st.last_rss_bytes, st.last_cgroup_bytes);
             }
         };
         return ServiceHandle::create(std::move(state), tick);

@@ -130,8 +130,8 @@ export namespace cli {
             return std::shared_ptr<DnsCacheState>(new DnsCacheState(handle.release()));
         }
 
-        auto restore(this DnsCacheState const& self, dns::MessageCache& cache, Scope const& scope)
-            -> std::expected<void, std::string> {
+        auto restore(this DnsCacheState const& self, dns::MessageCache& cache, Scope const& scope,
+            std::uint64_t policy_view = 0) -> std::expected<void, std::string> {
             auto file = self.read();
             if (!file) return std::unexpected(std::move(file.error()));
             if (file->empty()) return {};
@@ -160,7 +160,9 @@ export namespace cli {
                 if (upstream >= scope.views.size() || !query || !answer || !ttl || ttl > 600 ||
                     query + answer > input.size()) return invalid();
                 auto bytes = reinterpret_cast<std::uint8_t const*>(input.data());
-                if (!cache.restore(scope.views[upstream], {bytes, static_cast<std::size_t>(query)},
+                auto view = scope.views[upstream];
+                view.policy_view = policy_view;
+                if (!cache.restore(view, {bytes, static_cast<std::size_t>(query)},
                     std::vector<std::uint8_t>(bytes + query, bytes + query + answer),
                     static_cast<std::uint32_t>(ttl), elapsed, steady))
                     return invalid();
@@ -169,8 +171,8 @@ export namespace cli {
             return input.empty() ? std::expected<void, std::string>{} : invalid();
         }
 
-        auto prepare_save(this DnsCacheState const& self, dns::MessageCache const& cache, Scope const& scope)
-            -> std::expected<std::string, std::string> {
+        auto prepare_save(this DnsCacheState const& self, dns::MessageCache const& cache, Scope const& scope,
+            std::uint64_t policy_view = 0) -> std::expected<std::string, std::string> {
             (void)self;
             if (scope.identity.size() > max_bytes - 18) return std::unexpected("DNS policy exceeds snapshot byte limit");
             auto wire = scope.identity;
@@ -178,7 +180,9 @@ export namespace cli {
             auto count_at = wire.size();
             append(wire, 0, 2);
             unsigned count = 0;
-            auto entries = cache.checkpoint(scope.views, std::chrono::steady_clock::now(), max_bytes - wire.size() - 8);
+            auto views = scope.views;
+            for (auto& view : views) view.policy_view = policy_view;
+            auto entries = cache.checkpoint(views, std::chrono::steady_clock::now(), max_bytes - wire.size() - 8);
             for (auto const& row : entries) {
                 append(wire, row.view.upstream, 2);
                 append(wire, row.query.size(), 2);
@@ -198,9 +202,9 @@ export namespace cli {
             return self.write(wire);
         }
 
-        auto save(this DnsCacheState const& self, dns::MessageCache const& cache, Scope const& scope)
-            -> std::expected<void, std::string> {
-            auto wire = self.prepare_save(cache, scope);
+        auto save(this DnsCacheState const& self, dns::MessageCache const& cache, Scope const& scope,
+            std::uint64_t policy_view = 0) -> std::expected<void, std::string> {
+            auto wire = self.prepare_save(cache, scope, policy_view);
             if (!wire) return std::unexpected(std::move(wire.error()));
             return self.commit_save(*wire);
         }

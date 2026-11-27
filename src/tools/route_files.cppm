@@ -7,6 +7,7 @@ export import rules.rule_input;
 
 export namespace cli {
     auto set_working_directory(std::filesystem::path directory) -> void;
+    auto restore_working_directory(std::optional<std::filesystem::path> directory) -> void;
     [[nodiscard]] auto working_directory() -> std::optional<std::filesystem::path>;
     [[nodiscard]] auto read_config_source(std::string_view path,bool is_directory=false,
         std::string_view host_override_path={}) -> std::expected<std::string,std::string>;
@@ -23,6 +24,8 @@ export namespace cli {
     auto register_managed_http_pool_factory(ManagedHttpPoolFactory factory) noexcept -> void;
     auto ensure_http_fetchers_registered() noexcept -> void;
     [[nodiscard]] auto create_managed_http_pool() noexcept -> std::shared_ptr<void>;
+    [[nodiscard]] auto verify_remote_ruleset_sha256(config::BlockRules const& spec, std::string_view body)
+        -> std::expected<void, std::string>;
     [[nodiscard]] auto fetch_managed_ruleset(config::Config const& config,std::string_view config_source,
         config::BlockRules const& spec,std::string_view previous_etag={},bool offline_fallback=true,
         std::stop_token stop={},void* client_pool=nullptr) -> std::expected<ManagedRulesetFetchResult,std::string>;

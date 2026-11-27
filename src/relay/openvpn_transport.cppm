@@ -227,7 +227,9 @@ export namespace relay::ovpn_detail {
 
         auto pump_app_recv(tls::ApplicationIo& app, openvpn::ControlChannel& ctrl, std::vector<std::uint8_t>& tls_rx,
                            std::vector<std::uint8_t>& plain_out, Clock::time_point dl) -> capy::task<bool> {
+            std::size_t const before = plain_out.size();
             for (;;) {
+                if (stopped || Clock::now() >= dl) co_return false;
                 while (!tls_rx.empty()) {
                     auto fed = app.feed(tls_rx);
                     if (!fed) co_return false;
@@ -245,7 +247,7 @@ export namespace relay::ovpn_detail {
                         co_return false;
                     if (!fed->consumed) break;
                 }
-                if (!plain_out.empty()) co_return true;
+                if (plain_out.size() > before) co_return true;
                 auto pkt = co_await recv_wire(dl);
                 if (!pkt) co_return false;
                 auto cp = decode_ctrl(*pkt);

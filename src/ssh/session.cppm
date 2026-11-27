@@ -1,8 +1,8 @@
 export module ssh.session;
 import std;
 import crypto;
-import ssh.wire;
-import ssh.crypto;
+export import ssh.wire;
+export import ssh.crypto;
 import capy;
 import corosio;
 
@@ -10,52 +10,26 @@ export namespace ssh {
     using Clock = std::chrono::steady_clock;
     using Deadline = std::optional<Clock::time_point>;
 
-    struct ClientAuth {
-        std::string user;
-        std::optional<std::string> password;
-        std::optional<PrivateKey> private_key;
-        std::vector<std::array<std::uint8_t, 32>> host_key_sha256;
-        std::string preferred_cipher;
-        std::uint32_t keepalive_interval_ms = 30000;
-        ClientAuth() = default;
-        ClientAuth(ClientAuth&&) noexcept = default;
-        auto operator=(ClientAuth&&) noexcept -> ClientAuth& = default;
-        ~ClientAuth() {
-            if (password && !password->empty())
-                crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(password->data()), password->size()));
-        }
-    };
-
-    inline constexpr std::size_t kMaxChannels = 64;
-    inline constexpr std::uint32_t kInitialWindow = 1024u * 1024u, kMaxPacket = 32768u;
-    inline constexpr std::uint32_t kWindowAdjustThreshold = 256u * 1024u, kMaxEncryptedPackets = 1u << 30;
-    inline constexpr std::uint64_t kMaxEncryptedBytes = 1ull << 30;
-
     template<class Stream>
     class Session {
-        struct ChannelSlot {
-            bool in_use = false, opening = false, open_ok = false, open_fail = false;
-            bool remote_eof = false, remote_close = false, local_eof = false, local_close = false;
-            bool released = false, want_close = false;
-            std::uint32_t peer_id = 0;
-            std::uint32_t local_window = kInitialWindow, local_consumed = 0;
-            std::uint32_t peer_window = 0, peer_max_packet = kMaxPacket;
-            std::deque<std::uint8_t> rx;
-            Clock::time_point released_at{};
-        };
+        enum class RekeyState { idle, sent_kexinit, in_progress };
 
         Stream& stream_;
         PacketCipher tx_, rx_;
-        std::uint32_t send_seq_ = 0, recv_seq_ = 0, tx_enc_pkts_ = 0, rx_enc_pkts_ = 0;
-        std::uint64_t tx_bytes_ = 0, rx_bytes_ = 0;
+        std::uint32_t send_seq_ = 0, recv_seq_ = 0;
+        RekeyTracker rekey_{};
         std::array<std::uint8_t, 32> session_id_{};
-        std::vector<std::uint8_t> rx_buf_;
-        std::size_t rx_off_ = 0;
+        std::string server_banner_, cipher_list_;
+        std::vector<std::array<std::uint8_t, 32>> host_key_sha256_;
+        RxBuffer rx_buf_{};
+        std::vector<std::uint8_t> rekey_ic_;
         std::array<ChannelSlot, kMaxChannels> channels_{};
         capy::async_mutex tx_mutex_;
-        capy::async_event changed_, ctrl_ev_, ka_stop_;
-        std::uint32_t keepalive_ms_ = 30000;
-        bool closed_ = false, running_ = false, authed_ = false, strict_kex_ = false;
+        capy::async_event changed_, ctrl_ev_, ka_stop_, opened_, rekey_ev_;
+        std::uint32_t keepalive_ms_ = 30000, pending_request_failures_ = 0;
+        Clock::time_point rekey_started_at_{};
+        RekeyState rekey_state_ = RekeyState::idle;
+        bool closed_ = false, running_ = false, authed_ = false, strict_kex_ = false, want_local_rekey_ = false;
         std::size_t active_channels_ = 0;
         std::chrono::milliseconds close_reclaim_timeout_{5000};
 
@@ -64,28 +38,17 @@ export namespace ssh {
             auto [err] = dl ? co_await corosio::timeout(std::move(op), *dl) : co_await std::move(op);
             co_return !err && !closed_ && (!dl || Clock::now() < *dl);
         }
-
         auto read_more(Clock::time_point dl) -> capy::task<bool> {
-            if (rx_off_ == rx_buf_.size()) { rx_buf_.clear(); rx_off_ = 0; }
-            else if (rx_off_ > 4096) {
-                rx_buf_.erase(rx_buf_.begin(), rx_buf_.begin() + static_cast<std::ptrdiff_t>(rx_off_));
-                rx_off_ = 0;
-            }
+            rx_buf_.compact();
             std::array<std::uint8_t, 16640> tmp{};
             auto r = co_await stream_.read(tmp, dl);
             if (!r || *r == 0 || closed_) co_return false;
-            rx_buf_.insert(rx_buf_.end(), tmp.begin(), tmp.begin() + static_cast<std::ptrdiff_t>(*r));
+            rx_buf_.append(std::span(tmp).first(*r));
             co_return true;
         }
         auto read_exact(std::span<std::uint8_t> out, Clock::time_point dl) -> capy::task<bool> {
             while (!out.empty()) {
-                if (rx_off_ < rx_buf_.size()) {
-                    auto n = std::min(out.size(), rx_buf_.size() - rx_off_);
-                    std::copy_n(rx_buf_.data() + rx_off_, n, out.data());
-                    rx_off_ += n;
-                    out = out.subspan(n);
-                    continue;
-                }
+                if (auto n = rx_buf_.take(out); n > 0) { out = out.subspan(n); continue; }
                 if (!co_await read_more(dl)) co_return false;
             }
             co_return true;
@@ -94,8 +57,8 @@ export namespace ssh {
             for (int line_no = 0; line_no < 64; ++line_no) {
                 std::string line;
                 while (line.size() < 256) {
-                    if (rx_off_ == rx_buf_.size() && !co_await read_more(dl)) co_return std::nullopt;
-                    char c = static_cast<char>(rx_buf_[rx_off_++]);
+                    if (rx_buf_.available() == 0 && !co_await read_more(dl)) co_return std::nullopt;
+                    char c = static_cast<char>(rx_buf_.pop_byte());
                     if (c == '\n') {
                         if (!line.empty() && line.back() == '\r') line.pop_back();
                         if (line.starts_with("SSH-2.0-") || line.starts_with("SSH-1.99-")) co_return line;
@@ -109,9 +72,7 @@ export namespace ssh {
             co_return std::nullopt;
         }
         auto recv_packet(Clock::time_point dl) -> capy::task<std::optional<std::vector<std::uint8_t>>> {
-            if (rx_.kind() != CipherKind::none && (rx_enc_pkts_ >= kMaxEncryptedPackets || rx_bytes_ >= kMaxEncryptedBytes)) {
-                cancel(); co_return std::nullopt;
-            }
+            if (rx_.kind() != CipherKind::none && rekey_.rx_hard_exceeded()) { cancel(); co_return std::nullopt; }
             std::array<std::uint8_t, 4> hdr{};
             if (!co_await read_exact(hdr, dl)) co_return std::nullopt;
             auto pkt_len = rx_.decrypt_length(recv_seq_, hdr);
@@ -120,33 +81,125 @@ export namespace ssh {
             if (!co_await read_exact(rest, dl)) co_return std::nullopt;
             auto body = rx_.decrypt_body(recv_seq_++, hdr, rest);
             if (!body) co_return std::nullopt;
-            if (rx_.kind() != CipherKind::none) { ++rx_enc_pkts_; rx_bytes_ += *pkt_len; }
+            if (rx_.kind() != CipherKind::none) { ++rekey_.rx_pkts; rekey_.rx_bytes += *pkt_len; }
             co_return std::move(*body);
         }
         auto send_packet_unlocked(std::span<std::uint8_t const> payload, Clock::time_point dl, bool reset_seq = false)
             -> capy::task<bool> {
             if (closed_) co_return false;
-            if (tx_.kind() != CipherKind::none &&
-                (tx_enc_pkts_ >= kMaxEncryptedPackets || payload.size() > kMaxEncryptedBytes - tx_bytes_)) {
-                cancel(); co_return false;
-            }
-            struct SendGuard {
-                Session& s; bool committed = false;
-                ~SendGuard() { if (!committed) s.cancel(); }
-            } guard{*this};
+            if (tx_.kind() != CipherKind::none && rekey_.tx_hard_exceeded(payload.size())) { cancel(); co_return false; }
+            struct SendGuard { Session& s; bool ok = false; ~SendGuard() { if (!ok) s.cancel(); } } guard{*this};
             auto wire = tx_.encrypt(send_seq_++, payload);
             if (!wire) co_return false;
-            if (tx_.kind() != CipherKind::none) { ++tx_enc_pkts_; tx_bytes_ += payload.size(); }
+            if (tx_.kind() != CipherKind::none) { ++rekey_.tx_pkts; rekey_.tx_bytes += payload.size(); }
             if (reset_seq && strict_kex_) send_seq_ = 0;
-            bool ok = co_await stream_.send(*wire, dl);
-            guard.committed = ok;
-            co_return ok;
+            guard.ok = co_await stream_.send(*wire, dl);
+            co_return guard.ok;
         }
-        auto send_packet(std::span<std::uint8_t const> payload, Clock::time_point dl) -> capy::task<bool> {
+        auto send_kex_packet(std::span<std::uint8_t const> payload, Clock::time_point dl, bool reset_seq = false)
+            -> capy::task<bool> {
             if (closed_) co_return false;
             auto [err, lk] = co_await corosio::timeout(tx_mutex_.scoped_lock(), dl);
             if (err || closed_) co_return false;
-            co_return co_await send_packet_unlocked(payload, dl);
+            co_return co_await send_packet_unlocked(payload, dl, reset_seq);
+        }
+        auto begin_local_rekey_locked(Clock::time_point dl) -> capy::task<bool> {
+            auto ic = build_client_kexinit(cipher_list_, false);
+            if (!ic) { cancel(); co_return false; }
+            rekey_ic_ = std::move(*ic);
+            rekey_state_ = RekeyState::sent_kexinit;
+            rekey_started_at_ = Clock::now();
+            want_local_rekey_ = false;
+            ctrl_ev_.set();
+            co_return co_await send_packet_unlocked(rekey_ic_, std::min(dl, rekey_started_at_ + rekey_.timeout));
+        }
+        auto initiate_local_rekey(Clock::time_point dl) -> capy::task<bool> {
+            if (closed_ || rekey_state_ != RekeyState::idle) co_return true;
+            auto [err, lk] = co_await corosio::timeout(tx_mutex_.scoped_lock(), dl);
+            if (err || closed_) co_return false;
+            if (rekey_state_ != RekeyState::idle) co_return true;
+            co_return co_await begin_local_rekey_locked(dl);
+        }
+        auto send_packet(std::span<std::uint8_t const> payload, Clock::time_point dl) -> capy::task<bool> {
+            while (!closed_) {
+                if (rekey_state_ != RekeyState::idle) {
+                    rekey_ev_.clear();
+                    if (rekey_state_ != RekeyState::idle && !co_await wait_event(rekey_ev_, dl)) co_return false;
+                    continue;
+                }
+                auto [err, lk] = co_await corosio::timeout(tx_mutex_.scoped_lock(), dl);
+                if (err || closed_) co_return false;
+                if (rekey_state_ != RekeyState::idle) continue;
+                if (rekey_.should_trigger_tx(authed_ && tx_.kind() != CipherKind::none, payload.size(), Clock::now())) {
+                    if (!co_await begin_local_rekey_locked(dl)) co_return false;
+                    continue;
+                }
+                co_return co_await send_packet_unlocked(payload, dl);
+            }
+            co_return false;
+        }
+        auto recv_kex_packet(Clock::time_point dl, bool& skip_guessed_kex, bool strict_initial)
+            -> capy::task<std::optional<std::vector<std::uint8_t>>> {
+            for (;;) {
+                auto p = co_await recv_packet(dl);
+                if (!p || p->empty() || closed_) co_return std::nullopt;
+                auto m = (*p)[0];
+                if (!strict_initial && (m == kMsgIgnore || m == kMsgDebug || m == kMsgUnimplemented)) continue;
+                if (skip_guessed_kex && m >= 30 && m <= 49) { skip_guessed_kex = false; continue; }
+                co_return std::move(*p);
+            }
+        }
+        auto perform_kex(bool is_initial, std::span<std::uint8_t const> server_kexinit, Clock::time_point dl)
+            -> capy::task<bool> {
+            if (!is_initial) {
+                if (rekey_state_ == RekeyState::in_progress) co_return false;
+                bool const need_send_ic = (rekey_state_ == RekeyState::idle);
+                rekey_state_ = RekeyState::in_progress;
+                want_local_rekey_ = false;
+                if (rekey_started_at_ == Clock::time_point{}) rekey_started_at_ = Clock::now();
+                ctrl_ev_.set();
+                if (need_send_ic) {
+                    auto ic = build_client_kexinit(cipher_list_, false);
+                    if (!ic) co_return false;
+                    rekey_ic_ = std::move(*ic);
+                    if (!co_await send_kex_packet(rekey_ic_, dl)) co_return false;
+                }
+            }
+            auto neg = negotiate_client_kex(cipher_list_, server_kexinit);
+            if (!neg) co_return false;
+            if (is_initial) strict_kex_ = neg->strict_kex;
+            auto eph = crypto::X25519Private::generate();
+            if (!eph) co_return false;
+            auto qc = eph->public_key();
+            if (!qc) co_return false;
+            Writer ke; ke.byte(kMsgKexEcdhInit).string(*qc);
+            if (!(is_initial ? co_await send_packet_unlocked(ke.buf, dl) : co_await send_kex_packet(ke.buf, dl)))
+                co_return false;
+            bool skip_guess = neg->skip_guessed_kex;
+            auto kr = co_await recv_kex_packet(dl, skip_guess, is_initial && strict_kex_);
+            if (!kr || kr->empty() || (*kr)[0] != kMsgKexEcdhReply) co_return false;
+            std::span<std::uint8_t const> sid = is_initial
+                ? std::span<std::uint8_t const>{} : std::span<std::uint8_t const>(session_id_);
+            auto keys = finish_ecdh_kex(kClientVersion, server_banner_, rekey_ic_, server_kexinit, *qc, *eph,
+                                        *kr, host_key_sha256_, sid, neg->c_cs, neg->c_sc);
+            if (!keys) co_return false;
+            if (is_initial) session_id_ = keys->exchange_hash;
+            std::array<std::uint8_t, 1> nk{kMsgNewKeys};
+            if (is_initial) {
+                if (!co_await send_packet_unlocked(nk, dl, true) || !tx_.activate(keys->c_cs, keys->k_cs, keys->iv_cs)) co_return false;
+            } else {
+                auto [err, lk] = co_await corosio::timeout(tx_mutex_.scoped_lock(), dl);
+                if (err || closed_ || !co_await send_packet_unlocked(nk, dl, false) || !tx_.activate(keys->c_cs, keys->k_cs, keys->iv_cs)) co_return false;
+            }
+            rekey_.reset_tx();
+            bool no_skip = false;
+            auto snk = co_await recv_kex_packet(dl, no_skip, is_initial && strict_kex_);
+            if (!snk || snk->size() != 1 || (*snk)[0] != kMsgNewKeys) co_return false;
+            if (is_initial && strict_kex_) recv_seq_ = 0;
+            if (!rx_.activate(keys->c_sc, keys->k_sc, keys->iv_sc)) co_return false;
+            rekey_.reset_rx(); rekey_ic_.clear(); rekey_.last_rekey = Clock::now(); rekey_started_at_ = Clock::time_point{};
+            if (!is_initial) { rekey_state_ = RekeyState::idle; ++rekey_.count; rekey_ev_.set(); ctrl_ev_.set(); }
+            co_return true;
         }
         auto send_channel_eof_close(std::uint8_t msg, std::uint32_t peer_id, Clock::time_point dl) -> capy::task<bool> {
             Writer w; w.byte(msg).u32(peer_id);
@@ -162,49 +215,16 @@ export namespace ssh {
                 co_return m;
             }
         }
-
         auto handle_channel_packet(std::uint8_t msg, Reader& r) -> bool {
             auto id = r.u32();
-            if (!id || *id >= kMaxChannels) return true;
-            auto& ch = channels_[*id];
-            if (!ch.in_use) return true;
-            if (msg == kMsgChannelOpenConfirm) {
-                auto peer_id = r.u32(), win = r.u32(), maxp = r.u32();
-                if (!peer_id || !win || !maxp) return false;
-                ch.peer_id = *peer_id; ch.peer_window = *win;
-                ch.peer_max_packet = std::clamp(*maxp, std::uint32_t{1024}, kMaxPacket);
-                ch.opening = false; ch.open_ok = true; opened_.set();
-                if (ch.released) { ch.want_close = true; ctrl_ev_.set(); }
-            } else if (msg == kMsgChannelOpenFailure) {
-                ch.opening = false; ch.open_fail = true; opened_.set(); ctrl_ev_.set();
-            } else if (msg == kMsgChannelWindowAdjust) {
-                auto add = r.u32();
-                if (!add) return false;
-                ch.peer_window = static_cast<std::uint32_t>(std::min<std::uint64_t>(std::uint64_t(ch.peer_window) + *add, 0x7fffffffu));
-                changed_.set();
-            } else if (msg == kMsgChannelData) {
-                auto data = r.string();
-                if (!data || data->size() > ch.local_window) return false;
-                ch.local_window -= static_cast<std::uint32_t>(data->size());
-                ch.rx.insert(ch.rx.end(), data->begin(), data->end());
-                changed_.set();
-            } else if (msg == kMsgChannelExtData) {
-                auto dtype = r.u32();
-                auto data = r.string();
-                if (!dtype || !data || data->size() > ch.local_window) return false;
-                ch.local_window -= static_cast<std::uint32_t>(data->size());
-                ch.local_consumed += static_cast<std::uint32_t>(data->size());
-                ctrl_ev_.set();
-            } else if (msg == kMsgChannelEof) {
-                ch.remote_eof = true; changed_.set();
-            } else if (msg == kMsgChannelClose) {
-                ch.remote_eof = ch.remote_close = true;
-                ch.want_close = !ch.local_close && !ch.released;
-                changed_.set(); opened_.set(); ctrl_ev_.set();
-            }
+            if (!id || *id >= kMaxChannels || !channels_[*id].in_use) return true;
+            auto sig = apply_channel_packet(channels_[*id], msg, r);
+            if (!sig.valid) return false;
+            if (sig.opened) opened_.set();
+            if (sig.changed) changed_.set();
+            if (sig.ctrl) ctrl_ev_.set();
             return true;
         }
-        capy::async_event opened_;
         auto read_loop() -> capy::task<capy::results<>> {
             struct Guard { Session& s; ~Guard() { s.running_ = false; s.cancel(); } } g{*this};
             while (!closed_) {
@@ -212,33 +232,60 @@ export namespace ssh {
                 if (!pkt || pkt->empty() || closed_) break;
                 Reader r{*pkt};
                 auto msg = *r.byte();
-                if (msg == kMsgIgnore || msg == kMsgDebug || msg == kMsgExtInfo ||
-                    msg == kMsgRequestSuccess || msg == kMsgRequestFailure || msg == kMsgUnimplemented) continue;
+                if (msg == kMsgKexInit) {
+                    if (!co_await perform_kex(false, *pkt, Clock::now() + rekey_.timeout)) break;
+                    continue;
+                }
+                if (msg == kMsgDisconnect || msg == kMsgNewKeys) break;
                 if (msg == kMsgGlobalRequest) {
                     auto req = r.text();
                     auto want = r.boolean();
-                    if (req && want && *want) {
-                        Writer fw; fw.byte(kMsgRequestFailure);
-                        (void)co_await send_packet(fw.buf, Clock::now() + std::chrono::seconds(5));
-                    }
-                    continue;
+                    if (req && want && *want) { ++pending_request_failures_; ctrl_ev_.set(); }
+                } else if (msg >= kMsgChannelOpenConfirm && msg <= kMsgChannelClose) {
+                    if (!handle_channel_packet(msg, r)) break;
                 }
-                if (msg == kMsgDisconnect || msg == kMsgKexInit || msg == kMsgNewKeys) break;
-                if (msg >= kMsgChannelOpenConfirm && msg <= kMsgChannelClose && !handle_channel_packet(msg, r)) break;
+                if (rekey_state_ == RekeyState::idle &&
+                    rekey_.should_trigger_rx(authed_ && rx_.kind() != CipherKind::none, Clock::now())) {
+                    want_local_rekey_ = true;
+                    ctrl_ev_.set();
+                }
             }
             co_return capy::results<>{};
         }
-
         auto control_loop() -> capy::task<capy::results<>> {
             while (!closed_) {
                 ctrl_ev_.clear();
                 bool did_work = false;
                 auto now = Clock::now();
                 Deadline next_reclaim;
+                auto clamp_due = [&](Clock::time_point due) noexcept {
+                    next_reclaim = next_reclaim ? std::min(*next_reclaim, due) : due;
+                };
+                if (rekey_state_ != RekeyState::idle) {
+                    if (rekey_started_at_ != Clock::time_point{}) {
+                        if (now - rekey_started_at_ >= rekey_.timeout) { cancel(); break; }
+                        clamp_due(rekey_started_at_ + rekey_.timeout);
+                    }
+                } else {
+                    if (rekey_.should_trigger_tx(authed_ && tx_.kind() != CipherKind::none, 0, now))
+                        want_local_rekey_ = true;
+                    else if (auto due = rekey_.next_time_due()) clamp_due(*due);
+                    if (want_local_rekey_) {
+                        want_local_rekey_ = false;
+                        did_work = true;
+                        if (!co_await initiate_local_rekey(now + rekey_.timeout)) { cancel(); break; }
+                    }
+                    while (pending_request_failures_ > 0 && !closed_ && rekey_state_ == RekeyState::idle) {
+                        --pending_request_failures_;
+                        did_work = true;
+                        Writer fw; fw.byte(kMsgRequestFailure);
+                        if (!co_await send_packet(fw.buf, Clock::now() + std::chrono::seconds(5))) { cancel(); break; }
+                    }
+                }
                 for (std::size_t i = 0; i < kMaxChannels && !closed_; ++i) {
                     auto& ch = channels_[i];
                     if (!ch.in_use) continue;
-                    if (ch.open_ok && ch.local_consumed >= kWindowAdjustThreshold &&
+                    if (rekey_state_ == RekeyState::idle && ch.open_ok && ch.local_consumed >= kWindowAdjustThreshold &&
                         !ch.local_close && !ch.remote_close && !ch.released) {
                         did_work = true;
                         auto add = std::exchange(ch.local_consumed, 0);
@@ -246,7 +293,7 @@ export namespace ssh {
                         Writer w; w.byte(kMsgChannelWindowAdjust).u32(ch.peer_id).u32(add);
                         if (!co_await send_packet(w.buf, Clock::now() + std::chrono::seconds(5))) { cancel(); break; }
                     }
-                    if ((ch.want_close || ch.released) && ch.open_ok && !ch.local_close) {
+                    if (rekey_state_ == RekeyState::idle && (ch.want_close || ch.released) && ch.open_ok && !ch.local_close) {
                         did_work = true; ch.local_close = true; ch.want_close = false;
                         if (ch.released && ch.released_at == Clock::time_point{}) ch.released_at = Clock::now();
                         if (!co_await send_channel_eof_close(kMsgChannelClose, ch.peer_id, Clock::now() + std::chrono::seconds(5))) { cancel(); break; }
@@ -260,20 +307,17 @@ export namespace ssh {
                         (ch.remote_close || ch.open_fail || !ch.open_ok || timed_out)) {
                         did_work = true; ch = ChannelSlot{}; --active_channels_; changed_.set();
                     } else if ((wait_close || wait_open) && ch.released_at != Clock::time_point{}) {
-                        auto due = ch.released_at + close_reclaim_timeout_;
-                        next_reclaim = next_reclaim ? std::min(*next_reclaim, due) : due;
+                        clamp_due(ch.released_at + close_reclaim_timeout_);
                     }
                 }
                 if (!did_work && !closed_) (void)co_await wait_event(ctrl_ev_, next_reclaim);
             }
             co_return capy::results<>{};
         }
-
         auto keepalive_loop() -> capy::task<capy::results<>> {
             while (!closed_ && keepalive_ms_ > 0) {
                 ka_stop_.clear();
-                auto deadline = Clock::now() + std::chrono::milliseconds(keepalive_ms_);
-                auto [err] = co_await corosio::timeout(ka_stop_.wait(), deadline);
+                auto [err] = co_await corosio::timeout(ka_stop_.wait(), Clock::now() + std::chrono::milliseconds(keepalive_ms_));
                 if (closed_ || !err) break;
                 Writer w; w.byte(kMsgGlobalRequest).string("keepalive@openssh.com").boolean(true);
                 if (!co_await send_packet(w.buf, Clock::now() + std::chrono::seconds(10))) { cancel(); break; }
@@ -286,79 +330,35 @@ export namespace ssh {
         auto operator=(Session const&) -> Session& = delete;
         auto usable() const noexcept -> bool { return !closed_ && authed_; }
         auto available() const noexcept -> bool { return usable() && active_channels_ < kMaxChannels; }
+        auto rekey_count() const noexcept -> std::uint64_t { return rekey_.count; }
         auto set_close_reclaim_timeout(std::chrono::milliseconds d) noexcept -> void { close_reclaim_timeout_ = d; }
-        auto cancel() noexcept -> void {
-            closed_ = true; ka_stop_.set(); ctrl_ev_.set(); changed_.set(); opened_.set(); stream_.cancel();
-        }
+        auto set_rekey_limits(std::uint64_t bytes, std::uint32_t pkts = kMaxEncryptedPackets - 65536u,
+                              std::chrono::milliseconds iv = std::chrono::hours(1)) noexcept -> void { rekey_.set_limits(bytes, pkts, iv); }
+        auto cancel() noexcept -> void { closed_ = true; ka_stop_.set(); ctrl_ev_.set(); changed_.set(); opened_.set(); rekey_ev_.set(); stream_.cancel(); }
 
         auto start_client(ClientAuth const& auth, Clock::time_point dl) -> capy::task<bool> {
             keepalive_ms_ = auth.keepalive_interval_ms;
+            host_key_sha256_ = auth.host_key_sha256;
+            cipher_list_ = auth.preferred_cipher.empty()
+                ? "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com" : auth.preferred_cipher;
             std::string banner_wire = std::string(kClientVersion) + "\r\n";
             if (!co_await stream_.send(std::span<std::uint8_t const>(reinterpret_cast<std::uint8_t const*>(banner_wire.data()), banner_wire.size()), dl)) co_return false;
             auto server_banner = co_await read_banner(dl);
             if (!server_banner) co_return false;
-            KexInit ci;
-            if (!crypto::random_bytes(ci.cookie)) co_return false;
-            ci.kex_algorithms = "curve25519-sha256," + std::string(kStrictClientKex);
-            ci.server_host_key_algorithms = "ssh-ed25519,ecdsa-sha2-nistp256";
-            std::string ciphers = auth.preferred_cipher.empty() ? "chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com" : auth.preferred_cipher;
-            ci.enc_c2s = ci.enc_s2c = ciphers;
-            ci.mac_c2s = ci.mac_s2c = "hmac-sha2-256,hmac-sha2-512";
-            auto ic = encode_kexinit(ci);
-            if (!co_await send_packet_unlocked(ic, dl)) co_return false;
+            server_banner_ = *server_banner;
+            auto ic = build_client_kexinit(cipher_list_, true);
+            if (!ic) co_return false;
+            rekey_ic_ = std::move(*ic);
+            if (!co_await send_packet_unlocked(rekey_ic_, dl)) co_return false;
             auto is_pkt = co_await recv_packet(dl);
-            if (!is_pkt) co_return false;
-            auto si = decode_kexinit(*is_pkt);
-            if (!si) co_return false;
-            strict_kex_ = list_contains(si->kex_algorithms, kStrictServerKex);
-            if (!negotiate_algorithm("curve25519-sha256", si->kex_algorithms)) co_return false;
-            auto enc_cs = negotiate_algorithm(ciphers, si->enc_c2s), enc_sc = negotiate_algorithm(ciphers, si->enc_s2c);
-            auto c_cs = enc_cs ? parse_cipher_kind(*enc_cs) : std::nullopt;
-            auto c_sc = enc_sc ? parse_cipher_kind(*enc_sc) : std::nullopt;
-            if (!c_cs || !c_sc) co_return false;
-            auto eph = crypto::X25519Private::generate();
-            if (!eph) co_return false;
-            auto qc = eph->public_key();
-            if (!qc) co_return false;
-            Writer ke; ke.byte(kMsgKexEcdhInit).string(*qc);
-            if (!co_await send_packet_unlocked(ke.buf, dl)) co_return false;
-            auto kr = co_await recv_packet(dl);
-            if (!kr || kr->empty() || (*kr)[0] != kMsgKexEcdhReply) co_return false;
-            Reader rr{std::span(*kr).subspan(1)};
-            auto ks = rr.string(), qs = rr.string(), sig = rr.string();
-            if (!ks || !qs || !sig || !rr.empty() || qs->size() != 32) co_return false;
-            auto shared = eph->agree(*qs);
-            if (!shared) co_return false;
-            auto h = compute_exchange_hash(kClientVersion, *server_banner, ic, *is_pkt, *ks, *qc, *qs, shared->view());
-            if (!h || !verify_host_key(*ks, auth.host_key_sha256, *h, *sig)) co_return false;
-            session_id_ = *h;
-            auto iv_cs = derive_key(shared->view(), *h, 'A', session_id_, cipher_iv_bytes(*c_cs));
-            auto iv_sc = derive_key(shared->view(), *h, 'B', session_id_, cipher_iv_bytes(*c_sc));
-            auto k_cs = derive_key(shared->view(), *h, 'C', session_id_, cipher_key_bytes(*c_cs));
-            auto k_sc = derive_key(shared->view(), *h, 'D', session_id_, cipher_key_bytes(*c_sc));
-            struct KeyWipe {
-                decltype(iv_cs)& a; decltype(iv_sc)& b; decltype(k_cs)& c; decltype(k_sc)& d;
-                ~KeyWipe() { if (a) crypto::cleanse(*a); if (b) crypto::cleanse(*b); if (c) crypto::cleanse(*c); if (d) crypto::cleanse(*d); }
-            } key_wipe{iv_cs, iv_sc, k_cs, k_sc};
-            if (!iv_cs || !iv_sc || !k_cs || !k_sc) co_return false;
-            std::array<std::uint8_t, 1> nk{kMsgNewKeys};
-            if (!co_await send_packet_unlocked(nk, dl, true)) co_return false;
-            auto snk = co_await recv_packet(dl);
-            if (!snk || snk->size() != 1 || (*snk)[0] != kMsgNewKeys) co_return false;
-            if (strict_kex_) recv_seq_ = 0;
-            if (!tx_.activate(*c_cs, *k_cs, *iv_cs) || !rx_.activate(*c_sc, *k_sc, *iv_sc)) co_return false;
+            if (!is_pkt || !co_await perform_kex(true, *is_pkt, dl)) co_return false;
             Writer sr; sr.byte(kMsgServiceRequest).string("ssh-userauth");
             if (!co_await send_packet_unlocked(sr.buf, dl)) co_return false;
             auto svc = co_await wait_auth_reply(dl, false);
             if (!svc || *svc != kMsgServiceAccept) co_return false;
             if (auth.private_key) {
-                auto const& pk = *auth.private_key;
-                Writer sign_in, req;
-                sign_in.string(session_id_).byte(kMsgUserauthRequest).string(auth.user).string("ssh-connection").string("publickey").boolean(true).string(pk.algorithm()).string(pk.public_key_blob());
-                auto psig = pk.sign(sign_in.buf);
-                if (!psig) co_return false;
-                req.byte(kMsgUserauthRequest).string(auth.user).string("ssh-connection").string("publickey").boolean(true).string(pk.algorithm()).string(pk.public_key_blob()).string(*psig);
-                if (!co_await send_packet_unlocked(req.buf, dl)) co_return false;
+                auto req = build_publickey_auth_request(session_id_, auth.user, *auth.private_key);
+                if (!req || !co_await send_packet_unlocked(*req, dl)) co_return false;
                 auto ar = co_await wait_auth_reply(dl, true);
                 if (!ar) co_return false;
                 if (*ar == kMsgUserauthSuccess) { authed_ = true; co_return true; }
@@ -380,7 +380,6 @@ export namespace ssh {
             else (void)co_await capy::when_all(read_loop(), control_loop());
             co_return capy::results<>{};
         }
-
         auto open_direct_tcpip(std::string_view host, std::uint16_t port, Clock::time_point dl, std::stop_token cancel_tok = {})
             -> capy::task<std::optional<std::uint32_t>> {
             if (!usable() || host.empty() || !port || cancel_tok.stop_requested()) co_return std::nullopt;
@@ -391,10 +390,8 @@ export namespace ssh {
             auto& ch = channels_[*slot_id];
             ch = ChannelSlot{}; ch.in_use = ch.opening = true; ++active_channels_;
             struct OpenGuard { Session& s; std::uint32_t id; bool ok = false; ~OpenGuard() { if (!ok) s.release_channel(id); } } og{*this, *slot_id};
-            Writer w;
-            w.byte(kMsgChannelOpen).string("direct-tcpip").u32(*slot_id).u32(kInitialWindow).u32(kMaxPacket)
-                .string(host).u32(port).string("127.0.0.1").u32(0);
-            if (!co_await send_packet(w.buf, dl)) { og.ok = true; ch = ChannelSlot{}; --active_channels_; co_return std::nullopt; }
+            auto open_buf = build_channel_open_direct_tcpip(*slot_id, host, port);
+            if (!co_await send_packet(open_buf, dl)) { og.ok = true; ch = ChannelSlot{}; --active_channels_; co_return std::nullopt; }
             std::stop_callback stop_cb(cancel_tok, [this] noexcept { opened_.set(); });
             while (!closed_ && ch.opening && !cancel_tok.stop_requested()) {
                 opened_.clear();
@@ -407,7 +404,6 @@ export namespace ssh {
             og.ok = true;
             co_return slot_id;
         }
-
         auto read_channel(std::uint32_t id, std::span<std::uint8_t> out, Clock::time_point dl)
             -> capy::task<std::expected<std::size_t, std::string>> {
             if (id >= kMaxChannels) co_return std::unexpected("invalid SSH channel");
@@ -428,7 +424,6 @@ export namespace ssh {
             }
             co_return std::unexpected("SSH session closed");
         }
-
         auto write_channel(std::uint32_t id, std::span<std::uint8_t const> data, Clock::time_point dl)
             -> capy::task<bool> {
             if (id >= kMaxChannels) co_return false;
@@ -442,14 +437,12 @@ export namespace ssh {
                 if (closed_ || ch.released || ch.peer_window == 0 || ch.local_close || ch.remote_close) co_return false;
                 auto chunk = static_cast<std::uint32_t>(std::min<std::size_t>({data.size(), ch.peer_window, ch.peer_max_packet}));
                 ch.peer_window -= chunk;
-                Writer w;
-                w.byte(kMsgChannelData).u32(ch.peer_id).string(data.first(chunk));
+                Writer w; w.byte(kMsgChannelData).u32(ch.peer_id).string(data.first(chunk));
                 if (!co_await send_packet(w.buf, dl)) co_return false;
                 data = data.subspan(chunk);
             }
             co_return true;
         }
-
         auto close_output(std::uint32_t id, Clock::time_point dl) -> capy::task<bool> {
             if (id >= kMaxChannels) co_return false;
             auto& ch = channels_[id];
@@ -462,7 +455,6 @@ export namespace ssh {
             }
             co_return true;
         }
-
         auto release_channel(std::uint32_t id) noexcept -> void {
             if (id >= kMaxChannels) return;
             auto& ch = channels_[id];

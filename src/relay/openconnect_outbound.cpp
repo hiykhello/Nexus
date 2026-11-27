@@ -105,14 +105,24 @@ namespace relay {
                 Host(io::io_context& ctx, OpenConnectProfile const& p, platform::TcpSocketOptions opts, TunnelFactory const* d)
                     : context(ctx), profile(p), options(std::move(opts)), via(d),
                       mux(L3Endpoint{p.cfg.has_v4, p.cfg.local_v4, p.cfg.has_v6, p.cfg.local_v6, p.cfg.mtu}, &Host::send_ip, this),
-                      dpd_s(p.cfg.dpd_s), keepalive_s(p.cfg.keepalive_s) {}
+                      dpd_s(p.cfg.dpd_s), keepalive_s(p.cfg.keepalive_s) {
+                    dtls.allow_fallback = !p.cfg.dtls || p.cfg.dtls_fallback;
+                }
 
                 static auto send_ip(void* ctx, std::span<std::uint8_t const> pkt) -> bool {
                     auto* h = static_cast<Host*>(ctx);
                     if (h->stopped) return false;
-                    if (h->dtls.established() && h->dtls.send_data(pkt, h->oc_session)) {
-                        h->last_tx_ms = oc_now_ms();
-                        return true;
+                    bool const strict_dtls = h->profile.cfg.dtls && !h->profile.cfg.dtls_fallback;
+                    if (h->dtls.established()) {
+                        if (h->dtls.send_data(pkt, h->oc_session)) {
+                            h->last_tx_ms = oc_now_ms();
+                            return true;
+                        }
+                        if (h->dtls.failed_hard) { h->stop(); return false; }
+                        if (strict_dtls || !h->dtls.may_send_cstp_data()) return false;
+                    } else if (strict_dtls || !h->dtls.may_send_cstp_data()) {
+                        if (h->dtls.failed_hard) h->stop();
+                        return false;
                     }
                     if (h->dtls.failed_hard) { h->stop(); return false; }
                     if (h->tx_queue.size() >= 256) return false;
@@ -301,6 +311,7 @@ namespace relay {
                         Host& h;
                         ~Fin() {
                             if (!h.started) {
+                                h.dtls.close();
                                 if (h.tls_stream) h.tls_stream->cancel();
                                 if (h.conn) h.conn->cancel();
                                 h.tls_stream.reset();
@@ -374,6 +385,10 @@ namespace relay {
                         dtls_started = !via && !parsed->dtls_session_id.empty() &&
                             dtls.start(connected_peer, *parsed, dtls_secret, options.binding, profile.cfg.dtls_fallback, oc_now_ms(), deadline);
                         if (!dtls_started && !profile.cfg.dtls_fallback) co_return false;
+                        if (dtls_started && !profile.cfg.dtls_fallback) {
+                            bool ok = co_await dtls.await_handshake(oc_session, deadline, [&] { return stopped || s.closed; });
+                            if (!ok) co_return false;
+                        }
                     }
                     oc_session.on_connected(dtls_started);
                     last_tx_ms = last_rx_ms = oc_now_ms(); loop_active = true;

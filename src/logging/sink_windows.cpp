@@ -43,50 +43,30 @@ namespace logging {
             return h;
         }
 
+        struct Win32RotateOps {
+            static auto ok() noexcept -> DWORD { return ERROR_SUCCESS; }
+            static auto invalid_arg() noexcept -> DWORD { return ERROR_INVALID_PARAMETER; }
+            static auto is_not_found(DWORD e) noexcept -> bool { return e == ERROR_FILE_NOT_FOUND; }
+            static auto open_append(std::filesystem::path const& path, bool exclusive,
+                std::uint64_t& size_out, DWORD& err_out) noexcept -> void* {
+                return open_append_file(path, exclusive, size_out, err_out);
+            }
+            static auto close(void* h) noexcept -> void { ::CloseHandle(static_cast<HANDLE>(h)); }
+            static auto remove(std::filesystem::path const& path) noexcept -> void { ::DeleteFileW(path.c_str()); }
+            static auto move_replace(std::filesystem::path const& src, std::filesystem::path const& dst,
+                DWORD& err_out) noexcept -> bool {
+                if (::MoveFileExW(src.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+                    err_out = ERROR_SUCCESS;
+                    return true;
+                }
+                err_out = ::GetLastError();
+                return false;
+            }
+        };
+
         inline auto rotate_file(std::filesystem::path const& dir, std::span<std::string const> names,
             std::string const& temp_name, void*& active_handle, std::uint64_t& active_size) noexcept -> DWORD {
-            std::uint64_t dummy_sz = 0;
-            DWORD err = ERROR_SUCCESS;
-            auto temp_path = dir / temp_name;
-            void* next = open_append_file(temp_path, true, dummy_sz, err);
-            if (!next) return err;
-            for (std::size_t idx = names.size() - 1; idx > 1; --idx) {
-                auto src = dir / names[idx - 1];
-                auto dst = dir / names[idx];
-                if (!::MoveFileExW(src.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-                    DWORD e = ::GetLastError();
-                    if (e != ERROR_FILE_NOT_FOUND) {
-                        ::CloseHandle(static_cast<HANDLE>(next));
-                        ::DeleteFileW(temp_path.c_str());
-                        return e;
-                    }
-                }
-            }
-            if (active_handle) {
-                ::CloseHandle(static_cast<HANDLE>(active_handle));
-                active_handle = nullptr;
-            }
-            if (names.size() > 1) {
-                auto cur = dir / names[0];
-                auto bak = dir / names[1];
-                (void)::MoveFileExW(cur.c_str(), bak.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
-            }
-            auto cur = dir / names[0];
-            if (!::MoveFileExW(temp_path.c_str(), cur.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
-                DWORD e = ::GetLastError();
-                ::CloseHandle(static_cast<HANDLE>(next));
-                ::DeleteFileW(temp_path.c_str());
-                std::uint64_t recovered_sz = 0;
-                DWORD reopen_err = ERROR_SUCCESS;
-                if (void* recovered = open_append_file(cur, false, recovered_sz, reopen_err)) {
-                    active_handle = recovered;
-                    active_size = recovered_sz;
-                }
-                return e;
-            }
-            active_handle = next;
-            active_size = 0;
-            return ERROR_SUCCESS;
+            return rotate_file_ops<void*, DWORD>(dir, names, temp_name, active_handle, active_size, Win32RotateOps{});
         }
     }
 

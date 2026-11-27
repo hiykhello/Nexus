@@ -21,17 +21,26 @@ namespace packet {
 
 #if defined(_WIN32)
     namespace {
-        using InitUnicastFn = VOID (NETIOAPI_API_*)(PMIB_UNICASTIPADDRESS_ROW);
-        using CreateUnicastFn = NTSTATUS (NETIOAPI_API_*)(CONST MIB_UNICASTIPADDRESS_ROW*);
-        using DeleteUnicastFn = NTSTATUS (NETIOAPI_API_*)(CONST MIB_UNICASTIPADDRESS_ROW*);
-        using InitForwardFn = VOID (NETIOAPI_API_*)(PMIB_IPFORWARD_ROW2);
-        using CreateForwardFn = NTSTATUS (NETIOAPI_API_*)(CONST MIB_IPFORWARD_ROW2*);
-        using DeleteForwardFn = NTSTATUS (NETIOAPI_API_*)(CONST MIB_IPFORWARD_ROW2*);
-        using GetBestRoute2Fn = NTSTATUS (NETIOAPI_API_*)(NET_LUID*, NET_IFINDEX, CONST SOCKADDR_INET*,
-            CONST SOCKADDR_INET*, ULONG, PMIB_IPFORWARD_ROW2, PSOCKADDR_INET);
-        using InitIpIfaceFn = VOID (NETIOAPI_API_*)(ADDRESS_FAMILY, PMIB_IPINTERFACE_ROW);
-        using GetIpIfaceFn = NTSTATUS (NETIOAPI_API_*)(PMIB_IPINTERFACE_ROW);
-        using SetIpIfaceFn = NTSTATUS (NETIOAPI_API_*)(PMIB_IPINTERFACE_ROW);
+        using InitUnicastFn = decltype(&::InitializeUnicastIpAddressEntry);
+        using CreateUnicastFn = decltype(&::CreateUnicastIpAddressEntry);
+        using DeleteUnicastFn = decltype(&::DeleteUnicastIpAddressEntry);
+        using InitForwardFn = decltype(&::InitializeIpForwardEntry);
+        using CreateForwardFn = decltype(&::CreateIpForwardEntry2);
+        using DeleteForwardFn = decltype(&::DeleteIpForwardEntry2);
+        using GetBestRoute2Fn = decltype(&::GetBestRoute2);
+        using InitIpIfaceFn = decltype(&::InitializeIpInterfaceEntry);
+        using GetIpIfaceFn = decltype(&::GetIpInterfaceEntry);
+        using SetIpIfaceFn = decltype(&::SetIpInterfaceEntry);
+
+        static_assert(std::is_invocable_v<InitIpIfaceFn, PMIB_IPINTERFACE_ROW>,
+            "InitializeIpInterfaceEntry must take a single PMIB_IPINTERFACE_ROW argument");
+        static_assert(!std::is_invocable_v<InitIpIfaceFn, ADDRESS_FAMILY, PMIB_IPINTERFACE_ROW>,
+            "InitializeIpInterfaceEntry does not take an ADDRESS_FAMILY parameter");
+
+        struct ResolvedExclude {
+            NET_LUID luid{};
+            SOCKADDR_INET next_hop{};
+        };
 
         auto to_sockaddr_inet(TunCidr const& cidr, SOCKADDR_INET& dst) noexcept -> void {
             std::memset(&dst, 0, sizeof(dst));
@@ -95,59 +104,63 @@ namespace packet {
             return std::unexpected(std::make_error_code(std::errc::function_not_supported));
         }
 
-        if (init_if && get_if && set_if) {
-            for (ADDRESS_FAMILY fam : {AF_INET, AF_INET6}) {
-                MIB_IPINTERFACE_ROW ifrow{};
-                init_if(fam, &ifrow);
-                ifrow.InterfaceLuid.Value = adapter_luid;
-                if (get_if(&ifrow) == NO_ERROR) {
-                    ifrow.NlMtu = plan.mtu;
-                    ifrow.UseAutomaticMetric = FALSE;
-                    ifrow.Metric = 0;
-                    if (fam == AF_INET) ifrow.SitePrefixLength = 0;
-                    (void)set_if(&ifrow);
+        auto resolve_exclude = [&](TunCidr const& exc) -> std::expected<ResolvedExclude, std::error_code> {
+            if (!get_best) return std::unexpected(std::make_error_code(std::errc::function_not_supported));
+            SOCKADDR_INET dst{}, best_src{};
+            to_sockaddr_inet(exc, dst);
+            MIB_IPFORWARD_ROW2 best{};
+            init_f(&best);
+            auto st = get_best(nullptr, 0, nullptr, &dst, 0, &best, &best_src);
+            if (st != NO_ERROR) return std::unexpected(std::error_code{static_cast<int>(st), std::system_category()});
+            if (best.InterfaceLuid.Value == 0 || best.InterfaceLuid.Value == adapter_luid)
+                return std::unexpected(std::make_error_code(std::errc::network_unreachable));
+            return ResolvedExclude{best.InterfaceLuid, best.NextHop};
+        };
+        auto configure_interface = [&]() -> std::error_code {
+            if (init_if && get_if && set_if) {
+                for (ADDRESS_FAMILY fam : {AF_INET, AF_INET6}) {
+                    MIB_IPINTERFACE_ROW ifrow{};
+                    init_if(&ifrow);
+                    ifrow.Family = fam;
+                    ifrow.InterfaceLuid.Value = adapter_luid;
+                    if (get_if(&ifrow) == NO_ERROR) {
+                        ifrow.NlMtu = plan.mtu;
+                        ifrow.UseAutomaticMetric = FALSE;
+                        ifrow.Metric = 0;
+                        if (fam == AF_INET) ifrow.SitePrefixLength = 0;
+                        (void)set_if(&ifrow);
+                    }
                 }
             }
-        }
-        for (auto const& addr : plan.addresses) {
-            MIB_UNICASTIPADDRESS_ROW row{};
-            init_u(&row);
-            row.InterfaceLuid.Value = adapter_luid;
-            row.OnLinkPrefixLength = addr.prefix;
-            row.DadState = IpDadStatePreferred;
-            to_sockaddr_inet(addr, row.Address);
-            auto st = add_u(&row);
-            if (st == NO_ERROR) impl_->addresses.push_back(row);
-            else if (st != ERROR_OBJECT_ALREADY_EXISTS) {
-                stop();
-                return std::unexpected(std::error_code{static_cast<int>(st), std::system_category()});
+            for (auto const& addr : plan.addresses) {
+                MIB_UNICASTIPADDRESS_ROW row{};
+                init_u(&row);
+                row.InterfaceLuid.Value = adapter_luid;
+                row.OnLinkPrefixLength = addr.prefix;
+                row.DadState = IpDadStatePreferred;
+                to_sockaddr_inet(addr, row.Address);
+                auto st = add_u(&row);
+                if (st == NO_ERROR) impl_->addresses.push_back(row);
+                else if (st != ERROR_OBJECT_ALREADY_EXISTS)
+                    return {static_cast<int>(st), std::system_category()};
             }
-        }
-        if (!plan.excludes.empty() && get_best) {
-            for (auto const& exc : plan.excludes) {
-                SOCKADDR_INET dst{}, best_src{};
-                to_sockaddr_inet(exc, dst);
-                MIB_IPFORWARD_ROW2 best{};
-                init_f(&best);
-                if (get_best(nullptr, 0, nullptr, &dst, 0, &best, &best_src) != NO_ERROR ||
-                    best.InterfaceLuid.Value == 0 || best.InterfaceLuid.Value == adapter_luid)
-                    continue;
-                MIB_IPFORWARD_ROW2 row{};
-                init_f(&row);
-                row.InterfaceLuid = best.InterfaceLuid;
-                row.NextHop = best.NextHop;
-                row.DestinationPrefix.Prefix = dst;
-                row.DestinationPrefix.PrefixLength = exc.prefix;
-                row.Metric = 0;
-                auto st = add_f(&row);
-                if (st == NO_ERROR) impl_->routes.push_back(row);
-                else if (st != ERROR_OBJECT_ALREADY_EXISTS) {
-                    stop();
-                    return std::unexpected(std::error_code{static_cast<int>(st), std::system_category()});
-                }
-            }
-        }
-        for (auto const& rt : plan.routes) {
+            return {};
+        };
+        auto install_exclude = [&](TunCidr const& exc, ResolvedExclude const& gw) -> std::error_code {
+            MIB_IPFORWARD_ROW2 row{};
+            init_f(&row);
+            row.InterfaceLuid = gw.luid;
+            row.NextHop = gw.next_hop;
+            to_sockaddr_inet(exc, row.DestinationPrefix.Prefix);
+            row.DestinationPrefix.PrefixLength = exc.prefix;
+            row.Metric = 0;
+            auto st = add_f(&row);
+            if (st == NO_ERROR) impl_->routes.push_back(row);
+            else if (st != ERROR_OBJECT_ALREADY_EXISTS)
+                return {static_cast<int>(st), std::system_category()};
+            return {};
+        };
+        auto install_capture = [&](TunCidr const& rt) -> std::error_code {
             MIB_IPFORWARD_ROW2 row{};
             init_f(&row);
             row.InterfaceLuid.Value = adapter_luid;
@@ -156,11 +169,13 @@ namespace packet {
             row.Metric = 0;
             auto st = add_f(&row);
             if (st == NO_ERROR) impl_->routes.push_back(row);
-            else if (st != ERROR_OBJECT_ALREADY_EXISTS) {
-                stop();
-                return std::unexpected(std::error_code{static_cast<int>(st), std::system_category()});
-            }
-        }
+            else if (st != ERROR_OBJECT_ALREADY_EXISTS)
+                return {static_cast<int>(st), std::system_category()};
+            return {};
+        };
+        auto applied = apply_tun_route_plan(
+            plan, resolve_exclude, configure_interface, install_exclude, install_capture, [&]() noexcept { stop(); });
+        if (!applied) return std::unexpected(applied.error());
         impl_->active = true;
         return {};
     }

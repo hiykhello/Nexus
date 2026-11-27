@@ -16,6 +16,8 @@ import capy;
 import corosio;
 import config;
 import cli.proxy_services;
+import acme.jws;
+import acme.store;
 import crypto;
 import logging;
 import logging.cli;
@@ -146,8 +148,10 @@ namespace {
         return std::string(data, static_cast<std::size_t>(len));
     }
 
-    // 173.B: ACME Real HTTP-01 / TLS-ALPN-01 / DNS-01 + Atomic Credential Swap
-    auto run_acme_challenge_e2e(std::string const& challenge_type) -> void {
+    // 173.B: ACME Real HTTP-01 / TLS-ALPN-01 / DNS-01 + Atomic Credential Swap + R6 P1-3 Cold-Start & Mismatch Rejection
+    auto run_acme_challenge_e2e(std::string const& challenge_type,
+                                bool seed_mismatched_disk = false,
+                                bool return_mismatched_cert = false) -> void {
         auto [ca_fd, ca_port] = listen_loopback();
         std::atomic_bool stop{false};
         std::atomic_bool challenge_verified{false};
@@ -266,7 +270,14 @@ namespace {
                     auto cpos = pjson.find("\"csr\":\"");
                     require(cpos != std::string::npos, "csr field");
                     auto cend = pjson.find('"', cpos + 7);
-                    issued_cert = sign_cert_from_csr_der(base64url_decode(pjson.substr(cpos + 7, cend - (cpos + 7))));
+                    if (return_mismatched_cert) {
+                        std::array<std::uint8_t, 32> dig{};
+                        auto wrong = acme::generate_alpn01_cert("edge.example.com", dig);
+                        require(wrong.has_value(), "wrong cert fixture");
+                        issued_cert = wrong->cert_pem;
+                    } else {
+                        issued_cert = sign_cert_from_csr_der(base64url_decode(pjson.substr(cpos + 7, cend - (cpos + 7))));
+                    }
                     order_status = "valid";
                     send_http(200, std::format(R"({{"status":"valid","finalize":"{0}/fin/1","certificate":"{0}/cert/1"}})", base));
                 } else if (line.starts_with("POST /order/1 ")) {
@@ -277,8 +288,19 @@ namespace {
             }
         });
 
-        auto tmp = std::filesystem::temp_directory_path() / ("nexus_b173_acme_" + challenge_type);
+        auto tmp = std::filesystem::temp_directory_path() / ("nexus_b173_acme_" + challenge_type +
+            (seed_mismatched_disk ? "_cold" : return_mismatched_cert ? "_mismatch" : ""));
         std::filesystem::remove_all(tmp);
+        if (seed_mismatched_disk) {
+            std::filesystem::create_directories(tmp);
+            std::array<std::uint8_t, 32> dig{};
+            auto c1 = acme::generate_alpn01_cert("edge.example.com", dig);
+            auto c2 = acme::generate_alpn01_cert("edge.example.com", dig);
+            require(c1 && c2, "seed mismatched fixtures");
+            std::ofstream(tmp / "fullchain.pem", std::ios::binary).write(c1->cert_pem.data(), static_cast<std::streamsize>(c1->cert_pem.size()));
+            std::ofstream(tmp / "privkey.pem", std::ios::binary).write(c2->key_pem.data(), static_cast<std::streamsize>(c2->key_pem.size()));
+            std::filesystem::permissions(tmp / "privkey.pem", std::filesystem::perms::owner_read | std::filesystem::perms::owner_write, std::filesystem::perm_options::replace);
+        }
         logging::Runtime logs;
         std::atomic_bool hook_fired{false};
         config::AcmeServiceConfig cfg{
@@ -295,16 +317,23 @@ namespace {
         if (challenge_type == "http-01") require(live_http_port.load() != 0, "http-01 bound");
         if (challenge_type == "tls-alpn-01") require(live_alpn_port.load() != 0, "alpn-01 bound");
 
-        auto dl = std::chrono::steady_clock::now() + 5s;
-        while (std::chrono::steady_clock::now() < dl && cli::acme_credential_generation(*handle) == 0)
-            std::this_thread::sleep_for(20ms);
-
-        require(challenge_verified.load(), "acme challenge verified: " + challenge_type);
-        require(cli::acme_credential_generation(*handle) >= 1 && cli::acme_has_valid_credential(*handle), "acme atomic ServerCredential updated");
-        require(hook_fired.load(), "acme hot-update hook fired");
-        if (challenge_type == "dns-01") {
-            auto txt = cli::acme_dns01_record(*handle, "edge.example.com");
-            require(txt && !txt->empty() && std::filesystem::exists(tmp / "dns01_challenges.txt"), "dns-01 TXT published");
+        if (return_mismatched_cert) {
+            std::this_thread::sleep_for(250ms);
+            require(cli::acme_credential_generation(*handle) == 0 && !cli::acme_has_valid_credential(*handle) &&
+                    !hook_fired.load() && !acme::CertificateStore::load_from_dir(tmp).has_value(),
+                    "R6 P1-3 mismatched CA cert rejected (not published or persisted)");
+        } else {
+            auto dl = std::chrono::steady_clock::now() + 5s;
+            while (std::chrono::steady_clock::now() < dl && cli::acme_credential_generation(*handle) == 0)
+                std::this_thread::sleep_for(20ms);
+            require(challenge_verified.load(), "acme challenge verified: " + challenge_type);
+            require(cli::acme_credential_generation(*handle) >= 1 && cli::acme_has_valid_credential(*handle), "acme atomic ServerCredential updated");
+            require(hook_fired.load(), "acme hot-update hook fired");
+            require(acme::CertificateStore::load_from_dir(tmp).has_value(), "acme atomic paired credential persisted");
+            if (challenge_type == "dns-01") {
+                auto txt = cli::acme_dns01_record(*handle, "edge.example.com");
+                require(txt && !txt->empty() && std::filesystem::exists(tmp / "dns01_challenges.txt"), "dns-01 TXT published");
+            }
         }
         handle->state.reset();
         stop = true;
@@ -378,8 +407,8 @@ namespace {
             require(hdr.has_value() && raw.size() == 5 + hdr->length, "ws derp hdr");
             return {hdr->type, std::vector<std::uint8_t>(raw.begin() + 5, raw.end())};
         };
-        auto send_ws_masked = [](int fd, std::span<std::uint8_t const> pl) {
-            std::vector<std::uint8_t> out{0x82};
+        auto send_ws_masked = [](int fd, std::span<std::uint8_t const> pl, std::uint8_t opcode = 0x2u) {
+            std::vector<std::uint8_t> out{static_cast<std::uint8_t>(0x80u | (opcode & 0x0fu))};
             if (pl.size() < 126) out.push_back(static_cast<std::uint8_t>(0x80 | pl.size()));
             else { out.push_back(0x80 | 126); out.push_back(std::uint8_t(pl.size() >> 8)); out.push_back(std::uint8_t(pl.size())); }
             std::array<std::uint8_t, 4> mask{0x12, 0x34, 0x56, 0x78};
@@ -420,6 +449,14 @@ namespace {
         require(parsed.has_value() && parsed->peer == pub_a &&
             std::string_view(reinterpret_cast<char const*>(parsed->bytes.data()), parsed->bytes.size()) == payload, "DERP A->B relay");
 
+        // R8 P2-5: Send RFC 6455 masked WebSocket Ping (0x89) and assert unmasked Pong (0x8A) with identical payload.
+        constexpr std::string_view kWsPing = "keepalive-42";
+        send_ws_masked(sock_b.fd, {reinterpret_cast<std::uint8_t const*>(kWsPing.data()), kWsPing.size()}, 0x9u);
+        auto pong_hdr = read_exact_buf(sock_b.fd, rem_b, 2);
+        require(pong_hdr[0] == 0x8Au && (pong_hdr[1] & 0x80u) == 0 && (pong_hdr[1] & 0x7fu) == kWsPing.size(), "R8 P2-5 WS Pong header");
+        auto pong_pl = read_exact_buf(sock_b.fd, rem_b, pong_hdr[1] & 0x7fu);
+        require(std::string_view(reinterpret_cast<char const*>(pong_pl.data()), pong_pl.size()) == kWsPing, "R8 P2-5 WS Pong payload");
+
         std::array<std::uint8_t, 8> ptok{1,2,3,4,5,6,7,8};
         send_ws_masked(sock_b.fd, *tailscale::derp::encode_ping(tailscale::derp::Type::ping, ptok));
         auto [pt, pp] = read_derp_frame(sock_b.fd, rem_b, true);
@@ -432,6 +469,8 @@ int main() {
     run_acme_challenge_e2e("http-01");
     run_acme_challenge_e2e("tls-alpn-01");
     run_acme_challenge_e2e("dns-01");
+    run_acme_challenge_e2e("http-01", true, false);
+    run_acme_challenge_e2e("http-01", false, true);
     test_173d_derp_server_e2e();
     std::cout << "BATCH 173 ACME & DERP SERVER REAL I/O E2E TESTS PASSED\n";
     return 0;

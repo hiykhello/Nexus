@@ -41,6 +41,10 @@ export namespace cli::run_detail {
                 auto const& key = !reference.file.url.empty() ? reference.file.url : reference.file.path;
                 auto data = input.read(key);
                 if (!data) return std::unexpected("DNS rule-set: " + data.error());
+                if (!reference.file.url.empty()) {
+                    if (auto ok = cli::verify_remote_ruleset_sha256(reference.file, *data); !ok)
+                        return std::unexpected("DNS rule-set: " + ok.error());
+                }
                 if (std::ranges::find(keys, key) == keys.end()) {
                     total += data->size();
                     if (total > 8 * 1024 * 1024) return std::unexpected("DNS rule sets exceed 8 MiB total");
@@ -104,19 +108,43 @@ export namespace cli::run_detail {
         std::shared_ptr<void> http_pool_;
         std::jthread worker_;
 
-        static auto collect(config::Config const& config) -> std::vector<config::BlockRules> {
+        static auto sha256_equal_ci(std::string_view a, std::string_view b) noexcept -> bool {
+            if (a.size() != b.size()) return false;
+            auto lower = [](char c) noexcept { return (c >= 'A' && c <= 'F') ? static_cast<char>(c - 'A' + 'a') : c; };
+            return std::ranges::equal(a, b, {}, lower, lower);
+        }
+
+        static auto collect(config::Config const& config) -> std::expected<std::vector<config::BlockRules>, std::string> {
             std::vector<config::BlockRules> out;
-            auto add = [&](config::BlockRules const& spec) {
-                if (spec.url.empty()) return;
-                if (std::ranges::any_of(out, [&](auto const& e) { return e.url == spec.url; })) return;
+            auto add = [&](config::BlockRules const& spec) -> std::expected<void, std::string> {
+                if (spec.url.empty()) return {};
+                auto it = std::ranges::find_if(out, [&](auto const& e) { return e.url == spec.url; });
+                if (it != out.end()) {
+                    if (!sha256_equal_ci(it->sha256, spec.sha256))
+                        return std::unexpected("conflicting sha256 declarations for remote rule-set URL: " + spec.url);
+                    return {};
+                }
                 out.push_back(spec);
+                return {};
             };
-            for (auto const& r : config.routes) add(r.file);
-            if (config.ordered_tcp) for (auto const& [tag, spec] : config.ordered_tcp->sets) add(spec);
-            if (config.dns) for (auto const& ref : config.dns->rule_files) add(ref.file);
+            for (auto const& r : config.routes)
+                if (auto ok = add(r.file); !ok) return std::unexpected(std::move(ok.error()));
+            if (config.ordered_tcp) {
+                for (auto const& [tag, spec] : config.ordered_tcp->sets)
+                    if (auto ok = add(spec); !ok) return std::unexpected(std::move(ok.error()));
+                for (auto const& r : config.ordered_tcp->rules)
+                    if (r.file) if (auto ok = add(*r.file); !ok) return std::unexpected(std::move(ok.error()));
+            }
+            if (config.dns) for (auto const& ref : config.dns->rule_files)
+                if (auto ok = add(ref.file); !ok) return std::unexpected(std::move(ok.error()));
             return out;
         }
     public:
+        class StagedReload {
+            friend class RemoteRulesetManager;
+            std::vector<Entry> entries_;
+        };
+
         ~RemoteRulesetManager() { stop(); }
         auto stop() noexcept -> void {
             if (worker_.joinable()) {
@@ -136,7 +164,9 @@ export namespace cli::run_detail {
 
         auto fetch_initial(config::Config const& config, std::string_view source, RuleFileInput& input)
             -> std::expected<void, std::string> {
-            auto specs = collect(config);
+            auto specs_exp = collect(config);
+            if (!specs_exp) return std::unexpected(std::move(specs_exp.error()));
+            auto const& specs = *specs_exp;
             if (specs.empty()) {
                 std::lock_guard lock(mutex_);
                 entries_.clear();
@@ -149,6 +179,8 @@ export namespace cli::run_detail {
             for (auto const& spec : specs) {
                 auto fetched = cli::fetch_managed_ruleset(config, source, spec, {}, true);
                 if (!fetched) return std::unexpected("remote rule-set " + spec.url + ": " + fetched.error());
+                if (auto ok = cli::verify_remote_ruleset_sha256(spec, fetched->body); !ok)
+                    return std::unexpected(std::move(ok.error()));
                 input.seed(spec.url, fetched->body);
                 loaded.push_back({spec, std::move(fetched->body), std::move(fetched->etag),
                     now + std::chrono::milliseconds(spec.update_interval_ms)});
@@ -164,8 +196,53 @@ export namespace cli::run_detail {
             for (auto const& entry : entries_) input.seed(entry.spec.url, entry.body);
         }
 
+        auto prepare_reload(config::Config const& config, std::string_view source, RuleFileInput& input)
+            -> std::expected<StagedReload, std::string> {
+            auto specs_exp = collect(config);
+            if (!specs_exp) return std::unexpected(std::move(specs_exp.error()));
+            auto const& specs = *specs_exp;
+            std::vector<Entry> existing;
+            {
+                std::lock_guard lock(mutex_);
+                existing = entries_;
+            }
+            StagedReload staged{};
+            staged.entries_.reserve(specs.size());
+            auto now = std::chrono::steady_clock::now();
+            for (auto const& spec : specs) {
+                auto it = std::ranges::find_if(existing, [&](auto const& e) {
+                    return e.spec.url == spec.url && sha256_equal_ci(e.spec.sha256, spec.sha256) && !e.body.empty();
+                });
+                if (it != existing.end() && cli::verify_remote_ruleset_sha256(spec, it->body).has_value()) {
+                    input.seed(spec.url, it->body);
+                    staged.entries_.push_back({spec, it->body, it->etag, it->next_refresh});
+                    continue;
+                }
+                auto fetched = cli::fetch_managed_ruleset(config, source, spec, {}, true);
+                if (!fetched) return std::unexpected("remote rule-set " + spec.url + ": " + fetched.error());
+                if (auto ok = cli::verify_remote_ruleset_sha256(spec, fetched->body); !ok)
+                    return std::unexpected(std::move(ok.error()));
+                input.seed(spec.url, fetched->body);
+                staged.entries_.push_back({spec, std::move(fetched->body), std::move(fetched->etag),
+                    now + std::chrono::milliseconds(spec.update_interval_ms)});
+            }
+            return staged;
+        }
+
+        auto commit_reload(StagedReload&& staged) -> void {
+            bool now_empty = staged.entries_.empty();
+            {
+                std::lock_guard lock(mutex_);
+                entries_ = std::move(staged.entries_);
+                ++generation_;
+            }
+            if (now_empty) stop();
+        }
+
         auto start_background(config::Config config, std::string source, logging::Runtime& logs) -> void {
-            auto specs = collect(config);
+            auto specs_exp = collect(config);
+            if (!specs_exp) return;
+            auto const& specs = *specs_exp;
             std::uint64_t current_gen = 0;
             {
                 auto now = std::chrono::steady_clock::now();
@@ -176,7 +253,7 @@ export namespace cli::run_detail {
                         auto const& a = entries_[i].spec;
                         auto const& b = specs[i];
                         if (a.url != b.url || a.update_interval_ms != b.update_interval_ms ||
-                            a.format != b.format || a.http_client != b.http_client || a.sha256 != b.sha256) {
+                            a.format != b.format || a.http_client != b.http_client || !sha256_equal_ci(a.sha256, b.sha256)) {
                             changed = true;
                             break;
                         }
@@ -186,7 +263,9 @@ export namespace cli::run_detail {
                     std::vector<Entry> next;
                     next.reserve(specs.size());
                     for (auto const& spec : specs) {
-                        auto it = std::ranges::find_if(entries_, [&](auto const& e) { return e.spec.url == spec.url; });
+                        auto it = std::ranges::find_if(entries_, [&](auto const& e) {
+                            return e.spec.url == spec.url && sha256_equal_ci(e.spec.sha256, spec.sha256);
+                        });
                         if (it != entries_.end())
                             next.push_back({spec, std::move(it->body), std::move(it->etag), it->next_refresh});
                         else
@@ -242,6 +321,11 @@ export namespace cli::run_detail {
                         }
                         if (!res->etag.empty()) entries_[idx].etag = res->etag;
                         if (!res->unchanged && !res->body.empty() && res->body != entries_[idx].body) {
+                            if (auto ok = cli::verify_remote_ruleset_sha256(spec, res->body); !ok) {
+                                logs.emit(logging::Level::warn, logging::Domain::route, 103, {},
+                                    "remote rule-set refresh failed: {}", logs.private_text(ok.error()));
+                                continue;
+                            }
                             entries_[idx].body = std::move(res->body);
                             any_changed = true;
                         }

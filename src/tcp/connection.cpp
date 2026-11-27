@@ -130,6 +130,7 @@ namespace tcp {
             peer_window_ = scaled_win;
             max_peer_window_ = std::max(max_peer_window_, scaled_win);
             window_sequence_ = segment.sequence; window_ack_ = segment.acknowledgement;
+            send_.set_peer_window(scaled_win);
             (void)send_.due_view(now, 0);
         } else {
             if (segment.flags != 0x10 && segment.flags != 0x18 && segment.flags != 0x11 && segment.flags != 0x19)
@@ -163,7 +164,9 @@ namespace tcp {
                     detach_deadline_ = now > std::numeric_limits<std::uint64_t>::max() - kFinWait2TimeoutMs
                         ? std::numeric_limits<std::uint64_t>::max() : now + kFinWait2TimeoutMs;
             } else if (!stale_ack) {
-                auto acknowledged = send_.acknowledge(segment.acknowledgement, now);
+                auto scaled_win = static_cast<std::uint32_t>(segment.window) << handshake_.peer_window_scale();
+                bool carries_data_or_ctrl = !segment.payload.empty() || ((segment.flags & 0x03u) != 0);
+                auto acknowledged = send_.acknowledge(segment.acknowledgement, now, carries_data_or_ctrl, scaled_win);
                 if (!acknowledged) return std::unexpected(acknowledged.error() == SendError::time_reversed
                     ? ConnectionError::time_reversed : ConnectionError::invalid_ack);
             }

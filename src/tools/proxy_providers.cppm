@@ -25,11 +25,12 @@ export namespace cli {
         std::stop_token stop = {}, void* client_pool = nullptr)
         -> std::expected<ManagedProviderFetchResult, std::string>;
 
-    [[nodiscard]] auto provider_cache_paths(std::filesystem::path const& cache_root, std::string_view name)
+    [[nodiscard]] auto canonical_provider_url(std::string_view url) -> std::string;
+    [[nodiscard]] auto provider_cache_paths(std::filesystem::path const& cache_root, std::string_view name, std::string_view url)
         -> std::tuple<std::filesystem::path, std::filesystem::path, std::filesystem::path>;
-    [[nodiscard]] auto read_provider_cache(std::filesystem::path const& cache_root, std::string_view name)
+    [[nodiscard]] auto read_provider_cache(std::filesystem::path const& cache_root, std::string_view name, std::string_view url)
         -> std::optional<ManagedProviderFetchResult>;
-    [[nodiscard]] auto write_provider_cache(std::filesystem::path const& cache_root, std::string_view name,
+    [[nodiscard]] auto write_provider_cache(std::filesystem::path const& cache_root, std::string_view name, std::string_view url,
         ManagedProviderFetchResult const& res) -> std::expected<void, std::string>;
 
     struct ProviderSummary {
@@ -66,7 +67,20 @@ export namespace cli {
             std::filesystem::path const& base_dir, bool offline_fallback,
             std::stop_token stop = {}, void* http_pool = nullptr) -> std::expected<bool, std::string>;
     public:
+        class StagedReload {
+            friend class ProxyProviderManager;
+            config::Config manifest_;
+            std::filesystem::path base_dir_;
+            std::vector<Entry> entries_;
+        public:
+            std::string expanded_kdl;
+            [[nodiscard]] auto has_providers() const noexcept -> bool { return !entries_.empty(); }
+        };
+
         ~ProxyProviderManager();
+        [[nodiscard]] auto prepare_candidate(std::string_view raw_kdl, std::string_view config_path,
+            bool offline_fallback = true) const -> std::expected<StagedReload, std::string>;
+        auto commit_candidate(StagedReload&& staged) -> void;
         [[nodiscard]] auto prepare_initial(std::string_view raw_kdl, std::string_view config_path,
             bool offline_fallback = true) -> std::expected<std::string, std::string>;
         [[nodiscard]] auto expand_kdl(std::string_view raw_kdl) const -> std::expected<std::string, std::string>;

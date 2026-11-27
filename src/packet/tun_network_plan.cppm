@@ -119,4 +119,75 @@ export namespace packet {
         }
         return plan;
     }
+
+    [[nodiscard]] constexpr auto tun_cidr_covers(TunCidr const& outer, TunCidr const& inner) noexcept -> bool {
+        if (outer.family != inner.family || (outer.family != 4 && outer.family != 6)) return false;
+        std::uint8_t const max_bits = outer.family == 4 ? 32u : 128u;
+        if (outer.prefix > max_bits || inner.prefix > max_bits || outer.prefix > inner.prefix) return false;
+        std::size_t const full_bytes = outer.prefix / 8u;
+        for (std::size_t i = 0; i < full_bytes; ++i)
+            if (outer.address[i] != inner.address[i]) return false;
+        std::uint8_t const rem = static_cast<std::uint8_t>(outer.prefix % 8u);
+        if (rem != 0) {
+            std::uint8_t const mask = static_cast<std::uint8_t>(0xffu << (8u - rem));
+            if ((outer.address[full_bytes] & mask) != (inner.address[full_bytes] & mask)) return false;
+        }
+        return true;
+    }
+
+    [[nodiscard]] inline auto required_tun_excludes(TunRoutePlan const& plan) -> std::vector<TunCidr> {
+        std::vector<TunCidr> required;
+        for (auto const& exc : plan.excludes) {
+            bool const covered = std::ranges::any_of(plan.routes, [&](TunCidr const& rt) {
+                return tun_cidr_covers(rt, exc);
+            });
+            if (covered) required.push_back(exc);
+        }
+        return required;
+    }
+
+    // Applies a TUN route plan in strict atomic phases:
+    // 1) Resolve every exclude route covered by plan.routes (read-only).
+    // 2) Configure interface MTU/addresses.
+    // 3) Install all required exclude bypass routes.
+    // 4) Install capture routes ONLY after all required excludes succeed.
+    // Any failure in any phase invokes rollback() and aborts.
+    template <class ResolveExclude, class ConfigureInterface, class InstallExclude, class InstallCapture, class Rollback>
+    [[nodiscard]] auto apply_tun_route_plan(
+        TunRoutePlan const& plan,
+        ResolveExclude&& resolve_exclude,
+        ConfigureInterface&& configure_interface,
+        InstallExclude&& install_exclude,
+        InstallCapture&& install_capture,
+        Rollback&& rollback) -> std::expected<void, std::error_code> {
+        auto required = required_tun_excludes(plan);
+        using Resolved = std::remove_cvref_t<decltype(*resolve_exclude(std::declval<TunCidr const&>()))>;
+        std::vector<std::pair<TunCidr, Resolved>> resolved_excludes;
+        resolved_excludes.reserve(required.size());
+        for (auto const& exc : required) {
+            auto gw = resolve_exclude(exc);
+            if (!gw) {
+                rollback();
+                return std::unexpected(gw.error());
+            }
+            resolved_excludes.emplace_back(exc, std::move(*gw));
+        }
+        if (auto ec = configure_interface()) {
+            rollback();
+            return std::unexpected(ec);
+        }
+        for (auto const& [exc, gw] : resolved_excludes) {
+            if (auto ec = install_exclude(exc, gw)) {
+                rollback();
+                return std::unexpected(ec);
+            }
+        }
+        for (auto const& rt : plan.routes) {
+            if (auto ec = install_capture(rt)) {
+                rollback();
+                return std::unexpected(ec);
+            }
+        }
+        return {};
+    }
 }

@@ -317,6 +317,27 @@ namespace acme {
         if (!ASN1_TIME_to_posix(X509_get0_notBefore(x.get()), &nb) ||
             !ASN1_TIME_to_posix(X509_get0_notAfter(x.get()), &na))
             return std::unexpected("failed to decode certificate validity");
+        if (na <= nb) return std::unexpected("invalid certificate validity window");
+        return CertValidity{static_cast<std::int64_t>(nb), static_cast<std::int64_t>(na)};
+    }
+
+    auto verify_cert_key_pair(std::string_view cert_pem, std::string_view key_pem)
+        -> std::expected<CertValidity, std::string> {
+        if (cert_pem.empty() || key_pem.empty())
+            return std::unexpected("ACME certificate or private key PEM is empty");
+        SslPtr<BIO, BIO_free> cbio(BIO_new_mem_buf(cert_pem.data(), static_cast<int>(cert_pem.size())));
+        SslPtr<X509, X509_free> x(cbio ? PEM_read_bio_X509(cbio.get(), nullptr, nullptr, nullptr) : nullptr);
+        if (!x) return std::unexpected("invalid X509 PEM certificate");
+        SslPtr<BIO, BIO_free> kbio(BIO_new_mem_buf(key_pem.data(), static_cast<int>(key_pem.size())));
+        SslPtr<EVP_PKEY, EVP_PKEY_free> pkey(kbio ? PEM_read_bio_PrivateKey(kbio.get(), nullptr, nullptr, nullptr) : nullptr);
+        if (!pkey) return std::unexpected("invalid PEM private key");
+        if (X509_check_private_key(x.get(), pkey.get()) != 1)
+            return std::unexpected("ACME certificate public key does not match private key");
+        int64_t nb = 0, na = 0;
+        if (!ASN1_TIME_to_posix(X509_get0_notBefore(x.get()), &nb) ||
+            !ASN1_TIME_to_posix(X509_get0_notAfter(x.get()), &na))
+            return std::unexpected("failed to decode certificate validity");
+        if (na <= nb) return std::unexpected("invalid certificate validity window");
         return CertValidity{static_cast<std::int64_t>(nb), static_cast<std::int64_t>(na)};
     }
 }

@@ -219,6 +219,7 @@ namespace relay {
                         auto dec = openvpn::decode_key_method2_server(app_plain);
                         if (dec) { km_srv = std::move(*dec); app_plain.clear(); break; }
                     }
+                    if (app_plain.size() > 16384) co_return false;
                     if (!co_await pump_app_recv(app, ctrl, tls_rx, app_plain, deadline)) co_return false;
                 }
                 if (!km_srv) co_return false;
@@ -227,18 +228,21 @@ namespace relay {
                     km_cli.random2, km_srv->random2, ctrl.local_session_id(), ctrl.remote_session_id(), false);
                 if (!km) co_return false;
 
-                constexpr std::string_view kPushReq = "PUSH_REQUEST\0";
-                if (!co_await pump_app_send(app, ctrl,
-                        std::span(reinterpret_cast<std::uint8_t const*>(kPushReq.data()), kPushReq.size())))
+                constexpr std::array<std::uint8_t, 13> kPushReq{
+                    'P', 'U', 'S', 'H', '_', 'R', 'E', 'Q', 'U', 'E', 'S', 'T', '\0'};
+                if (!co_await pump_app_send(app, ctrl, kPushReq))
                     co_return false;
 
                 std::optional<openvpn::PushConfig> pushed;
                 while (Clock::now() < deadline && !stopped) {
                     std::string_view sv(reinterpret_cast<char const*>(app_plain.data()), app_plain.size());
-                    if (sv.find('\0') != sv.npos || sv.starts_with("PUSH_REPLY")) {
-                        auto pr = openvpn::parse_push_reply(sv);
+                    if (auto nul = sv.find('\0'); nul != sv.npos) {
+                        auto pr = openvpn::parse_push_reply(sv.substr(0, nul));
                         if (pr) { pushed = *pr; break; }
+                        app_plain.erase(app_plain.begin(), app_plain.begin() + static_cast<std::ptrdiff_t>(nul + 1));
+                        continue;
                     }
+                    if (app_plain.size() > 8192) co_return false;
                     if (!co_await pump_app_recv(app, ctrl, tls_rx, app_plain, deadline)) co_return false;
                 }
                 if (!pushed) co_return false;
@@ -250,8 +254,7 @@ namespace relay {
                 mux.set_endpoint(ep_l3);
                 if (pushed->cipher) active_cipher = *pushed->cipher;
                 if (pushed->peer_id) peer_id = *pushed->peer_id;
-                ping_s = pushed->ping_s;
-                ping_restart_s = pushed->ping_restart_s;
+                openvpn::apply_push_keepalive(ping_s, ping_restart_s, *pushed);
                 if (!data.init(active_cipher, *km, peer_id, 0)) co_return false;
 
                 last_tx_ms = last_rx_ms = now_ms();

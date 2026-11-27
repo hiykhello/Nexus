@@ -9,8 +9,25 @@ import cli.dns_proxy_quic;
 import cli.dns_proxy_https;
 import cli.dns_https3;
 import cli.dns_proxy_tls;
+import state.core;
+import state.serde;
+import tls.certificate_trust;
 
 namespace cli {
+    auto dns_system_trust_identity() -> std::expected<std::string, std::string> {
+        auto anchors = tls::load_system_trust_bundle();
+        if (!anchors) return std::unexpected("cannot read DNS cache system trust identity");
+        ::state::Bytes combined;
+        std::size_t total = 0;
+        for (auto const& cert : *anchors) total += 4 + cert.size();
+        combined.reserve(total);
+        for (auto const& cert : *anchors) {
+            ::state::append_le(combined, cert.size(), 4);
+            combined.append_range(std::as_bytes(std::span(cert)));
+        }
+        auto hash = ::state::fingerprint(combined);
+        return std::string(reinterpret_cast<char const*>(hash.data()), hash.size());
+    }
     auto prepare_encrypted_dns_transport(config::DnsTls const& profile,config::TcpSocketOptions const& options,
         std::optional<std::chrono::milliseconds> connect_timeout,std::optional<std::size_t> proxy_outbound,
         dns::detail::TransportSnapshotRef snapshot)

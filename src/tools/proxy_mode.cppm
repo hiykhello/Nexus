@@ -50,11 +50,12 @@ export namespace cli::run_detail {
             return rules::route_mode_name(shared->mode.load(std::memory_order_acquire));
         }
 
-        template<class ControlOps>
-        auto handle_command(std::optional<config::Config> const& running,
-                            cli::ControlRole role,
-                            std::span<std::string_view const> args,
-                            ControlOps& operations) -> std::expected<std::string, std::string> {
+        template<class ControlOps, class SaveFn>
+        auto handle_command_with(std::optional<config::Config> const& running,
+                                 cli::ControlRole role,
+                                 std::span<std::string_view const> args,
+                                 ControlOps& operations,
+                                 SaveFn&& save_fn) -> std::expected<std::string, std::string> {
             if (args.size() == 1) {
                 return std::format("mode={} outbound={}\n", mode_name(), control_name(global_outbound_name));
             }
@@ -75,18 +76,29 @@ export namespace cli::run_detail {
                 sync(running);
             }
             shared->mode.store(*parsed, std::memory_order_release);
-            if (persistence) {
-                auto saved = persistence->save_route_mode(rules::route_mode_name(*parsed), global_outbound_name);
-                if (!saved) {
-                    global_outbound_name = std::move(prev_name);
-                    shared->global_outbound.store(prev_global, std::memory_order_release);
-                    shared->mode.store(prev_mode, std::memory_order_release);
-                    return std::unexpected(std::move(saved.error()));
-                }
+            auto saved = save_fn(rules::route_mode_name(*parsed), global_outbound_name);
+            if (!saved) {
+                global_outbound_name = std::move(prev_name);
+                shared->global_outbound.store(prev_global, std::memory_order_release);
+                shared->mode.store(prev_mode, std::memory_order_release);
+                return std::unexpected(std::move(saved.error()));
             }
             operations.published();
             operations.record(ControlOps::EventKind::mode_changed);
+            if (!*saved) return std::unexpected("mode-active-persistence-uncertain");
             return std::format("mode={} outbound={}\n", mode_name(), control_name(global_outbound_name));
+        }
+
+        template<class ControlOps>
+        auto handle_command(std::optional<config::Config> const& running,
+                            cli::ControlRole role,
+                            std::span<std::string_view const> args,
+                            ControlOps& operations) -> std::expected<std::string, std::string> {
+            return handle_command_with(running, role, args, operations,
+                [this](std::string_view mode, std::string_view outbound) -> std::expected<bool, std::string> {
+                    return persistence ? persistence->save_route_mode(mode, outbound)
+                                       : std::expected<bool, std::string>(true);
+                });
         }
     };
 }

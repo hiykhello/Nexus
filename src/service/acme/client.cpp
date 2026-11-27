@@ -231,41 +231,75 @@ namespace acme {
             if (!ack || ack->status >= 300) return std::unexpected("ACME challenge trigger failed");
         }
 
+        auto csr = generate_csr_p256(cfg.domains);
+        if (!csr) return std::unexpected(csr.error());
+
+        // Unified state-machine order polling with bounded exponential backoff and overall deadline.
         OrderWire cur{};
-        for (std::uint32_t attempt = 0; attempt < cfg.max_poll_attempts; ++attempt) {
+        bool finalized = false;
+        auto const deadline = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(std::max<std::uint32_t>(cfg.poll_deadline_ms, 1u));
+        std::uint32_t backoff_ms = cfg.poll_initial_backoff_ms;
+        std::uint32_t const max_attempts = std::max<std::uint32_t>(cfg.max_poll_attempts, 1u);
+
+        for (std::uint32_t attempt = 0; attempt < max_attempts; ++attempt) {
             auto poll = post_jws(key, order->url, {}, *kid, *dir, nonce, http);
             if (!poll || poll->status >= 300) return std::unexpected("ACME order poll failed");
             auto parsed = parse_json<OrderWire>(poll->body);
             if (!parsed) return std::unexpected(parsed.error());
             cur = std::move(*parsed);
-            if (cur.status == "ready" || cur.status == "valid") break;
-            if (cur.status == "invalid") return std::unexpected("ACME order became invalid");
+
+            if (cur.status == "invalid")
+                return std::unexpected("ACME order became invalid");
+            if (cur.status == "valid") {
+                if (!cur.certificate.empty()) break;
+            } else if (cur.status == "ready") {
+                if (!finalized) {
+                    auto fin_url = cur.finalize.empty() ? order->finalize_url : cur.finalize;
+                    if (fin_url.empty()) return std::unexpected("ACME order missing finalize URL");
+                    auto fin = post_jws(key, fin_url, std::format("{{\"csr\":\"{}\"}}", csr->csr_der_base64url),
+                                        *kid, *dir, nonce, http);
+                    if (!fin || fin->status >= 300) return std::unexpected("ACME finalize failed");
+                    auto fin_parsed = parse_json<OrderWire>(fin->body);
+                    if (!fin_parsed) return std::unexpected(fin_parsed.error());
+                    cur = std::move(*fin_parsed);
+                    finalized = true;
+                    backoff_ms = cfg.poll_initial_backoff_ms;
+                    if (cur.status == "invalid") return std::unexpected("ACME order became invalid after finalize");
+                    if (cur.status == "valid" && !cur.certificate.empty()) break;
+                }
+            } else if (cur.status != "pending" && cur.status != "processing") {
+                return std::unexpected("ACME unexpected order status: " + cur.status);
+            }
+
+            auto now_tp = std::chrono::steady_clock::now();
+            if (now_tp >= deadline || attempt + 1 >= max_attempts) break;
+            if (backoff_ms > 0) {
+                auto rem_ms = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now_tp).count();
+                auto wait_ms = static_cast<std::uint32_t>(std::min<std::int64_t>(backoff_ms, std::max<std::int64_t>(rem_ms, 0)));
+                if (wait_ms > 0) std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+                if (cfg.poll_max_backoff_ms > 0) {
+                    backoff_ms = (backoff_ms <= cfg.poll_max_backoff_ms / 2u)
+                        ? backoff_ms * 2u : cfg.poll_max_backoff_ms;
+                }
+            }
         }
-        auto csr = generate_csr_p256(cfg.domains);
-        if (!csr) return std::unexpected(csr.error());
-        if (cur.status == "ready") {
-            auto fin = post_jws(key, cur.finalize.empty() ? order->finalize_url : cur.finalize,
-                                std::format("{{\"csr\":\"{}\"}}", csr->csr_der_base64url), *kid, *dir, nonce, http);
-            if (!fin || fin->status >= 300) return std::unexpected("ACME finalize failed");
-            auto parsed = parse_json<OrderWire>(fin->body);
-            if (!parsed) return std::unexpected(parsed.error());
-            cur = std::move(*parsed);
-        }
-        for (std::uint32_t attempt = 0; cur.status != "valid" && attempt < cfg.max_poll_attempts; ++attempt) {
-            auto poll = post_jws(key, order->url, {}, *kid, *dir, nonce, http);
-            if (!poll || poll->status >= 300) return std::unexpected("ACME final poll failed");
-            auto parsed = parse_json<OrderWire>(poll->body);
-            if (!parsed) return std::unexpected(parsed.error());
-            cur = std::move(*parsed);
-        }
-        if (cur.status != "valid" || cur.certificate.empty()) return std::unexpected("ACME order did not issue cert");
+        if (cur.status != "valid" || cur.certificate.empty())
+            return std::unexpected(std::format("ACME order did not issue cert before deadline (status={})", cur.status));
+
         auto dl = post_jws(key, cur.certificate, {}, *kid, *dir, nonce, http);
         if (!dl || dl->status < 200 || dl->status >= 300) return std::unexpected("ACME certificate download failed");
-        auto validity = parse_cert_validity(dl->body);
+        auto validity = verify_cert_key_pair(dl->body, csr->key_pem);
         if (!validity) return std::unexpected(validity.error());
 
         CertificateBundle bundle{std::move(dl->body), std::move(csr->key_pem), validity->not_before_epoch,
                                  validity->not_after_epoch, cfg.domains};
+        // Publish and activate live TLS credential FIRST so any TLS rejection fails issuance
+        // before persisting to disk or advancing renewal state.
+        if (hooks.publish_certificate) {
+            if (auto pub = (*hooks.publish_certificate)(bundle); !pub)
+                return std::unexpected("ACME live credential publish failed: " + pub.error());
+        }
         if (!cfg.state_dir.empty()) {
             if (auto saved = CertificateStore::save_to_dir(cfg.state_dir, bundle); !saved)
                 return std::unexpected(saved.error());

@@ -47,10 +47,10 @@ namespace cli {
                 return std::nullopt;
             return encoding::encode_base64(sha);
         }
-        auto encode_ws_binary(std::span<std::uint8_t const> payload) -> std::vector<std::uint8_t> {
+        auto encode_ws_frame(std::uint8_t opcode, std::span<std::uint8_t const> payload) -> std::vector<std::uint8_t> {
             std::vector<std::uint8_t> out;
             out.reserve(10 + payload.size());
-            out.push_back(0x82); // FIN + binary opcode
+            out.push_back(static_cast<std::uint8_t>(0x80u | (opcode & 0x0fu)));
             if (payload.size() < 126) {
                 out.push_back(static_cast<std::uint8_t>(payload.size()));
             } else if (payload.size() <= 65535) {
@@ -121,7 +121,12 @@ namespace cli {
                 if (closed) return;
                 if (close_after) close_after_flush = true;
                 if (!frame.empty() && tx_queue.size() < 256)
-                    tx_queue.push_back(websocket ? encode_ws_binary(frame) : std::move(frame));
+                    tx_queue.push_back(websocket ? encode_ws_frame(0x2u, frame) : std::move(frame));
+                tx_wake.set();
+            }
+            auto enqueue_ws_raw(std::vector<std::uint8_t> raw_frame) -> void {
+                if (closed || raw_frame.empty() || tx_queue.size() >= 256) return;
+                tx_queue.push_back(std::move(raw_frame));
                 tx_wake.set();
             }
             auto close() noexcept -> void {
@@ -251,6 +256,8 @@ namespace cli {
                         std::size_t need = hdr + (masked ? 4 : 0) + static_cast<std::size_t>(plen);
                         if (ws_buf.size() - off < need) break;
                         auto opcode = b0 & 0x0f;
+                        bool const fin = (b0 & 0x80) != 0;
+                        if (opcode >= 0x8 && (!fin || plen > 125)) return false; // RFC 6455 §5.5 control frame limit
                         if (opcode == 0x8) return false; // close
                         std::vector<std::uint8_t> payload(ws_buf.begin() + static_cast<std::ptrdiff_t>(off + hdr + (masked ? 4 : 0)),
                             ws_buf.begin() + static_cast<std::ptrdiff_t>(off + need));
@@ -259,7 +266,10 @@ namespace cli {
                                 payload[i] ^= ws_buf[off + hdr + (i & 3)];
                         }
                         off += need;
-                        if (opcode == 0x1 || opcode == 0x2 || opcode == 0x0) {
+                        if (opcode == 0x9) {
+                            // RFC 6455 §5.5.2: reply to client Ping with unmasked Pong carrying identical payload.
+                            conn->enqueue_ws_raw(encode_ws_frame(0xAu, payload));
+                        } else if (opcode == 0x1 || opcode == 0x2 || opcode == 0x0) {
                             if (!feed_derp_bytes(conn->id, dec, payload)) return false;
                         }
                     }

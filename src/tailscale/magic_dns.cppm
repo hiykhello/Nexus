@@ -50,6 +50,14 @@ export namespace tailscale::magic_dns {
     [[nodiscard]] auto parse_dns_config(cm::JsonField dns_config, cm::JsonField domain) noexcept
         -> std::expected<std::optional<DnsConfig>, cm::Failure>;
 
+    // Incrementally apply MapResponse DNSConfig + Domain JSON fields onto an existing snapshot:
+    // - missing DNSConfig + value Domain updates magic_dns_suffix without wiping split-DNS/resolvers/proxied.
+    // - null DNSConfig clears existing DNSConfig (retaining an explicit value Domain if also present).
+    // - value DNSConfig replaces DNSConfig while preserving existing magic_dns_suffix if Domain is missing.
+    [[nodiscard]] auto apply_dns_delta(std::optional<DnsConfig>& target, cm::JsonField dns_config,
+                                       cm::JsonField domain) noexcept
+        -> std::expected<void, cm::Failure>;
+
     // Normalize a DNS name to lowercase without trailing dot.
     [[nodiscard]] auto normalize_name(std::string_view name) -> std::string;
 

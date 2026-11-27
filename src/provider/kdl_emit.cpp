@@ -304,18 +304,18 @@ namespace provider {
         bool any_insecure = false;
         for (auto const& p : doc.proxies) {
             if (p.skip_cert_verify) any_insecure = true;
-            std::vector<std::string> node_secrets;
+            std::set<std::string> pending_secrets;
+            std::vector<StagedSecret> staged_secrets;
             SecretWriter writer = [&](std::string_view hint, std::string_view content) -> std::expected<std::string, std::string> {
-                bool wrote = false;
-                auto res = write_provider_secret(opts, used_secrets, hint, content, &wrote);
-                if (res && wrote) node_secrets.push_back(*res);
-                return res;
+                return stage_provider_secret(opts, used_secrets, pending_secrets, staged_secrets, hint, content);
             };
             auto kdl = emit_outbound_kdl(p, writer, fallback_ca);
             if (!kdl) {
-                std::error_code ec;
-                for (auto const& sf : node_secrets) std::filesystem::remove(sf, ec);
                 doc.warnings.push_back(kdl.error());
+                continue;
+            }
+            if (auto committed = commit_provider_secrets(opts, used_secrets, staged_secrets); !committed) {
+                doc.warnings.push_back(committed.error());
                 continue;
             }
             valid_tags.insert(p.tag);
@@ -339,17 +339,47 @@ namespace provider {
         out << "outbounds {\n  direct \"direct\"\n  block \"block\"\n";
         for (auto const& [tag, node_kdl] : emitted) out << node_kdl;
 
+        struct ResolvedGroup {
+            ParsedGroup const* group = nullptr;
+            std::vector<std::string> members;
+            bool alive = true;
+        };
+        std::vector<ResolvedGroup> group_candidates;
+        std::set<std::string> declared_groups;
+        for (auto const& g : doc.groups) {
+            if (g.name.empty() || valid_tags.contains(g.name) || !declared_groups.insert(g.name).second) continue;
+            group_candidates.push_back({&g, {}, true});
+        }
+        for (;;) {
+            bool changed = false;
+            for (auto& rg : group_candidates) {
+                if (!rg.alive) continue;
+                auto const& g = *rg.group;
+                rg.members.clear();
+                for (auto const& m : g.members) {
+                    if (m == g.name) continue;
+                    if ((valid_tags.contains(m) || declared_groups.contains(m)) &&
+                        !std::ranges::contains(rg.members, m))
+                        rg.members.push_back(m);
+                }
+                if (rg.members.empty() && g.use_providers.empty()) {
+                    for (auto const& [t, _] : emitted) rg.members.push_back(t);
+                }
+                if (rg.members.empty() && g.use_providers.empty()) {
+                    rg.alive = false;
+                    declared_groups.erase(g.name);
+                    changed = true;
+                }
+            }
+            if (!changed) break;
+        }
+
         std::vector<std::string> group_kdl;
         std::set<std::string> group_names, referenced_outbounds;
-        for (auto const& g : doc.groups) {
-            std::vector<std::string> mems;
-            for (auto const& m : g.members)
-                if ((valid_tags.contains(m) || group_names.contains(m)) &&
-                    !std::ranges::contains(mems, m)) mems.push_back(m);
-            if (mems.empty() && g.use_providers.empty()) {
-                for (auto const& [t, _] : emitted) mems.push_back(t);
-            }
-            if (mems.empty() && g.use_providers.empty()) continue;
+        for (auto const& rg : group_candidates) {
+            if (!rg.alive) continue;
+            auto const& g = *rg.group;
+            auto const& mems = rg.members;
             for (auto const& m : mems) referenced_outbounds.insert(m);
             group_names.insert(g.name);
             valid_tags.insert(g.name);

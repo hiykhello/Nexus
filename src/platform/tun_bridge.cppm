@@ -10,6 +10,11 @@ import std;
 
 export namespace platform {
     enum class TunBridgeError { closed, invalid_packet, queue_full };
+    enum class PopOutboundStatus { ok, empty, buffer_too_small };
+    struct PopOutboundResult {
+        PopOutboundStatus status = PopOutboundStatus::empty;
+        std::size_t size = 0;
+    };
     using TunBridgeFailure = std::variant<TunBridgeError, std::error_code>;
     using TunBridgeOutputCallback = void (*)(std::uint8_t const* packet, std::size_t len, void* ctx);
     using TunBridgeWakeCallback = void (*)(void* ctx) noexcept;
@@ -129,17 +134,20 @@ export namespace platform {
             return {};
         }
 
-        [[nodiscard]] auto pop_outbound(std::span<std::uint8_t> out) -> std::optional<std::size_t> {
-            if (out.empty()) return std::nullopt;
+        [[nodiscard]] auto pop_outbound_checked(std::span<std::uint8_t> out) -> PopOutboundResult {
             std::lock_guard lock(mutex_);
-            while (!tx_.empty()) {
-                auto pkt = std::move(tx_.front());
-                tx_.pop_front();
-                if (pkt.size() > out.size()) continue;
-                std::ranges::copy(pkt, out.begin());
-                return pkt.size();
-            }
-            return std::nullopt;
+            if (tx_.empty()) return {PopOutboundStatus::empty, 0};
+            auto const& front = tx_.front();
+            if (front.size() > out.size()) return {PopOutboundStatus::buffer_too_small, front.size()};
+            auto size = front.size();
+            std::ranges::copy(front, out.begin());
+            tx_.pop_front();
+            return {PopOutboundStatus::ok, size};
+        }
+
+        [[nodiscard]] auto pop_outbound(std::span<std::uint8_t> out) -> std::optional<std::size_t> {
+            auto res = pop_outbound_checked(out);
+            return res.status == PopOutboundStatus::ok ? std::optional<std::size_t>{res.size} : std::nullopt;
         }
 
         auto close() noexcept -> void {

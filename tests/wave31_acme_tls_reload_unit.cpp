@@ -116,7 +116,18 @@ namespace {
             if (req.url == "https://ca.example/authz/9")
                 return R{200, "n5", {}, R"({"identifier":{"type":"dns","value":"example.com"},"status":"pending","challenges":[{"type":"dns-01","url":"https://ca.example/ch/9","token":"tokWild","status":"pending"}]})"};
             if (req.url == "https://ca.example/ch/9") { order_status = "ready"; return R{200, "n6", {}, R"({"status":"valid"})"}; }
-            if (req.url == "https://ca.example/fin/9") { order_status = "valid"; return R{200, "n7", {}, R"({"status":"valid","finalize":"https://ca.example/fin/9","certificate":"https://ca.example/cert/9"})"}; }
+            if (req.url == "https://ca.example/fin/9") {
+                auto pb = acme::base64url_decode(json_field(req.body, "payload"));
+                auto csr_der = pb ? acme::base64url_decode(json_field({reinterpret_cast<char const*>(pb->data()), pb->size()}, "csr")) : std::unexpected(std::string("bad"));
+                require(csr_der.has_value(), "decode finalize CSR");
+                auto csr_f = tmp.path / "req.csr", out_f = tmp.path / "signed.pem";
+                write_file(csr_f, {reinterpret_cast<char const*>(csr_der->data()), csr_der->size()});
+                require(std::system(std::format("openssl x509 -req -inform DER -in '{}' -CA '{}' -CAkey '{}' -CAcreateserial -out '{}' -days 1 >/dev/null 2>&1",
+                    csr_f.string(), cert_file.string(), key_file.string(), out_f.string()).c_str()) == 0, "sign CSR");
+                issued_pem = read_text(out_f);
+                order_status = "valid";
+                return R{200, "n7", {}, R"({"status":"valid","finalize":"https://ca.example/fin/9","certificate":"https://ca.example/cert/9"})"};
+            }
             if (req.url == "https://ca.example/ord/9")
                 return R{200, "n8", {}, std::format(R"({{"status":"{}","finalize":"https://ca.example/fin/9","certificate":"https://ca.example/cert/9"}})", order_status)};
             if (req.url == "https://ca.example/cert/9") return R{200, "n9", {}, issued_pem};

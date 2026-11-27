@@ -128,7 +128,7 @@ export namespace cli::run_detail {
             for (std::size_t index = 0; index < listeners.size(); ++index)
                 traffic.push_back(config.inbounds[index].shadowsocks ? listeners[index].server.get() : nullptr);
         }
-        return udp.configure(config, files.data, files.indices, files.ordered, server, traffic, protections);
+        return udp.configure(config, files.data, files.indices, files.ordered, server, traffic, protections, files.data_mmaps);
     }
 
     inline auto same_tcp_binding(Listener const& first, Listener const& second) noexcept -> bool {

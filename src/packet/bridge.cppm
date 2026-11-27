@@ -35,6 +35,27 @@ export namespace packet::bridge {
         std::uint64_t dropped_filtered = 0;
     };
 
+    using MacAddress = std::array<std::uint8_t, 6>;
+
+    struct RouteHint {
+        std::array<std::uint8_t, 16> destination{};
+        std::optional<std::array<std::uint8_t, 16>> gateway{};
+        std::uint32_t priority = 0;
+        std::uint8_t family = 0; // 4 or 6
+        std::uint8_t prefix = 0;
+    };
+
+    struct NeighborEntry {
+        std::array<std::uint8_t, 16> address{};
+        MacAddress mac{};
+        std::uint8_t family = 0; // 4 or 6
+    };
+
+    [[nodiscard]] auto resolve_destination_mac(std::span<std::uint8_t const> packet,
+                                               std::span<RouteHint const> routes,
+                                               std::span<NeighborEntry const> neighbors) noexcept
+        -> std::optional<MacAddress>;
+
     class Layer3Bridge {
         BridgeConfig config_{};
         BridgeStats stats_{};

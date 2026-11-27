@@ -175,7 +175,7 @@ export namespace control_api::http_detail {
         return value;
     }
 
-    inline auto url_decode_once(std::string_view in) -> std::optional<std::string> {
+    inline auto url_decode_once(std::string_view in, bool allow_slash = false) -> std::optional<std::string> {
         std::string out;
         out.reserve(in.size());
         for (std::size_t i = 0; i < in.size(); ++i) {
@@ -184,7 +184,7 @@ export namespace control_api::http_detail {
                 int hi = encoding::hex_value(in[i + 1]), lo = encoding::hex_value(in[i + 2]);
                 if (hi < 0 || lo < 0) return {};
                 char ch = static_cast<char>((hi << 4) | lo);
-                if (ch == '\0' || ch == '/') return {};
+                if (ch == '\0' || (!allow_slash && ch == '/')) return {};
                 out.push_back(ch);
                 i += 2;
             } else {
@@ -335,22 +335,26 @@ export namespace control_api::http_detail {
         return seen.value_or(0);
     }
 
-    inline auto parse_query_param(std::string_view query, std::string_view key) -> std::optional<std::string> {
+    inline auto find_query_param_raw(std::string_view query, std::string_view key) noexcept -> std::optional<std::string_view> {
         while (!query.empty()) {
             auto amp = query.find('&');
             auto pair = amp == std::string_view::npos ? query : query.substr(0, amp);
-            if (auto eq = pair.find('='); eq != std::string_view::npos && pair.substr(0, eq) == key) {
-                return url_decode_once(pair.substr(eq + 1));
-            }
+            if (auto eq = pair.find('='); eq != std::string_view::npos && pair.substr(0, eq) == key) return pair.substr(eq + 1);
             if (amp == std::string_view::npos) break;
             query.remove_prefix(amp + 1);
         }
         return std::nullopt;
     }
 
+    inline auto parse_query_param(std::string_view query, std::string_view key) -> std::optional<std::string> {
+        auto raw = find_query_param_raw(query, key);
+        return raw ? url_decode_once(*raw, true) : std::nullopt;
+    }
+
     struct ParsedLogWire {
         std::string latest_seq{"0"};
         std::string evicted{"0"};
+        std::string last_entry_seq;
         std::vector<std::string> entry_jsons;
     };
 
@@ -386,12 +390,25 @@ export namespace control_api::http_detail {
                 if (msg.size() >= 2 && msg.front() == '"' && msg.back() == '"')
                     msg = msg.substr(1, msg.size() - 2);
             }
+            if (!seq.empty()) parsed.last_entry_seq.assign(seq);
             parsed.entry_jsons.push_back(std::format(
                 "{{\"seq\":{},\"timestamp_ns\":{},\"level\":{},\"domain\":{},\"event\":{},\"session\":{},\"message\":{}}}",
                 seq.empty() ? "0" : seq, ts.empty() ? "0" : ts, json_escape(lvl), json_escape(dom),
                 ev.empty() ? "0" : ev, sess.empty() ? "0" : sess, json_escape(msg)));
         }
         return parsed;
+    }
+
+    inline auto advance_log_cursor(std::string& cursor, ParsedLogWire const& parsed) -> void {
+        auto to_u64 = [](std::string_view s) noexcept -> std::optional<std::uint64_t> {
+            if (s.empty()) return std::nullopt;
+            std::uint64_t v = 0;
+            auto [end, ec] = std::from_chars(s.data(), s.data() + s.size(), v);
+            return (ec == std::errc{} && end == s.data() + s.size()) ? std::optional(v) : std::nullopt;
+        };
+        auto cur = to_u64(cursor).value_or(0);
+        auto const& next_str = !parsed.entry_jsons.empty() ? parsed.last_entry_seq : parsed.latest_seq;
+        if (auto next = to_u64(next_str); next && *next > cur) cursor = next_str;
     }
 
     inline auto render_logs_json(std::string_view wire) -> std::string {
@@ -406,18 +423,21 @@ export namespace control_api::http_detail {
         return out;
     }
 
-    inline auto build_log_command_args(std::string_view query) -> std::vector<std::string> {
+    inline auto build_log_command_args(std::string_view query) -> std::expected<std::vector<std::string>, std::string> {
         std::vector<std::string> owned{"logs"};
         for (std::string_view key : {"since", "level", "domain", "search", "limit"}) {
-            if (auto v = parse_query_param(query, key); v && !v->empty())
-                owned.push_back(std::string(key) + "=" + *v);
+            auto raw = find_query_param_raw(query, key);
+            if (!raw) continue;
+            auto v = url_decode_once(*raw, true);
+            if (!v) return std::unexpected("invalid-query");
+            if (!v->empty()) owned.push_back(std::string(key) + "=" + *v);
         }
         return owned;
     }
 
     inline auto format_sse_logs(std::string_view wire, std::string& cursor) -> std::string {
         auto parsed = parse_logs_wire(wire);
-        cursor = std::move(parsed.latest_seq);
+        advance_log_cursor(cursor, parsed);
         std::string out;
         for (auto const& item : parsed.entry_jsons) {
             out += "event: log\ndata: ";

@@ -148,31 +148,36 @@ namespace {
         require(parsed_push->dns_servers == push.dns_servers && parsed_push->search_domains == push.search_domains, "push DNS/domain");
         require(parsed_push->redirect_gateway && parsed_push->redirect_gateway_v6 && parsed_push->topology_subnet, "push flags");
         require(parsed_push->mtu == 1420 && parsed_push->peer_id == 42 && parsed_push->ping_s == 15 && parsed_push->ping_restart_s == 90, "push scalars");
-        require(!parse_push_reply("PUSH_REPLYbogus").has_value(), "P2-7 PUSH_REPLY delimiter");
+        // R8 P2-3: omitted ping/ping-restart must stay std::nullopt (do not clobber local keepalive 0); explicit ping 0 preserved.
         {
+            auto no_ping = parse_push_reply("PUSH_REPLY,ifconfig 10.8.0.2 255.255.255.0");
+            require(no_ping && !no_ping->ping_s.has_value() && !no_ping->ping_restart_s.has_value(), "R8 P2-3 omitted ping stays nullopt");
+            std::uint16_t local_ping = 0, local_restart = 60;
+            apply_push_keepalive(local_ping, local_restart, *no_ping);
+            require(local_ping == 0 && local_restart == 60, "R8 P2-3 local keepalive 0 preserved when server omits ping");
+            auto pushed_15 = parse_push_reply("PUSH_REPLY,ping 15,ping-restart 45");
+            require(pushed_15 && pushed_15->ping_s == 15 && pushed_15->ping_restart_s == 45, "R8 P2-3 explicit ping 15 parsed");
+            apply_push_keepalive(local_ping, local_restart, *pushed_15);
+            require(local_ping == 15 && local_restart == 45, "R8 P2-3 explicit server ping 15 applied");
             PushConfig dirty; dirty.dns_servers = {"1.1.1.1", "8.8.8.8,redirect-gateway"}; dirty.search_domains = {"ok.local", "bad\nline"};
             auto enc_dirty = encode_push_reply(dirty);
-            require(enc_dirty.contains("1.1.1.1") && !enc_dirty.contains("redirect-gateway") && !enc_dirty.contains("bad\nline"), "P2-7 strip injected push tokens");
+            require(enc_dirty.contains("1.1.1.1") && !enc_dirty.contains("redirect-gateway") && !enc_dirty.contains("bad\nline") &&
+                    !enc_dirty.contains("ping"), "P2-7 strip injected + R8 P2-3 omit unset ping");
         }
+        require(!parse_push_reply("PUSH_REPLYbogus").has_value(), "P2-7 PUSH_REPLY delimiter");
 
         // 2. Pure BoringSSL-libcrypto mTLS credential & signing.
         auto mtls = MtlsCredentials::generate_ephemeral_ed25519();
         require(mtls && !mtls->certificate_der().empty() && !mtls->signature_schemes().empty(), "mTLS Ed25519 credential");
-        std::array<std::uint8_t, 32> th{};
-        th.fill(0x5a);
+        std::array<std::uint8_t, 32> th{}; th.fill(0x5a);
         auto sig = mtls->sign_certificate_verify(mtls->signature_schemes()[0], crypto::Hash::sha256, th);
         require(sig && !sig->empty(), "mTLS CertificateVerify sign");
         auto now_s = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-        require(verify_mtls_peer_chain(mtls->certificate_der(), {}, mtls->certificate_der(), now_s).has_value(),
-                "mTLS self-anchor verify succeeds");
+        require(verify_mtls_peer_chain(mtls->certificate_der(), {}, mtls->certificate_der(), now_s).has_value(), "mTLS self-anchor verify");
         auto other_ca = MtlsCredentials::generate_ephemeral_ed25519();
-        require(!verify_mtls_peer_chain(mtls->certificate_der(), {}, other_ca->certificate_der(), now_s).has_value(),
-                "mTLS wrong CA fails closed");
-        {
-            std::vector<std::uint8_t> trailed(mtls->certificate_der().begin(), mtls->certificate_der().end());
-            trailed.push_back(0x00);
-            require(!verify_mtls_peer_chain(trailed, {}, mtls->certificate_der(), now_s).has_value(), "P2-4 reject trailing DER bytes");
-        }
+        require(!verify_mtls_peer_chain(mtls->certificate_der(), {}, other_ca->certificate_der(), now_s).has_value(), "mTLS wrong CA fails closed");
+        std::vector<std::uint8_t> trailed(mtls->certificate_der().begin(), mtls->certificate_der().end()); trailed.push_back(0x00);
+        require(!verify_mtls_peer_chain(trailed, {}, mtls->certificate_der(), now_s).has_value(), "P2-4 reject trailing DER bytes");
 
         // 3. Full OpenVPN ServerSession <-> client handshake with tls-crypt + mTLS + P_DATA_V2!
         auto pem = make_static_key_pem();
@@ -225,29 +230,24 @@ namespace {
 
         // Step C: KeyMethod2 exchange + PUSH_REQUEST / PUSH_REPLY.
         KeyMethod2Client km_cli{};
-        require(crypto::random_bytes(km_cli.pre_master).has_value(), "rng pm");
-        require(crypto::random_bytes(km_cli.random1).has_value(), "rng r1");
-        require(crypto::random_bytes(km_cli.random2).has_value(), "rng r2");
-        km_cli.options = "V4,dev-type tun,cipher AES-256-GCM";
-        km_cli.username = "alice";
-        km_cli.password = "s3cr3t";
-        auto km_cli_wire = encode_key_method2_client(km_cli);
-        require(km_cli_wire.has_value(), "encode km2 client");
-
+        require(crypto::random_bytes(km_cli.pre_master) && crypto::random_bytes(km_cli.random1) && crypto::random_bytes(km_cli.random2), "rng km2");
+        km_cli.options = "V4,dev-type tun,cipher AES-256-GCM"; km_cli.username = "alice"; km_cli.password = "s3cr3t";
+        auto km_cli_wire = encode_key_method2_client(km_cli); require(km_cli_wire.has_value(), "encode km2 client");
         auto srv_km = server.on_tls_plaintext(*km_cli_wire);
-        require(srv_km && !srv_km->tls_tx_plaintext.empty() && server.state() == ServerState::awaiting_push_request,
-                "server processed KeyMethod2");
-        auto km_srv = decode_key_method2_server(srv_km->tls_tx_plaintext);
-        require(km_srv.has_value(), "client decoded KeyMethod2Server");
-        auto cli_km = derive_key_method2_keys(km_cli.pre_master, km_cli.random1, km_srv->random1,
-                                              km_cli.random2, km_srv->random2,
+        require(srv_km && !srv_km->tls_tx_plaintext.empty() && server.state() == ServerState::awaiting_push_request, "server processed KeyMethod2");
+        auto km_srv = decode_key_method2_server(srv_km->tls_tx_plaintext); require(km_srv.has_value(), "client decoded KeyMethod2Server");
+        auto cli_km = derive_key_method2_keys(km_cli.pre_master, km_cli.random1, km_srv->random1, km_cli.random2, km_srv->random2,
                                               cli_ctrl.local_session_id(), cli_ctrl.remote_session_id(), false);
         require(cli_km.has_value(), "client derived data keys");
 
-        constexpr std::string_view kPushReq = "PUSH_REQUEST\0";
-        auto srv_push = server.on_tls_plaintext(
-            std::span(reinterpret_cast<std::uint8_t const*>(kPushReq.data()), kPushReq.size()));
-        require(srv_push && server.established(), "server answered PUSH_REQUEST & established");
+        // R8 P1-1: unterminated 12-byte PUSH_REQUEST must NOT establish; 13th NUL byte completes it.
+        constexpr std::string_view kPushReqNoNul = "PUSH_REQUEST";
+        auto srv_unterm = server.on_tls_plaintext(
+            std::span(reinterpret_cast<std::uint8_t const*>(kPushReqNoNul.data()), kPushReqNoNul.size()));
+        require(srv_unterm && srv_unterm->tls_tx_plaintext.empty() && !server.established(), "R8 P1-1 reject unterminated PUSH_REQUEST");
+        constexpr std::array<std::uint8_t, 1> kNul{0};
+        auto srv_push = server.on_tls_plaintext(kNul);
+        require(srv_push && server.established(), "R8 P1-1 NUL-terminated PUSH_REQUEST established");
         std::string_view push_sv(reinterpret_cast<char const*>(srv_push->tls_tx_plaintext.data()),
                                  srv_push->tls_tx_plaintext.size());
         auto recv_push = parse_push_reply(push_sv);
@@ -366,6 +366,59 @@ namespace {
         run_dtls_suite(DtlsVersion::dtls1_3, DtlsCipher::aes_256_gcm);
         run_dtls_suite(DtlsVersion::dtls1_3, DtlsCipher::chacha20_poly1305);
 
+        // P1-4: Verify DTLS 1.3 RFC 9147 §5.3 raw wire format (legacy_version == 0xfefd + supported_versions 0x002b -> 0xfefc) & strict rejections.
+        {
+            auto u16 = [](std::span<std::uint8_t const> s, std::size_t o) {
+                return static_cast<std::uint16_t>((std::uint16_t(s[o]) << 8) | s[o + 1]);
+            };
+            std::array<std::uint8_t, 48> ms{};
+            require(crypto::random_bytes(ms).has_value(), "P1-4 rng");
+            std::vector<std::uint8_t> sid{0xde, 0xad, 0xbe, 0xef, 1, 2, 3, 4};
+            DtlsConfig cc{DtlsVersion::dtls1_3, DtlsCipher::aes_256_gcm, false, sid, ms, 1400};
+            DtlsConfig sc{DtlsVersion::dtls1_3, DtlsCipher::aes_256_gcm, true, sid, ms, 1400};
+            DtlsTransport cli, srv;
+            require(cli.init(cc).has_value() && srv.init(sc).has_value(), "P1-4 init");
+            auto ch = cli.build_client_hello();
+            require(ch && ch->size() >= 25 + 35 && (*ch)[0] == 22 && u16(*ch, 1) == 0xfefd && (*ch)[13] == 1, "P1-4 CH record/hs hdr");
+            auto body = std::span<std::uint8_t const>(*ch).subspan(25);
+            require(u16(body, 0) == 0xfefd, "P1-4 CH legacy_version == 0xfefd");
+            std::size_t pos = 35u + body[34];
+            pos += 1u + body[pos]; // cookie
+            std::size_t cs_len = u16(body, pos); pos += 2u;
+            require(cs_len == 2u && u16(body, pos) == 0x1302u, "P1-4 CH TLS 1.3 cipher suite");
+            pos += cs_len; pos += 1u + body[pos]; // compression
+            require(pos + 9u == body.size() && u16(body, pos) == 7u && u16(body, pos + 2u) == 0x002bu &&
+                    u16(body, pos + 4u) == 3u && body[pos + 6u] == 2u && u16(body, pos + 7u) == 0xfefcu,
+                    "P1-4 CH supported_versions (0x002b) advertises 0xfefc");
+            auto sfl = srv.on_handshake_datagram(*ch);
+            require(sfl && sfl->size() >= 2 && (*sfl)[0].size() >= 25 + 35, "P1-4 SH flight");
+            auto sh_body = std::span<std::uint8_t const>((*sfl)[0]).subspan(25);
+            std::size_t spos = 35u + sh_body[34];
+            require(u16(sh_body, 0) == 0xfefd && u16(sh_body, spos) == 0x1302u && sh_body[spos + 2u] == 0u &&
+                    spos + 11u == sh_body.size() && u16(sh_body, spos + 3u) == 6u && u16(sh_body, spos + 5u) == 0x002bu &&
+                    u16(sh_body, spos + 7u) == 2u && u16(sh_body, spos + 9u) == 0xfefcu,
+                    "P1-4 SH legacy_version == 0xfefd + supported_versions selects 0xfefc");
+            // Reject raw 0xfefc in legacy_version or stripped supported_versions on both sides.
+            auto patch_strip = [](std::vector<std::uint8_t> d, std::size_t trim) {
+                d.resize(d.size() - trim);
+                auto set16 = [&](std::size_t o, std::uint16_t v) { d[o] = static_cast<std::uint8_t>(v >> 8); d[o + 1] = static_cast<std::uint8_t>(v); };
+                auto set24 = [&](std::size_t o, std::uint32_t v) { d[o] = static_cast<std::uint8_t>(v >> 16); d[o + 1] = static_cast<std::uint8_t>(v >> 8); d[o + 2] = static_cast<std::uint8_t>(v); };
+                set16(11, static_cast<std::uint16_t>(d.size() - 13));
+                set24(14, static_cast<std::uint32_t>(d.size() - 25));
+                set24(22, static_cast<std::uint32_t>(d.size() - 25));
+                return d;
+            };
+            auto bad_ch_ver = *ch; bad_ch_ver[25] = 0xfe; bad_ch_ver[26] = 0xfc;
+            DtlsTransport s_bad1, s_bad2, c_bad1, c_bad2;
+            require(s_bad1.init(sc).has_value() && !s_bad1.on_handshake_datagram(bad_ch_ver).has_value(), "P1-4 reject CH legacy_version 0xfefc");
+            require(s_bad2.init(sc).has_value() && !s_bad2.on_handshake_datagram(patch_strip(*ch, 9)).has_value(), "P1-4 reject CH missing 0x002b");
+            auto bad_sh_ver = (*sfl)[0]; bad_sh_ver[25] = 0xfe; bad_sh_ver[26] = 0xfc;
+            require(c_bad1.init(cc).has_value() && c_bad1.build_client_hello().has_value() &&
+                    !c_bad1.on_handshake_datagram(bad_sh_ver).has_value(), "P1-4 reject SH legacy_version 0xfefc");
+            require(c_bad2.init(cc).has_value() && c_bad2.build_client_hello().has_value() &&
+                    !c_bad2.on_handshake_datagram(patch_strip((*sfl)[0], 8)).has_value(), "P1-4 reject SH missing 0x002b");
+        }
+
         // Verify DTLS 1.3 RFC 9147 16-bit sequence wraparound reconstruction (65535 -> 65536).
         DtlsReplayWindow win;
         require(win.check_and_record(65534) && win.check_and_record(65535), "seed near 16-bit wrap");
@@ -374,34 +427,25 @@ namespace {
 
         // 3. Automatic DTLS -> CSTP TCP fallback scenarios!
         {
-            Session sess;
-            sess.on_connected(true);
-            require(sess.dtls_active(), "session starts with DTLS enabled");
-            DtlsFallbackController fb(5000, 10000, 3, 5);
-            fb.begin_handshake(1000);
-            require(fb.poll(4000, sess) == FallbackAction::none && sess.dtls_active(), "within handshake deadline");
-            require(fb.poll(6000, sess) == FallbackAction::fallback_to_cstp && !sess.dtls_active() &&
+            Session s; s.on_connected(true); require(s.dtls_active(), "session starts with DTLS enabled");
+            DtlsFallbackController fb(5000, 10000, 3, 5); fb.begin_handshake(1000);
+            require(fb.poll(4000, s) == FallbackAction::none && s.dtls_active(), "within handshake deadline");
+            require(fb.poll(6000, s) == FallbackAction::fallback_to_cstp && !s.dtls_active() &&
                     fb.reason() == FallbackReason::handshake_timeout, "handshake timeout triggers CSTP fallback");
         }
         {
-            Session sess;
-            sess.on_connected(true);
-            DtlsFallbackController fb(5000, 10000, 2, 5);
-            fb.begin_handshake(0);
-            fb.on_established(500);
-            require(fb.poll(10500, sess) == FallbackAction::send_dpd_req && sess.dtls_active(), "missed DPD #1");
-            require(fb.poll(20500, sess) == FallbackAction::send_dpd_req && sess.dtls_active(), "missed DPD #2");
-            require(fb.poll(30500, sess) == FallbackAction::fallback_to_cstp && !sess.dtls_active() &&
+            Session s; s.on_connected(true);
+            DtlsFallbackController fb(5000, 10000, 2, 5); fb.begin_handshake(0); fb.on_established(500);
+            require(fb.poll(10500, s) == FallbackAction::send_dpd_req && s.dtls_active(), "missed DPD #1");
+            require(fb.poll(20500, s) == FallbackAction::send_dpd_req && s.dtls_active(), "missed DPD #2");
+            require(fb.poll(30500, s) == FallbackAction::fallback_to_cstp && !s.dtls_active() &&
                     fb.reason() == FallbackReason::dpd_timeout, "DPD timeout triggers CSTP fallback");
         }
         {
-            Session sess;
-            sess.on_connected(true);
-            DtlsFallbackController fb(5000, 10000, 3, 2);
-            fb.begin_handshake(0);
-            fb.on_established(100);
-            require(fb.on_transport_error(sess) == FallbackAction::none && sess.dtls_active(), "error #1 tolerated");
-            require(fb.on_transport_error(sess) == FallbackAction::fallback_to_cstp && !sess.dtls_active() &&
+            Session s; s.on_connected(true);
+            DtlsFallbackController fb(5000, 10000, 3, 2); fb.begin_handshake(0); fb.on_established(100);
+            require(fb.on_transport_error(s) == FallbackAction::none && s.dtls_active(), "error #1 tolerated");
+            require(fb.on_transport_error(s) == FallbackAction::fallback_to_cstp && !s.dtls_active() &&
                     fb.reason() == FallbackReason::transport_error, "consecutive UDP errors trigger CSTP fallback");
         }
     }

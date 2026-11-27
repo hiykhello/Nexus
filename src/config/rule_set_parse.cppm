@@ -15,6 +15,51 @@ export namespace config::kdl {
         });
     }
 
+    inline auto normalize_sha256_hex(std::string_view text) -> std::string {
+        std::string out(text);
+        for (auto& ch : out)
+            if (ch >= 'A' && ch <= 'F') ch = static_cast<char>(ch - 'A' + 'a');
+        return out;
+    }
+
+    inline auto normalize_remote_url(std::string_view text) -> std::string {
+        auto hash = text.find('#');
+        if (hash != text.npos) text = text.substr(0, hash);
+        auto scheme_end = text.find("://");
+        if (scheme_end == text.npos) return std::string(text);
+        std::string scheme(text.substr(0, scheme_end));
+        for (auto& ch : scheme)
+            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        auto rest = text.substr(scheme_end + 3);
+        auto sep = rest.find_first_of("/?");
+        auto authority = rest.substr(0, sep);
+        std::string_view target = sep == rest.npos ? std::string_view{} : rest.substr(sep);
+        std::string host, port;
+        if (authority.starts_with('[')) {
+            auto close = authority.find(']');
+            if (close != authority.npos) {
+                host = std::string(authority.substr(0, close + 1));
+                if (close + 1 < authority.size() && authority[close + 1] == ':')
+                    port = std::string(authority.substr(close + 2));
+            } else host = std::string(authority);
+        } else {
+            auto colon = authority.rfind(':');
+            if (colon != authority.npos) {
+                host = std::string(authority.substr(0, colon));
+                port = std::string(authority.substr(colon + 1));
+            } else host = std::string(authority);
+        }
+        for (auto& ch : host)
+            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        if ((scheme == "https" && port == "443") || (scheme == "http" && port == "80")) port.clear();
+        std::string out = scheme + "://" + host;
+        if (!port.empty()) out += ":" + port;
+        if (target.empty()) out += '/';
+        else if (target.starts_with('?')) { out += '/'; out.append(target); }
+        else out.append(target);
+        return out;
+    }
+
     inline auto parse_rule_format(std::string_view text) noexcept -> std::optional<RuleFormat> {
         using enum RuleFormat;
         if (text == "kdl") return kdl;
@@ -80,7 +125,7 @@ export namespace config::kdl {
             spec.format = *parsed_fmt;
             spec.url = *url;
             if (client) spec.http_client = *client;
-            if (sha256) spec.sha256 = *sha256;
+            if (sha256) spec.sha256 = normalize_sha256_hex(*sha256);
             spec.update_interval_ms = static_cast<std::uint32_t>(interval.value_or(3600000));
             return std::pair{*name, std::move(spec)};
         }

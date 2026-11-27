@@ -49,4 +49,6 @@ export namespace acme {
         std::int64_t not_after_epoch = 0;
     };
     [[nodiscard]] auto parse_cert_validity(std::string_view cert_pem) -> std::expected<CertValidity, std::string>;
+    [[nodiscard]] auto verify_cert_key_pair(std::string_view cert_pem, std::string_view key_pem)
+        -> std::expected<CertValidity, std::string>;
 }

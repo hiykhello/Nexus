@@ -20,7 +20,8 @@ export namespace cli {
         auto resize(std::size_t,bool) -> void {}
         auto remember(std::size_t,std::span<std::uint8_t const>,std::span<relay::ShadowsocksUserKey const>) -> void {}
         [[nodiscard]] auto configure(config::Config const& configuration,std::span<std::string const>,std::span<std::size_t const>,
-            std::span<rules::ProgramRule const> = {},relay::Server* = nullptr,std::span<relay::Server* const> = {},std::span<DnsProtection const> = {}) -> std::expected<void,std::string> {
+            std::span<rules::ProgramRule const> = {},relay::Server* = nullptr,std::span<relay::Server* const> = {},
+            std::span<DnsProtection const> = {},std::span<std::shared_ptr<rules::MmapMatcher const> const> = {}) -> std::expected<void,std::string> {
             if (std::ranges::any_of(configuration.inbounds,[](auto const& inbound) {
                 return inbound.shadowsocks.has_value();
             })) {

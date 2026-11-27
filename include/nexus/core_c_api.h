@@ -56,7 +56,8 @@ NEXUS_CORE_EXPORT int nexus_core_tun_bridge_enable(int enabled, unsigned short m
 /// Injects an inbound raw IP packet from host VPN flow into Nexus; returns 0 on success.
 NEXUS_CORE_EXPORT int nexus_core_tun_bridge_inject(const unsigned char* packet, size_t len);
 
-/// Pops an outbound raw IP packet from Nexus when no callback is set; returns 0 (copied), 1 (empty), or <0 on error.
+/// Pops an outbound raw IP packet from Nexus when no callback is set; returns 0 (copied), 1 (empty),
+/// -4 (buffer too small; front packet preserved and `*out_len` set to required size), or other <0 on error.
 NEXUS_CORE_EXPORT int nexus_core_tun_bridge_pop_outbound(unsigned char* out_buf, size_t capacity, size_t* out_len);
 
 /// Returns a static comma-separated list of compile-time features enabled in this build.

@@ -4,6 +4,10 @@ import config;
 import dns.corosio_query;
 
 namespace cli {
+    auto dns_system_trust_identity() -> std::expected<std::string, std::string> {
+        return std::string{"system-ca"};
+    }
+
     auto prepare_encrypted_dns_transport(config::DnsTls const& profile,config::TcpSocketOptions const&,
         std::optional<std::chrono::milliseconds>,std::optional<std::size_t>,dns::detail::TransportSnapshotRef)
         -> std::expected<dns::detail::ProtectedQuery,std::string> {

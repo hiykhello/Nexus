@@ -8,6 +8,8 @@ import relay;
 import rulefile;
 import rules;
 import rules.rule_input;
+import state.core;
+import state.ruleset_storage;
 import cli.tun_route_sets;
 import cli.route_files_nxmm;
 
@@ -38,6 +40,30 @@ namespace cli {
         return fn ? fn() : std::shared_ptr<void>{};
     }
 
+    auto verify_remote_ruleset_sha256(config::BlockRules const& spec, std::string_view body)
+        -> std::expected<void, std::string> {
+        if (spec.sha256.empty()) return {};
+        if (spec.sha256.size() != 64)
+            return std::unexpected("remote rule-set " + spec.url + ": invalid SHA-256 pin");
+        ::state::Fingerprint expected{};
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            unsigned value = 0;
+            auto ptr = spec.sha256.data() + i * 2;
+            auto [parsed, ec] = std::from_chars(ptr, ptr + 2, value, 16);
+            if (ec != std::errc{} || parsed != ptr + 2)
+                return std::unexpected("remote rule-set " + spec.url + ": invalid SHA-256 pin");
+            expected[i] = static_cast<std::byte>(value);
+        }
+        auto actual = ::state::rule_sha256(body);
+        if (!actual) return std::unexpected("remote rule-set " + spec.url + ": failed computing SHA-256");
+        std::uint8_t diff = 0;
+        for (std::size_t i = 0; i < expected.size(); ++i)
+            diff |= std::to_integer<std::uint8_t>((*actual)[i] ^ expected[i]);
+        if (diff != 0)
+            return std::unexpected("remote rule-set " + spec.url + ": SHA-256 does not match");
+        return {};
+    }
+
     auto fetch_managed_ruleset(config::Config const& config,std::string_view config_source,
         config::BlockRules const& spec,std::string_view previous_etag,bool offline_fallback,std::stop_token stop,void* client_pool)
         -> std::expected<ManagedRulesetFetchResult,std::string> {
@@ -49,6 +75,11 @@ namespace cli {
     }
 
     auto set_working_directory(std::filesystem::path directory) -> void {
+        std::lock_guard lock(g_working_directory_mutex);
+        g_working_directory=std::move(directory);
+    }
+
+    auto restore_working_directory(std::optional<std::filesystem::path> directory) -> void {
         std::lock_guard lock(g_working_directory_mutex);
         g_working_directory=std::move(directory);
     }
@@ -171,12 +202,32 @@ namespace cli {
             std::error_code ec;
             if (!std::filesystem::is_directory(resolved,ec) || ec)
                 return std::unexpected("config directory is not accessible: "+std::string(path));
+            std::optional<std::filesystem::path> override_resolved, override_canonical;
+            if (!host_override_path.empty()) {
+                override_resolved = resolve_cli_path(host_override_path);
+                std::error_code ov_ec;
+                auto canon = std::filesystem::weakly_canonical(*override_resolved, ov_ec);
+                if (!ov_ec) override_canonical = std::move(canon);
+            }
+            auto is_explicit_override = [&](std::filesystem::path const& candidate) -> bool {
+                if (!override_resolved) return false;
+                std::error_code eq_ec;
+                if (std::filesystem::equivalent(candidate, *override_resolved, eq_ec) && !eq_ec) return true;
+                if (override_canonical) {
+                    std::error_code c_ec;
+                    auto canon = std::filesystem::weakly_canonical(candidate, c_ec);
+                    if (!c_ec && canon == *override_canonical) return true;
+                }
+                return false;
+            };
             std::vector<std::filesystem::path> files;
             for (auto const& entry : std::filesystem::directory_iterator(resolved,ec)) {
                 if (ec) return std::unexpected("cannot scan config directory: "+ec.message());
                 auto name=entry.path().filename().string();
-                if (!name.empty() && !name.starts_with('.') && name.ends_with(".kdl") && entry.is_regular_file(ec) && !ec)
+                if (!name.empty() && !name.starts_with('.') && name.ends_with(".kdl") && entry.is_regular_file(ec) && !ec) {
+                    if (is_explicit_override(entry.path())) continue;
                     files.push_back(entry.path());
+                }
             }
             if (files.empty()) return std::unexpected("config directory contains no .kdl files: "+std::string(path));
             std::ranges::sort(files,[](auto const& a,auto const& b) { return a.filename().string()<b.filename().string(); });
@@ -329,6 +380,8 @@ namespace cli {
 
         std::filesystem::path cache_dir = !input.cache_dir().empty() ? input.cache_dir() :
             (config.state && !config.state->cache_directory.empty() ? std::filesystem::path(config.state->cache_directory) : std::filesystem::path{});
+        std::uint64_t nxmm_max_bytes = config.state ? config.state->ruleset_cache_max_bytes : 64ull * 1024 * 1024;
+        std::vector<std::filesystem::path> active_nxmm;
         std::size_t total_inline=0, total_mapped=0;
         std::vector<std::string> keys;
         auto read=[&](config::BlockRules const& file, bool allow_mmap) -> std::expected<std::size_t,std::string> {
@@ -338,6 +391,14 @@ namespace cli {
                 result.data_mmaps.emplace_back();
                 keys.emplace_back();
                 return keys.size()-1;
+            }
+            if (!file.url.empty() && !file.sha256.empty()) {
+                if (auto seeded=input.read(file.url)) {
+                    if (auto ok=verify_remote_ruleset_sha256(file,*seeded); !ok)
+                        return std::unexpected(std::move(ok.error()));
+                } else if (!input.allows_unfetched_remote()) {
+                    return std::unexpected("remote rule-set "+file.url+": "+seeded.error());
+                }
             }
             auto key=!file.url.empty() ? file.url : file.path;
             if ((file.format==config::RuleFormat::srs || file.format==config::RuleFormat::nxmm) && file.ip_cidr_match_source)
@@ -354,8 +415,9 @@ namespace cli {
                         if (!mm) return std::unexpected(std::move(mm.error()));
                         mapped=std::make_shared<rules::MmapMatcher const>(std::move(*mm));
                     } else if (allow_mmap && file.format==config::RuleFormat::srs && !cache_dir.empty()) {
-                        mapped=nxmm_detail::try_mmap_srs_sidecar(cache_dir,*seeded,file.ip_cidr_match_source);
-                        if (!mapped) content.assign(*seeded);
+                        mapped=nxmm_detail::try_mmap_srs_sidecar(cache_dir,*seeded,file.ip_cidr_match_source,nxmm_max_bytes,active_nxmm);
+                        if (mapped) active_nxmm.push_back(nxmm_detail::sidecar_path(cache_dir,*seeded,file.ip_cidr_match_source));
+                        else content.assign(*seeded);
                     } else content.assign(*seeded);
                 } else if (input.allows_unfetched_remote()) {
                     content="schema-version 2\nkind \"predicate\"\ndomain \"remote-placeholder.invalid\"\n";
@@ -367,8 +429,10 @@ namespace cli {
             } else {
                 auto data=input.read(file.path);
                 if(!data)return std::unexpected(std::move(data.error()));
-                if (allow_mmap && file.format==config::RuleFormat::srs && !cache_dir.empty())
-                    mapped=nxmm_detail::try_mmap_srs_sidecar(cache_dir,*data,file.ip_cidr_match_source);
+                if (allow_mmap && file.format==config::RuleFormat::srs && !cache_dir.empty()) {
+                    mapped=nxmm_detail::try_mmap_srs_sidecar(cache_dir,*data,file.ip_cidr_match_source,nxmm_max_bytes,active_nxmm);
+                    if (mapped) active_nxmm.push_back(nxmm_detail::sidecar_path(cache_dir,*data,file.ip_cidr_match_source));
+                }
                 if (!mapped) content.assign(*data);
             }
             if (mapped) {

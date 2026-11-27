@@ -220,7 +220,7 @@ static auto fetch_once(int argc,char** argv,WatchState* watch=nullptr) -> int {
         metadata.expires_at=now+86400;
         auto stored=options->cache->store(*key,cached.clear_epoch,std::move(metadata),body);
         if (!stored) return cache_error(stored.error());
-        prewarm_srs_cache_sidecar(options->cache_root,*format,body);
+        prewarm_srs_cache_sidecar(options->cache_root,*format,body,options->max_bytes.value_or(64ull*1024*1024));
         if (unchanged) {
             auto published=::rulefile::read_regular_file(argv[5]);
             if (published && *published==body) return 0;
@@ -266,7 +266,6 @@ static auto fetch_once(int argc,char** argv,WatchState* watch=nullptr) -> int {
     if (automatic && !used_alternative) watch->alternative=advertisement.select(started);
     return 0;
 }
-
 
 auto nexus_rule_fetch(int argc,char** argv) -> int {
     if (argc==3 && std::string_view(argv[1])=="--clear-cache") {
@@ -412,7 +411,7 @@ namespace {
             ::state::RulesetMetadata meta{.etag=tag,.last_modified=last_modified,.response_target=url->target,
                 .fetched_at=now,.expires_at=now+86400};
             (void)disk_cache->store(*key,cached.clear_epoch,std::move(meta),result->body);
-            prewarm_srs_cache_sidecar(config.state->cache_directory,format,result->body);
+            prewarm_srs_cache_sidecar(config.state->cache_directory,format,result->body,config.state->ruleset_cache_max_bytes);
         }
         return cli::ManagedRulesetFetchResult{std::move(result->body),std::move(tag),false};
     }
@@ -426,7 +425,7 @@ namespace {
         std::filesystem::path cache_root = !spec.cache_dir.empty() ? std::filesystem::path(spec.cache_dir) :
             (config.state && !config.state->cache_directory.empty() ? std::filesystem::path(config.state->cache_directory) : std::filesystem::path{});
         std::optional<cli::ManagedProviderFetchResult> cached;
-        if (!cache_root.empty()) cached = cli::read_provider_cache(cache_root, spec.name);
+        if (!cache_root.empty()) cached = cli::read_provider_cache(cache_root, spec.name, spec.url);
         auto created = acquire_pooled_client(client_pool, config, spec.http_client, url->authority);
         if (!created) {
             if (offline_fallback && cached) return *cached;
@@ -481,15 +480,16 @@ namespace {
         release_pooled_client(client_pool, spec.http_client, url->authority, std::move(created->deps), std::move(created->client));
         std::string tag = (validator.seen && !validator.invalid) ? validator.value : active_etag;
         if (result->status == 304) {
+            if (!conditional || validator.invalid || (validator.seen && entity_tag(validator.value) != clean_tag))
+                return std::unexpected("unexpected or mismatched HTTP 304 for proxy-provider");
             cli::ManagedProviderFetchResult res{cached ? cached->body : std::string{}, std::move(tag),
                 userinfo ? userinfo : (cached ? cached->userinfo : std::nullopt), true};
             return res;
         }
         cli::ManagedProviderFetchResult res{std::move(result->body), std::move(tag), userinfo, false};
-        if (!cache_root.empty()) (void)cli::write_provider_cache(cache_root, spec.name, res);
+        if (!cache_root.empty()) (void)cli::write_provider_cache(cache_root, spec.name, spec.url, res);
         return res;
     }
-
 }
 
 extern "C" void nexus_register_builtin_http_fetchers() noexcept {

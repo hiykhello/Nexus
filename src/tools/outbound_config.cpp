@@ -8,6 +8,7 @@ import cli.dns_transports;
 import dns.corosio_query;
 import relay;
 import rulefile;
+import state.core;
 import encoding.base64_key;
 import cli.tailscale_outbound;
 
@@ -207,5 +208,62 @@ namespace cli {
             return std::unexpected("configuration: "+result.error());
         }
         return {};
+    }
+
+    auto outbound_secrets_fingerprint(config::Config const& cfg) -> std::expected<std::string,std::string> {
+        std::vector<std::string> paths;
+        auto add = [&](std::string const& p) { if (!p.empty()) paths.push_back(p); };
+        auto add_opt = [&](std::optional<std::string> const& p) { if (p && !p->empty()) paths.push_back(*p); };
+        if (cfg.certificate) add(cfg.certificate->ca_file);
+        if (cfg.vless) { add(cfg.vless->uuid_file); add(cfg.vless->ca_file); add(cfg.vless->ech.config_file); }
+        for (auto const& n : cfg.vless_outbounds) { add(n.config.uuid_file); add(n.config.ca_file); add(n.config.ech.config_file); }
+        for (auto const& n : cfg.shadowsocks_outbounds) {
+            add(n.config.key_file);
+            for (auto const& id : n.config.identity_key_files) add(id);
+        }
+        for (auto const& n : cfg.trojan_outbounds) { add(n.config.password_file); add(n.config.ca_file); add(n.config.ech.config_file); }
+        for (auto const& n : cfg.anytls_outbounds) { add(n.config.connection.password_file); add(n.config.connection.ca_file); add(n.config.connection.ech.config_file); }
+        for (auto const& n : cfg.hysteria2_outbounds) {
+            add(n.config.connection.password_file); add(n.config.connection.ca_file); add(n.config.connection.ech.config_file);
+            add_opt(n.config.transport.salamander_password_file);
+        }
+        for (auto const& n : cfg.snell_outbounds) { add(n.config.psk_file); add_opt(n.config.user_file); }
+        for (auto const& n : cfg.shadowtls_outbounds) { add(n.config.connection.password_file); add(n.config.connection.ca_file); }
+        for (auto const& n : cfg.tuic_outbounds) { add(n.config.uuid_file); add(n.config.password_file); add(n.config.ca_file); add(n.config.ech.config_file); }
+        for (auto const& n : cfg.masque_outbounds) { add(n.config.bearer_file); add(n.config.ca_file); add(n.config.ech.config_file); }
+        for (auto const& n : cfg.wireguard_outbounds) {
+            add(n.config.private_key_file); add(n.config.peer_public_key_file); add_opt(n.config.preshared_key_file);
+            for (auto const& peer : n.config.peers) { add(peer.peer_public_key_file); add_opt(peer.preshared_key_file); }
+        }
+        for (auto const& n : cfg.ssh_outbounds) { add_opt(n.config.password_file); add_opt(n.config.private_key_file); }
+        for (auto const& n : cfg.naive_outbounds) { add(n.config.password_file); add(n.config.ca_file); add(n.config.ech.config_file); }
+        for (auto const& n : cfg.openvpn_outbounds) {
+            add(n.config.ca_file); add_opt(n.config.password_file); add_opt(n.config.static_key_file);
+            add_opt(n.config.client_cert_file); add_opt(n.config.client_key_file);
+        }
+        for (auto const& n : cfg.openconnect_outbounds) {
+            add(n.config.ca_file); add_opt(n.config.password_file); add_opt(n.config.cookie_file);
+            add_opt(n.config.client_cert_file); add_opt(n.config.client_key_file);
+        }
+        for (auto const& n : cfg.tailscale_outbounds) add(n.endpoint_file);
+        for (auto const& n : cfg.tcp_proxy_outbounds) {
+            add(n.config.password_file);
+            if (n.config.tls) { add(n.config.tls->ca_file); add(n.config.tls->ech.config_file); }
+        }
+        std::ranges::sort(paths);
+        paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+        std::string summary;
+        summary.reserve(paths.size() * 64);
+        for (auto const& path : paths) {
+            auto content = ::rulefile::read_regular_file(path);
+            if (!content) return std::unexpected("outbound credential file " + path + ": " + content.error());
+            auto digest = ::state::fingerprint(std::as_bytes(std::span(*content)));
+            if (!content->empty()) utility::secure_zero(content->data(), content->size());
+            summary.append(path);
+            summary.push_back('\0');
+            summary.append(reinterpret_cast<char const*>(digest.data()), digest.size());
+        }
+        auto master = ::state::fingerprint(std::as_bytes(std::span(summary)));
+        return std::string(reinterpret_cast<char const*>(master.data()), master.size());
     }
 }

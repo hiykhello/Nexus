@@ -303,7 +303,7 @@ export namespace control_api::http_detail {
         for (auto const& s : owned) args.emplace_back(s);
         if (auto res = command(args); res) {
             auto parsed = parse_logs_wire(*res);
-            peer.log_cursor = std::move(parsed.latest_seq);
+            advance_log_cursor(peer.log_cursor, parsed);
             for (auto const& entry : parsed.entry_jsons)
                 queue_ws_text(peer, std::format("{{\"type\":\"log\",\"data\":{}}}", entry));
         }

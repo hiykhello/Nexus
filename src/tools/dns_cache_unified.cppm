@@ -2,6 +2,7 @@
 export module cli.dns_cache_unified;
 import std;
 import cli.dns_cache_state;
+import cli.dns_transports;
 import config;
 import corosio;
 import dns.message_cache;
@@ -20,7 +21,7 @@ export namespace cli {
         std::optional<std::uint64_t> epoch_;
         std::uint64_t view_ = 0;
         mutable std::mutex save_mutex_;
-        mutable std::optional<::state::Fingerprint> last_saved_hash_;
+        mutable std::optional<std::pair<std::uint64_t, ::state::Fingerprint>> last_saved_;
         static constexpr std::size_t prefix_bytes = 10, row_bytes = 27;
 
         static auto wall_seconds() noexcept -> std::uint64_t {
@@ -79,20 +80,54 @@ export namespace cli {
                     identity.append(*server.upstream->detour);
                 }
                 if (!server.upstream || !server.upstream->tls) continue;
-                auto trust = ::rulefile::read_regular_file(server.upstream->tls->ca_file);
-                if (!trust) throw std::runtime_error("cannot read DNS cache trust identity");
-                auto hash = ::state::fingerprint(std::as_bytes(std::span(*trust)));
-                identity.append(reinterpret_cast<char const*>(hash.data()), hash.size());
+                if (server.upstream->tls->ca_file.empty()) {
+                    identity.append("|system-ca:");
+                    auto sys_id = dns_system_trust_identity();
+                    if (!sys_id) throw std::runtime_error(sys_id.error());
+                    identity.append(*sys_id);
+                } else {
+                    identity.append("|ca-file:");
+                    auto trust = ::rulefile::read_regular_file(server.upstream->tls->ca_file);
+                    if (!trust) throw std::runtime_error("cannot read DNS cache trust identity");
+                    auto hash = ::state::fingerprint(std::as_bytes(std::span(*trust)));
+                    identity.append(reinterpret_cast<char const*>(hash.data()), hash.size());
+                }
             }
             fingerprint_ = ::state::fingerprint(std::as_bytes(std::span(identity)));
+        }
+
+        [[nodiscard]] auto identity_fingerprint() const noexcept -> ::state::Fingerprint const& { return fingerprint_; }
+        [[nodiscard]] auto active_epoch() const noexcept -> std::optional<std::uint64_t> {
+            std::lock_guard lock(save_mutex_);
+            return epoch_;
         }
 
         auto restore(dns::MessageCache& cache, std::uint64_t view) -> std::expected<void, std::string> {
             view_ = view;
             auto loaded = disk_.lookup(fingerprint_);
             if (!loaded) return std::unexpected(std::string(::state::describe(loaded.error().stage)));
-            epoch_ = loaded->epoch;
+            {
+                std::lock_guard lock(save_mutex_);
+                epoch_ = loaded->epoch;
+                last_saved_.reset();
+            }
             if (loaded->payload) return decode(*loaded->payload, cache);
+            return {};
+        }
+
+        auto refresh_epoch() -> std::expected<void, std::string> {
+            bool has_epoch = false;
+            {
+                std::lock_guard lock(save_mutex_);
+                last_saved_.reset();
+                has_epoch = epoch_.has_value();
+            }
+            if (!has_epoch) return {};
+            auto current = disk_.epoch();
+            if (!current) return std::unexpected(std::string(::state::describe(current.error().stage)));
+            std::lock_guard lock(save_mutex_);
+            if (epoch_ && *current >= *epoch_) epoch_ = *current;
+            last_saved_.reset();
             return {};
         }
 
@@ -103,7 +138,12 @@ export namespace cli {
         };
 
         auto prepare_save(dns::MessageCache const& cache, std::uint64_t view) const -> std::optional<PendingSave> {
-            if (!epoch_ || view != view_) return {};
+            std::optional<std::uint64_t> captured_epoch;
+            {
+                std::lock_guard lock(save_mutex_);
+                captured_epoch = epoch_;
+            }
+            if (!captured_epoch || view != view_) return {};
             auto rows = cache.checkpoint(std::chrono::steady_clock::now(), limit_ - prefix_bytes, row_bytes,
                 [&](dns::MessageCache::View const& key) {
                     return key.policy_view == view && !key.local && key.upstream < persistent_.size() &&
@@ -126,18 +166,20 @@ export namespace cli {
             auto content_hash = ::state::fingerprint(std::span(body).subspan(prefix_bytes));
             {
                 std::lock_guard lock(save_mutex_);
-                if (last_saved_hash_ && *last_saved_hash_ == content_hash) return {};
+                if (!epoch_ || *epoch_ != *captured_epoch) return {};
+                if (last_saved_ && last_saved_->first == *captured_epoch && last_saved_->second == content_hash) return {};
             }
-            return PendingSave{*epoch_, std::move(body), content_hash};
+            return PendingSave{*captured_epoch, std::move(body), content_hash};
         }
 
         auto commit_save(PendingSave const& pending) -> std::expected<void, std::string> {
             std::lock_guard lock(save_mutex_);
-            if (last_saved_hash_ && *last_saved_hash_ == pending.content_hash) return {};
+            if (last_saved_ && last_saved_->first == pending.epoch && last_saved_->second == pending.content_hash) return {};
             auto saved = disk_.store(fingerprint_, pending.epoch, pending.body);
             if (!saved && saved.error().stage != ::state::Stage::stale_epoch)
                 return std::unexpected(std::string(::state::describe(saved.error().stage)));
-            if (saved) last_saved_hash_ = pending.content_hash;
+            if (saved && (!last_saved_ || pending.epoch >= last_saved_->first))
+                last_saved_ = {pending.epoch, pending.content_hash};
             return {};
         }
 

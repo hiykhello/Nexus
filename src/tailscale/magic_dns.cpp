@@ -192,43 +192,49 @@ namespace tailscale::magic_dns {
         return out;
     }
 
-    auto parse_dns_config(cm::JsonField dns_config, cm::JsonField domain) noexcept
-        -> std::expected<std::optional<DnsConfig>, cm::Failure> {
-        if (dns_config.presence != cm::Presence::value && domain.presence != cm::Presence::value)
-            return std::nullopt;
+    auto apply_dns_delta(std::optional<DnsConfig>& target, cm::JsonField dns_config,
+                         cm::JsonField domain) noexcept -> std::expected<void, cm::Failure> {
+        if (dns_config.presence == cm::Presence::missing && domain.presence == cm::Presence::missing)
+            return {};
         try {
-            DnsConfig out;
+            std::optional<std::string> parsed_domain;
             if (domain.presence == cm::Presence::value) {
                 std::string dom;
                 if (glaze::read<lenient_opts>(dom, domain.json))
                     return std::unexpected(cm::Failure{cm::Error::schema});
-                out.magic_dns_suffix = normalize_name(dom);
+                parsed_domain = normalize_name(dom);
             }
+
             if (dns_config.presence == cm::Presence::value) {
                 DnsConfigWire wire;
                 if (glaze::read<lenient_opts>(wire, dns_config.json))
                     return std::unexpected(cm::Failure{cm::Error::schema});
-                out.proxied = wire.Proxied;
+                DnsConfig next;
+                next.proxied = wire.Proxied;
                 for (auto const& d : wire.Domains) {
                     auto norm = normalize_name(d);
-                    if (!norm.empty()) out.search_domains.push_back(std::move(norm));
+                    if (!norm.empty()) next.search_domains.push_back(std::move(norm));
                 }
-                if (out.magic_dns_suffix.empty() && !out.search_domains.empty()) {
-                    out.magic_dns_suffix = out.search_domains.front();
+                if (parsed_domain) {
+                    next.magic_dns_suffix = *parsed_domain;
+                } else if (domain.presence == cm::Presence::missing && target && !target->magic_dns_suffix.empty()) {
+                    next.magic_dns_suffix = target->magic_dns_suffix;
                 }
+                if (next.magic_dns_suffix.empty() && !next.search_domains.empty())
+                    next.magic_dns_suffix = next.search_domains.front();
                 for (auto const& r : wire.Resolvers) {
                     if (auto ep = parse_endpoint(r.Addr, r.UseWithExitNode))
-                        out.resolvers.push_back(std::move(*ep));
+                        next.resolvers.push_back(std::move(*ep));
                 }
                 for (auto const& ns : wire.Nameservers) {
                     if (auto ep = parse_endpoint(ns, false)) {
-                        if (std::ranges::find(out.resolvers, *ep) == out.resolvers.end())
-                            out.resolvers.push_back(std::move(*ep));
+                        if (std::ranges::find(next.resolvers, *ep) == next.resolvers.end())
+                            next.resolvers.push_back(std::move(*ep));
                     }
                 }
                 for (auto const& r : wire.FallbackResolvers) {
                     if (auto ep = parse_endpoint(r.Addr, r.UseWithExitNode))
-                        out.fallback_resolvers.push_back(std::move(*ep));
+                        next.fallback_resolvers.push_back(std::move(*ep));
                 }
                 for (auto const& [route_domain, resolvers] : wire.Routes) {
                     auto norm = normalize_name(route_domain);
@@ -238,13 +244,41 @@ namespace tailscale::magic_dns {
                         if (auto ep = parse_endpoint(r.Addr, r.UseWithExitNode))
                             eps.push_back(std::move(*ep));
                     }
-                    out.split_routes.insert_or_assign(std::move(norm), std::move(eps));
+                    next.split_routes.insert_or_assign(std::move(norm), std::move(eps));
+                }
+                target = std::move(next);
+            } else if (dns_config.presence == cm::Presence::null_value) {
+                if (parsed_domain) {
+                    DnsConfig cleared;
+                    cleared.magic_dns_suffix = std::move(*parsed_domain);
+                    target = std::move(cleared);
+                } else {
+                    target.reset();
+                }
+            } else {
+                // DNSConfig omitted: preserve existing resolvers/routes/search_domains/proxied.
+                if (parsed_domain) {
+                    if (!target) target.emplace();
+                    target->magic_dns_suffix = std::move(*parsed_domain);
+                } else if (domain.presence == cm::Presence::null_value && target) {
+                    target->magic_dns_suffix = target->search_domains.empty()
+                        ? std::string{} : target->search_domains.front();
                 }
             }
-            return std::optional<DnsConfig>(std::move(out));
+            return {};
         } catch (...) {
             return std::unexpected(cm::Failure{cm::Error::limit});
         }
+    }
+
+    auto parse_dns_config(cm::JsonField dns_config, cm::JsonField domain) noexcept
+        -> std::expected<std::optional<DnsConfig>, cm::Failure> {
+        if (dns_config.presence != cm::Presence::value && domain.presence != cm::Presence::value)
+            return std::nullopt;
+        std::optional<DnsConfig> out;
+        auto applied = apply_dns_delta(out, dns_config, domain);
+        if (!applied) return std::unexpected(applied.error());
+        return out;
     }
 
     auto Resolver::update(DnsConfig config, std::span<snapshot::Peer const> peers,

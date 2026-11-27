@@ -32,9 +32,52 @@ export namespace ssh {
     inline constexpr std::uint8_t kMsgChannelClose = 97;
 
     inline constexpr std::size_t kMaxPacketBytes = 262144;
+    inline constexpr std::size_t kMaxChannels = 64;
+    inline constexpr std::uint32_t kInitialWindow = 1024u * 1024u, kMaxPacket = 32768u;
+    inline constexpr std::uint32_t kWindowAdjustThreshold = 256u * 1024u, kMaxEncryptedPackets = 1u << 30;
+    inline constexpr std::uint64_t kMaxEncryptedBytes = 1ull << 30;
     inline constexpr std::string_view kClientVersion = "SSH-2.0-Nexus_0.1";
     inline constexpr std::string_view kStrictClientKex = "kex-strict-c-v00@openssh.com";
     inline constexpr std::string_view kStrictServerKex = "kex-strict-s-v00@openssh.com";
+
+    struct ChannelSlot {
+        bool in_use = false, opening = false, open_ok = false, open_fail = false;
+        bool remote_eof = false, remote_close = false, local_eof = false, local_close = false;
+        bool released = false, want_close = false;
+        std::uint32_t peer_id = 0;
+        std::uint32_t local_window = kInitialWindow, local_consumed = 0;
+        std::uint32_t peer_window = 0, peer_max_packet = kMaxPacket;
+        std::deque<std::uint8_t> rx;
+        std::chrono::steady_clock::time_point released_at{};
+    };
+
+    struct ChannelSignals {
+        bool valid = true, opened = false, changed = false, ctrl = false;
+    };
+
+    struct RxBuffer {
+        std::vector<std::uint8_t> data;
+        std::size_t off = 0;
+
+        [[nodiscard]] auto available() const noexcept -> std::size_t { return data.size() - off; }
+        auto compact() -> void {
+            if (off == data.size()) { data.clear(); off = 0; }
+            else if (off > 4096) {
+                data.erase(data.begin(), data.begin() + static_cast<std::ptrdiff_t>(off));
+                off = 0;
+            }
+        }
+        auto append(std::span<std::uint8_t const> chunk) -> void {
+            data.insert(data.end(), chunk.begin(), chunk.end());
+        }
+        auto take(std::span<std::uint8_t> out) noexcept -> std::size_t {
+            auto n = std::min(out.size(), available());
+            std::copy_n(data.data() + off, n, out.data());
+            off += n;
+            return n;
+        }
+        auto pop_byte() noexcept -> std::uint8_t { return data[off++]; }
+    };
 
     struct Writer {
         std::vector<std::uint8_t> buf;
@@ -218,7 +261,54 @@ export namespace ssh {
         return out;
     }
 
+    inline auto build_channel_open_direct_tcpip(std::uint32_t local_id, std::string_view host, std::uint16_t port)
+        -> std::vector<std::uint8_t> {
+        Writer w;
+        w.byte(kMsgChannelOpen).string("direct-tcpip").u32(local_id).u32(kInitialWindow).u32(kMaxPacket)
+            .string(host).u32(port).string("127.0.0.1").u32(0);
+        return std::move(w.buf);
+    }
+
     inline auto format_host_key_sha256(std::span<std::uint8_t const, 32> fp) -> std::string {
         return "SHA256:" + encode_base64(fp, false);
+    }
+
+    inline auto apply_channel_packet(ChannelSlot& ch, std::uint8_t msg, Reader& r) -> ChannelSignals {
+        ChannelSignals sig;
+        if (msg == kMsgChannelOpenConfirm) {
+            auto peer_id = r.u32(), win = r.u32(), maxp = r.u32();
+            if (!peer_id || !win || !maxp) { sig.valid = false; return sig; }
+            ch.peer_id = *peer_id; ch.peer_window = *win;
+            ch.peer_max_packet = std::clamp(*maxp, std::uint32_t{1024}, kMaxPacket);
+            ch.opening = false; ch.open_ok = true; sig.opened = true;
+            if (ch.released) { ch.want_close = true; sig.ctrl = true; }
+        } else if (msg == kMsgChannelOpenFailure) {
+            ch.opening = false; ch.open_fail = true; sig.opened = sig.ctrl = true;
+        } else if (msg == kMsgChannelWindowAdjust) {
+            auto add = r.u32();
+            if (!add) { sig.valid = false; return sig; }
+            ch.peer_window = static_cast<std::uint32_t>(std::min<std::uint64_t>(std::uint64_t(ch.peer_window) + *add, 0x7fffffffu));
+            sig.changed = true;
+        } else if (msg == kMsgChannelData) {
+            auto data = r.string();
+            if (!data || data->size() > ch.local_window) { sig.valid = false; return sig; }
+            ch.local_window -= static_cast<std::uint32_t>(data->size());
+            ch.rx.insert(ch.rx.end(), data->begin(), data->end());
+            sig.changed = true;
+        } else if (msg == kMsgChannelExtData) {
+            auto dtype = r.u32();
+            auto data = r.string();
+            if (!dtype || !data || data->size() > ch.local_window) { sig.valid = false; return sig; }
+            ch.local_window -= static_cast<std::uint32_t>(data->size());
+            ch.local_consumed += static_cast<std::uint32_t>(data->size());
+            sig.ctrl = true;
+        } else if (msg == kMsgChannelEof) {
+            ch.remote_eof = true; sig.changed = true;
+        } else if (msg == kMsgChannelClose) {
+            ch.remote_eof = ch.remote_close = true;
+            ch.want_close = !ch.local_close && !ch.released;
+            sig.changed = sig.opened = sig.ctrl = true;
+        }
+        return sig;
     }
 }

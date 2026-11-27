@@ -35,6 +35,45 @@ namespace {
             config.openvpn_outbounds,config.openconnect_outbounds,config.tailscale_outbounds,config.tcp_proxy_outbounds);
     }
 
+    auto bind_dns_rule_files(config::DnsRouting& routing, cli::RuleFileInput& rinput)
+        -> std::expected<void,std::string> {
+        if (routing.rule_files.empty()) return {};
+        std::vector<std::string> keys;
+        std::size_t total=0, nodes=0;
+        for (auto const& ref : routing.rule_files) {
+            std::optional<rules::RuleSet> parsed;
+            if (ref.file.inline_rules) {
+                parsed=*ref.file.inline_rules;
+            } else if (!ref.file.url.empty() && rinput.allows_unfetched_remote()) {
+                rules::RuleSet placeholder{.version=2};
+                placeholder.rules.push_back({"domain","remote-placeholder.invalid",{}});
+                parsed=std::move(placeholder);
+            } else {
+                auto const& key=!ref.file.url.empty() ? ref.file.url : ref.file.path;
+                auto data=rinput.read(key);
+                if (!data) return std::unexpected("DNS rule-set: "+data.error());
+                if (std::ranges::find(keys,key)==keys.end()) {
+                    total+=data->size();
+                    if (total>8*1024*1024) return std::unexpected("DNS rule sets exceed 8 MiB total");
+                    keys.push_back(key);
+                }
+                auto fmt=cli::rule_input_format(ref.file.format);
+                auto dec=rules::parse_rule_input(*data,fmt,ref.file.ip_cidr_match_source);
+                if (!dec) return std::unexpected("DNS rule-set: "+dec.error().message);
+                parsed=std::move(*dec);
+            }
+            auto count=[&](auto&& self,rules::Rule const& rule) -> bool {
+                if (++nodes>rules::max_rules) return false;
+                return std::ranges::all_of(rule.children,[&](auto const& child) { return self(self,child); });
+            };
+            if (!std::ranges::all_of(parsed->rules,[&](auto const& rule) { return count(count,rule); }))
+                return std::unexpected("DNS rule-set predicates exceed limit");
+            if (!policy::bind_dns_rule_set(routing.rules[ref.rule],std::move(*parsed)))
+                return std::unexpected("DNS rule-set contains unsupported conditions or exceeds limits");
+        }
+        return {};
+    }
+
     auto evaluate_dns_policy(config::Config& config,std::string_view config_path,Query const& q)
         -> std::expected<std::string,std::string> {
         if (!config.dns) return std::string("none");
@@ -44,24 +83,8 @@ namespace {
             : q.input.reverse_domain;
         if (!domain) return std::string("none");
         cli::RuleFileInput rinput(config_path,true);
-        for (auto const& ref : config.dns->rule_files) {
-            std::optional<rules::RuleSet> parsed;
-            if (ref.file.inline_rules) parsed=*ref.file.inline_rules;
-            else if (!ref.file.url.empty()) {
-                rules::RuleSet placeholder{.version=2};
-                placeholder.rules.push_back({"domain","remote-placeholder.invalid",{}});
-                parsed=std::move(placeholder);
-            } else {
-                auto data=rinput.read(ref.file.path);
-                if (!data) return std::unexpected("DNS rule-set: "+data.error());
-                auto fmt=cli::rule_input_format(ref.file.format);
-                auto dec=rules::parse_rule_input(*data,fmt,ref.file.ip_cidr_match_source);
-                if (!dec) return std::unexpected("DNS rule-set: "+dec.error().message);
-                parsed=std::move(*dec);
-            }
-            if (!policy::bind_dns_rule_set(config.dns->rules[ref.rule],std::move(*parsed)))
-                return std::unexpected("DNS rule-set binding failed");
-        }
+        if (auto bound=bind_dns_rule_files(*config.dns,rinput); !bound)
+            return std::unexpected(std::move(bound.error()));
         policy::DnsContext ctx{.network=q.input.network,.source_port=q.input.source_port,
             .inbound=q.input.inbound,.auth_user=q.input.auth_user,.source_interface=q.input.source_interface,
             .network_type=q.input.network_type,.network_is_expensive=q.input.network_is_expensive,
@@ -387,7 +410,11 @@ auto nexus_check(int argc,char** argv) -> int {
 #ifndef NEXUS_ENABLE_NTP
     if (cfg->ntp) return fail("NTP is not available in this build");
 #endif
-    auto files=cli::load_route_files(*cfg,path,true);
+    cli::RuleFileInput rule_input(path,true);
+    if (cfg->dns) {
+        if (auto loaded=bind_dns_rule_files(*cfg->dns,rule_input); !loaded) return fail(loaded.error());
+    }
+    auto files=cli::load_route_files(*cfg,rule_input);
     if (!files) return fail(files.error());
     auto routes=cli::project_routes(*cfg,*files);
     for (auto const& in : cfg->inbounds) {
