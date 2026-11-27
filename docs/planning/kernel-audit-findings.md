@@ -1,6 +1,6 @@
 # Nexus Core 审计缺陷与修复跟踪
 
-本文记录针对基线提交 `d10c429`（Round 1：`5 P1 + 2 P2`）、`0e52ae8`（Round 2：`3 P1 + 4 P2`）、Round 3（`4 P1 + 3 P2`）及 Round 4（`1 P1 + 8 P2 + 1 P3`，实测复现）共四轮 31 项（`13 P1 + 17 P2 + 1 P3`）内核专项审计发现，明确触发条件、影响范围、根因定位、修复设计与回归验收目标，配合源码修复与自动化单元测试同步闭环。
+本文记录针对基线提交 `d10c429`（Round 1：`5 P1 + 2 P2`）、`0e52ae8`（Round 2：`3 P1 + 4 P2`）、Round 3（`4 P1 + 3 P2`）、Round 4（`1 P1 + 8 P2 + 1 P3`）及 Round 5（`5 P2`，Linux 本地实测复现）共五轮 36 项（`13 P1 + 22 P2 + 1 P3`）内核专项审计发现，明确触发条件、影响范围、根因定位、修复设计与回归验收目标，配合源码修复与自动化单元测试同步闭环。
 
 ## 1. Round 1（基线 `d10c429`：5 P1 + 2 P2）
 
@@ -334,3 +334,59 @@
 - **根因**：查询参数值解析误复用了拒绝编码斜杠的路径解码函数，且在解码失败时静默忽略该查询参数。
 - **修复设计**：提供专用的查询参数百分号解码器，允许合法 `%2F` 解码为 `/`，并在遇到畸形百分号转义时显式返回 HTTP `400` 而非静默丢弃条件。
 - **回归验收**：单元测试校验含 `%2F` 的日志查询参数正确解码并生效过滤，畸形 `%ZZ` 查询参数返回 HTTP `400`。
+
+---
+
+## 5. Round 5（5 P2，Linux 本地实测复现）
+
+### 5.1 总览
+
+| 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
+| --- | --- | --- | --- | --- |
+| `R5 P2-1` | P2 | 文件订阅热重载 | 重载失败后原有文件订阅停止自动周期刷新 | 修复中 |
+| `R5 P2-2` | P2 | 订阅模式热重载校验 | 启用订阅时更换 `selector-state-directory` 误报成功却继续写旧目录 | 修复中 |
+| `R5 P2-3` | P2 | 热添加策略组切换 | 已有文件订阅的实例首次热添加手动策略组后可见但 `select` 报 `selection-unavailable` | 修复中 |
+| `R5 P2-4` | P2 | 远程 DNS 规则集热重载 | 更换远程 DNS `rule-set` URL 后热重载未拉取新地址而报错 | 修复中 |
+| `R5 P2-5` | P2 | 进程累计流量统计 | 监听器换代排空回收后同一进程的 `/v1/status` 累计流量倒退回 `0` | 修复中 |
+
+### 5.2 P2 级缺陷明细
+
+#### R5 P2-1 — 重载失败后原有文件订阅停止刷新
+
+- **触发与影响**：文件订阅按周期（如 `1s`）自动刷新正常运行期间，提交一份移除订阅且校验失败的配置触发重载失败；随后恢复原配置并更新订阅节点内容，自动周期刷新停止直至再次手动重载。
+- **涉及模块**：`src/tools/proxy_providers.cpp`、`src/tools/proxy_run.cppm`。
+- **根因**：`prepare_initial` 在完整候选配置校验与发布成功之前就清空了当前活动订阅表，导致失败路径虽然保留了旧代理配置，但活跃订阅调度表已被清空。
+- **修复设计**：对候选配置订阅表采用暂存与原子提交（staging + atomic commit），仅在候选配置校验和重载发布完全成功后替换活动订阅表；任意失败路径保持原活动订阅表及刷新周期不受影响。
+- **回归验收**：单元测试先验证文件订阅自动刷新生效，再触发一次移除订阅且失败的重载，修改订阅文件内容后断言原自动刷新继续生效。
+
+#### R5 P2-2 — 启用订阅时更换策略组状态目录报告成功却继续写旧目录
+
+- **触发与影响**：启用文件订阅时将 `selector-state-directory` 从目录 `A` 改为目录 `B` 并执行热重载，控制面返回 `succeeded`，但后续 `select` 仍写入 `A/selectors.state`，重启后丢失选择。
+- **涉及模块**：`src/tools/proxy_run.cppm`、`src/tools/proxy_listener_reload.cppm`。
+- **根因**：启用订阅后普通重载走 `provider_refresh` 分支，该分支遗漏了 `selector_state_directory` 等不可热变更的进程级身份字段检查。
+- **修复设计**：在 `provider_refresh` 分支补齐 `selector_state_directory` 及全部进程级不可热改字段的变更比对，命中变更时明确返回需要重启的错误。
+- **回归验收**：单元测试在启用订阅场景下变更 `selector-state-directory` 触发重载，断言返回需重启错误而非假成功。
+
+#### R5 P2-3 — 已有文件订阅的实例首次热添加手动策略组后可见但不可切换
+
+- **触发与影响**：在已有文件订阅但原先无策略组的实例上首次通过热重载新增手动策略组后，`status` 可见 `group=manual selected=direct`，但执行 `select manual block` 返回 `selection-unavailable`（冷启动同样配置可正常切换）。
+- **涉及模块**：`src/tools/proxy_listener_reload.cppm`、`src/tools/proxy_run.cppm`。
+- **根因**：热重载仅在旧实例已持有 `group_route_files` 或新配置启用 `group_health` 时才保存切换所需路由文件，首次热添加纯手动策略组时未保存 `group_route_files` 与对应路由快照。
+- **修复设计**：当新配置包含任意策略组（`!reload_config->selectors.empty()`）时亦同步保存 `group_route_files` 并初始化路由快照，使首次热添加的手动策略组立即支持切换。
+- **回归验收**：单元测试对已有文件订阅的无组实例热添加手动策略组并立即执行 `select`，断言切换成功且无需重启。
+
+#### R5 P2-4 — 更换远程 DNS `rule-set` 的 URL 无法热生效
+
+- **触发与影响**：将远程 DNS `rule-set` 指向同一 HTTPS 服务的路径从 `/first` 改为 `/second` 后执行热重载，报错 `DNS rule-set: open input: No such file or directory`，且 HTTPS 服务端未收到新路径请求。
+- **涉及模块**：`src/tools/proxy_listener_reload.cppm`、`src/tools/route_files.cpp`、`src/tools/proxy_run.cppm`。
+- **根因**：热重载仅通过 `remote_rulesets.seed_cached(...)` 注入旧 URL 缓存，新 URL 未命中缓存时直接落入本地文件路径打开逻辑。
+- **修复设计**：热重载执行 `load_dns_rules` 与 `load_route_files` 之前，先拉取并暂存候选配置新增或变更的远程 DNS 与路由 `rule-set` URL 写入候选输入，仅在重载发布成功后提交新缓存状态，拉取或校验失败不破坏既有规则集。
+- **回归验收**：单元测试将远程 DNS `rule-set` URL 从 `/first` 切换至 `/second` 并执行热重载，断言服务端收到 `/second` 请求且新规则热生效，同时失败路径保留旧缓存。
+
+#### R5 P2-5 — 监听器换代导致同一进程累计流量倒退
+
+- **触发与影响**：通过代理传输数据（如 `4096B`）后仅修改监听器名称触发热重载，进程 `instance_id` 未变，待旧代监听器排空回收后 `/v1/status` 上下行累计流量回退至 `0`。
+- **涉及模块**：`src/tools/proxy_host.cppm`、`src/tools/proxy_http_control.cppm`。
+- **根因**：`poll_retired()` 回收并销毁已排空的 `RetiredTcpGeneration` 时，未将其最终 `rx_bytes` / `tx_bytes` 并入进程级单调累计计数器。
+- **修复设计**：维护进程级已回收累计字节计数（`reclaimed_rx_bytes` / `reclaimed_tx_bytes`），在 `poll_retired()` 移除旧代前先折叠其最终字节数，并在状态统计中汇总 `reclaimed + active + draining_retired`，保证同进程累计流量单调不退且不重复计算。
+- **回归验收**：单元测试在产生流量并完成监听器换代与旧代排空回收后查询状态统计，断言累计字节数保留既有总量、绝不回退且不双计。
