@@ -1,4 +1,5 @@
 import { ScrollView } from "std-widgets.slint";
+import { TelemetryWaveState } from "../command_palette_state.slint";
 import { ControlInspectState } from "../control_inspect_state.slint";
 import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
@@ -265,6 +266,7 @@ export component GroupsPanel inherits VerticalLayout {
                                     y: 0px;
                                     width: card-w;
                                     group-name: root.selected-group;
+                                    group-max-latency-ms: TelemetryWaveState.spectrum.max-ms;
                                     member: m;
                                     select-clicked => { root.select-member(root.selected-group, m.name); }
                                     toggle-pin-clicked => { root.toggle-pin-member(root.selected-group, m.name); }

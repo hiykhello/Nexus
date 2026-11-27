@@ -45,6 +45,7 @@ import desktop.workspace_sync;
 #include "main_quick_controls.hpp"
 #include "main_callbacks.hpp"
 #include "main_inspect_callbacks.hpp"
+#include "main_palette_callbacks.hpp"
 
 using desktop_ui_helpers::default_config_dir;
 using desktop_ui_helpers::is_en_ui;
@@ -220,6 +221,7 @@ auto main(int argc, char** argv) -> int {
         inspect_ctrl.stop_log_stream();
         ui->set_rule_modal_open(false);
         ui->set_outbound_modal_open(false);
+        ui->global<nexus_ui::CommandPaletteState>().invoke_close_palette();
         ui->global<nexus_ui::TooltipState>().invoke_hide();
         if (!ui->get_tray_show_speed()) {
             ui->set_download_rate(slint::SharedString("0.0 KB/s"));
@@ -263,7 +265,8 @@ auto main(int argc, char** argv) -> int {
         worker.post([&, weak_ui, en] {
             auto hr = http_ctrl.reload();
             auto msg = hr.ok ? tr(en, "热重载成功", "Reloaded") : (tr(en, "热重载失败: ", "Reload failed: ") + hr.body);
-            on_ui_thread(weak_ui, [ok = hr.ok, msg = std::move(msg)](auto& s) {
+            on_ui_thread(weak_ui, [&rate_tracker, en, ok = hr.ok, msg = std::move(msg)](auto& s) {
+                if (ok) rate_tracker.mark_onset(tr(en, "重载", "Reload"));
                 desktop_ui_helpers::push_toast(*s, msg, ok ? "success" : "error");
             });
         });
@@ -314,7 +317,11 @@ auto main(int argc, char** argv) -> int {
     desktop_ui_helpers::DesktopCallbacksContext cb_ctx{
         *ui, weak_ui, worker, probe_worker, supervisor, http_ctrl, client_db.get(), ws_ctx,
         cfg_dir, config_path, cached_groups, pinned_members, member_models, conn_models, log_models,
-        cached_logs, logs_mu, last_log_seq, sync_tray
+        rate_tracker, cached_logs, logs_mu, last_log_seq, sync_tray
+    };
+    desktop_ui_helpers::CommandPaletteController palette_ctrl{
+        *ui, weak_ui, probe_worker, supervisor, http_ctrl, ws_ctx,
+        cfg_dir, config_path, cached_groups, persist_prefs
     };
     struct ShutdownGuard {
         std::atomic<bool>& quit_once;
@@ -332,6 +339,7 @@ auto main(int argc, char** argv) -> int {
     } shutdown_guard{quit_once, inspect_ctrl, tray, worker, probe_worker};
     desktop_ui_helpers::bind_secondary_callbacks(cb_ctx);
     inspect_ctrl.bind();
+    palette_ctrl.bind();
     ui->on_refresh_profiles([&] { desktop_ui_helpers::refresh_workspace_from_disk(ws_ctx); });
     ui->on_quit_requested([&] { if (!quit_once.exchange(true, std::memory_order_acq_rel)) slint::quit_event_loop(); });
     ui->window().on_close_requested([&] {

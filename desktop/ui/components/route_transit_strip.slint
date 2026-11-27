@@ -1,0 +1,313 @@
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+
+component TransitStage inherits Rectangle {
+    in property <string> caption;
+    in property <string> primary-text;
+    in property <string> secondary-text: "";
+    in property <string> badge-text: "";
+    in property <color> badge-fg: Theme.text-secondary;
+    in property <color> badge-bg: Theme.well-bg;
+    in property <bool> show-dot: false;
+    in property <color> dot-color: Theme.offline-fg;
+    in property <bool> mono-primary: false;
+    in property <bool> compact: false;
+    in property <string> down-rate: "";
+    in property <string> up-rate: "";
+    in property <bool> dual-rates: false;
+    callback clicked();
+
+    forward-focus: fs;
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 0px;
+    border-radius: Theme.radius-sm;
+    border-width: fs.has-focus ? 2px : 0px;
+    border-color: fs.has-focus ? Theme.accent : transparent;
+    background: ta.pressed ? Theme.nav-active-bg : ta.has-hover ? Theme.row-hover-bg : transparent;
+
+    accessible-role: button;
+    accessible-label: root.caption + " " + root.primary-text;
+    accessible-action-default => { root.clicked(); }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: root.compact ? 4px : 2px;
+        padding-bottom: root.compact ? 4px : 2px;
+        spacing: 6px;
+
+        if root.show-dot : Rectangle {
+            width: 6px;
+            height: 6px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 3px;
+            background: root.dot-color;
+        }
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            alignment: center;
+            spacing: 1px;
+
+            HorizontalLayout {
+                spacing: 5px;
+                Text {
+                    horizontal-stretch: 0;
+                    text: root.caption;
+                    font-size: 9px;
+                    font-weight: 700;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                }
+                if root.secondary-text != "" : Text {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    text: root.secondary-text;
+                    font-size: 9px;
+                    font-weight: 600;
+                    font-family: Theme.mono-font;
+                    color: Theme.text-muted;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+
+            if !root.dual-rates : Text {
+                text: root.primary-text;
+                font-size: 11px;
+                font-weight: 700;
+                font-family: root.mono-primary ? Theme.mono-font : "";
+                color: Theme.text-primary;
+                overflow: elide;
+            }
+
+            if root.dual-rates : HorizontalLayout {
+                spacing: 6px;
+                Text {
+                    horizontal-stretch: 0;
+                    text: "↓ " + root.down-rate;
+                    font-size: 11px;
+                    font-weight: 700;
+                    font-family: Theme.mono-font;
+                    color: Theme.telemetry-down;
+                    overflow: elide;
+                }
+                Text {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    text: "↑ " + root.up-rate;
+                    font-size: 11px;
+                    font-weight: 700;
+                    font-family: Theme.mono-font;
+                    color: Theme.telemetry-up;
+                    overflow: elide;
+                }
+            }
+        }
+
+        if root.badge-text != "" : Rectangle {
+            horizontal-stretch: 0;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-xs;
+            background: root.badge-bg;
+            HorizontalLayout {
+                padding-left: 5px;
+                padding-right: 5px;
+                Text {
+                    text: root.badge-text;
+                    font-size: 10px;
+                    font-weight: 700;
+                    font-family: Theme.mono-font;
+                    color: root.badge-fg;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+component StageChevron inherits VerticalLayout {
+    in property <bool> active: false;
+    horizontal-stretch: 0;
+    alignment: center;
+    Image {
+        width: 12px;
+        height: 12px;
+        source: @image-url("../icons/chevron-right.svg");
+        colorize: root.active ? Theme.live-emerald : Theme.text-muted;
+    }
+}
+
+// Single flat matte Live Route Transit Strip (44px desktop horizontal / 84px 2x2 compact)
+export component RouteTransitStrip inherits Rectangle {
+    in property <bool> compact: false;
+    in property <bool> core-running: false;
+    in property <bool> tun-enabled: false;
+    in property <bool> mixed-proxy-enabled: true;
+    in property <string> mixed-proxy-port: "7890";
+    in property <string> outbound-mode: "rule";
+    in property <int> active-rule-count: 0;
+    in property <string> selected-group: "";
+    in property <string> active-node: "";
+    in property <int> active-node-latency-ms: -1;
+    in property <string> download-rate: "0.0 KB/s";
+    in property <string> upload-rate: "0.0 KB/s";
+    in property <int> active-sessions: 0;
+
+    callback open-host-settings();
+    callback open-rules();
+    callback open-groups();
+    callback open-connections();
+
+    property <string> ingress-label:
+        root.tun-enabled && root.mixed-proxy-enabled ? "TUN · :" + root.mixed-proxy-port
+        : root.tun-enabled ? "TUN"
+        : root.mixed-proxy-enabled ? "Mixed :" + root.mixed-proxy-port
+        : I18n.t("未启用", "Off");
+
+    property <string> mode-label:
+        root.outbound-mode == "global" ? I18n.t("全局", "Global")
+        : root.outbound-mode == "direct" ? I18n.t("直连", "Direct")
+        : I18n.t("规则", "Rule");
+
+    property <bool> is-direct: root.outbound-mode == "direct";
+
+    property <string> exit-label:
+        root.is-direct ? I18n.t("直连出口", "Direct Exit")
+        : root.selected-group != "" && root.active-node != "" ? (root.selected-group + " · " + root.active-node)
+        : root.active-node != "" ? root.active-node
+        : I18n.t("待选择节点", "No exit");
+
+    vertical-stretch: 0;
+    height: root.compact ? 84px : 44px;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: root.core-running ? Theme.live-emerald-border : Theme.card-border;
+    background: Theme.card-surface;
+    clip: true;
+
+    if !root.compact : HorizontalLayout {
+        padding-left: 4px;
+        padding-right: 4px;
+        padding-top: 4px;
+        padding-bottom: 4px;
+        spacing: 2px;
+
+        TransitStage {
+            caption: I18n.t("入口", "INBOUND");
+            primary-text: root.ingress-label;
+            mono-primary: true;
+            clicked => { root.open-host-settings(); }
+        }
+
+        StageChevron { active: root.core-running; }
+
+        TransitStage {
+            caption: I18n.t("路由引擎", "ROUTE");
+            primary-text: root.mode-label + (root.active-rule-count > 0 ? " · \{root.active-rule-count}" : "");
+            badge-text: WorkspaceState.dns-fakeip ? "FakeIP" : "";
+            badge-fg: Theme.nav-active-fg;
+            badge-bg: Theme.accent-soft;
+            clicked => { root.open-rules(); }
+        }
+
+        StageChevron { active: root.core-running; }
+
+        TransitStage {
+            horizontal-stretch: 1.3;
+            caption: I18n.t("当前出口", "EXIT");
+            primary-text: root.exit-label;
+            show-dot: true;
+            dot-color: root.core-running ? Theme.live-emerald : Theme.offline-fg;
+            badge-text: !root.is-direct && root.active-node-latency-ms > 0 ? "\{root.active-node-latency-ms} ms" : "";
+            badge-fg: Theme.latency-fg(root.active-node-latency-ms, "healthy");
+            badge-bg: Theme.latency-bg(root.active-node-latency-ms, "healthy");
+            clicked => { root.open-groups(); }
+        }
+
+        StageChevron { active: root.core-running; }
+
+        TransitStage {
+            horizontal-stretch: 1.3;
+            caption: I18n.t("实时速率", "RATE");
+            secondary-text: I18n.t("\{root.active-sessions} 连接", "\{root.active-sessions} conn");
+            dual-rates: true;
+            down-rate: root.download-rate;
+            up-rate: root.upload-rate;
+            clicked => { root.open-connections(); }
+        }
+    }
+
+    if root.compact : VerticalLayout {
+        padding: 4px;
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 4px;
+            TransitStage {
+                compact: true;
+                caption: I18n.t("入口", "INBOUND");
+                primary-text: root.ingress-label;
+                mono-primary: true;
+                clicked => { root.open-host-settings(); }
+            }
+            Rectangle { width: 1px; height: 26px; y: (parent.height - self.height) / 2; background: Theme.hairline-subtle; }
+            TransitStage {
+                compact: true;
+                caption: I18n.t("路由引擎", "ROUTE");
+                primary-text: root.mode-label + (root.active-rule-count > 0 ? " · \{root.active-rule-count}" : "");
+                badge-text: WorkspaceState.dns-fakeip ? "FakeIP" : "";
+                badge-fg: Theme.nav-active-fg;
+                badge-bg: Theme.accent-soft;
+                clicked => { root.open-rules(); }
+            }
+        }
+
+        Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        HorizontalLayout {
+            vertical-stretch: 1;
+            spacing: 4px;
+            TransitStage {
+                compact: true;
+                caption: I18n.t("当前出口", "EXIT");
+                primary-text: root.exit-label;
+                show-dot: true;
+                dot-color: root.core-running ? Theme.live-emerald : Theme.offline-fg;
+                badge-text: !root.is-direct && root.active-node-latency-ms > 0 ? "\{root.active-node-latency-ms} ms" : "";
+                badge-fg: Theme.latency-fg(root.active-node-latency-ms, "healthy");
+                badge-bg: Theme.latency-bg(root.active-node-latency-ms, "healthy");
+                clicked => { root.open-groups(); }
+            }
+            Rectangle { width: 1px; height: 26px; y: (parent.height - self.height) / 2; background: Theme.hairline-subtle; }
+            TransitStage {
+                compact: true;
+                caption: I18n.t("实时速率", "RATE");
+                secondary-text: I18n.t("\{root.active-sessions} 连接", "\{root.active-sessions} conn");
+                dual-rates: true;
+                down-rate: root.download-rate;
+                up-rate: root.upload-rate;
+                clicked => { root.open-connections(); }
+            }
+        }
+    }
+}

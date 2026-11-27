@@ -1,6 +1,7 @@
 // Private desktop UI rate tracker, control config, TUN privilege & log snapshot helpers for desktop/src/main.cpp.
 #pragma once
 #include "speed_wave.hpp"
+#include "flagship_helpers.hpp"
 
 namespace desktop_ui_helpers {
     inline auto default_config_dir() -> std::filesystem::path {
@@ -163,17 +164,26 @@ namespace desktop_ui_helpers {
         std::uint64_t prev_up = 0, prev_down = 0;
         Clock::time_point prev_ts{};
         std::vector<double> down_kib_s, up_kib_s;
+        OnsetMarkerTracker onset;
 
         struct Update {
             std::string up_rate;
             std::string down_rate;
-            std::string down_value, down_unit, down_peak, down_wave_area, down_wave_line;
-            std::string up_value, up_unit, up_peak, up_wave_area, up_wave_line;
+            std::string down_value, down_unit, up_value, up_unit;
+            std::string rx_area, rx_line, tx_dashed_line, scale_peak;
+            bool has_onset = false;
+            float onset_ratio = -1.0f;
+            std::string onset_label;
         };
+
+        auto mark_onset(std::string label) -> void {
+            onset.mark(std::move(label));
+        }
 
         auto reset() -> void {
             has_prev = false; prev_up = 0; prev_down = 0;
             down_kib_s.clear(); up_kib_s.clear();
+            onset.reset();
         }
 
         auto record(std::uint64_t up_bytes, std::uint64_t down_bytes) -> Update {
@@ -191,23 +201,21 @@ namespace desktop_ui_helpers {
             if (down_kib_s.size() > kHistory) down_kib_s.erase(down_kib_s.begin());
             if (up_kib_s.size() > kHistory) up_kib_s.erase(up_kib_s.begin());
 
-            std::size_t vis_n = std::min(down_kib_s.size(), kSlots);
-            std::size_t vis_off = down_kib_s.size() - vis_n;
-            double max_dl = 0.0, max_ul = 0.0;
-            for (std::size_t i = 0; i < vis_n; ++i) {
-                max_dl = std::max(max_dl, down_kib_s[vis_off + i]);
-                max_ul = std::max(max_ul, up_kib_s[vis_off + i]);
-            }
+            bool const has_onset = onset.active();
+            float const onset_ratio = onset.ratio(kSlots);
+            std::string onset_lbl = onset.label;
+            onset.advance(kSlots);
+
             auto dl_parts = split_rate_parts(down_kib);
             auto ul_parts = split_rate_parts(up_kib);
-            auto dl_wave = build_speed_wave_paths(down_kib_s, kSlots);
-            auto ul_wave = build_speed_wave_paths(up_kib_s, kSlots);
+            auto dual = build_dual_speed_wave_paths(down_kib_s, up_kib_s, kSlots, 8.0, 560.0, 56.0);
             return {
                 format_rate_human(up_kib), format_rate_human(down_kib),
-                std::move(dl_parts.value), std::move(dl_parts.unit), format_rate_human(max_dl),
-                std::move(dl_wave.area_cmd), std::move(dl_wave.line_cmd),
-                std::move(ul_parts.value), std::move(ul_parts.unit), format_rate_human(max_ul),
-                std::move(ul_wave.area_cmd), std::move(ul_wave.line_cmd),
+                std::move(dl_parts.value), std::move(dl_parts.unit),
+                std::move(ul_parts.value), std::move(ul_parts.unit),
+                std::move(dual.rx_area), std::move(dual.rx_line), std::move(dual.tx_dashed_line),
+                format_rate_human(dual.scale_top_kib),
+                has_onset, onset_ratio, std::move(onset_lbl),
             };
         }
     };

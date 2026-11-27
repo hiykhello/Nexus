@@ -1,5 +1,6 @@
 import { ListView } from "std-widgets.slint";
 import { ControlInspectState } from "../control_inspect_state.slint";
+import { ToastState } from "../feedback.slint";
 import { NexusInput } from "glass_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSelect } from "nexus_select.slint";
@@ -17,9 +18,9 @@ component LiveStreamToggle inherits Rectangle {
     border-color:
         fs.has-focus ? Theme.accent
         : !ControlInspectState.logs-stream-enabled ? Theme.card-border
-        : ControlInspectState.logs-stream-connected ? Theme.success-border
+        : ControlInspectState.logs-stream-connected ? Theme.live-emerald-border
         : Theme.selected-border;
-    background: !ControlInspectState.logs-stream-enabled ? Theme.row-bg : ControlInspectState.logs-stream-connected ? Theme.success-bg : Theme.selected-bg;
+    background: !ControlInspectState.logs-stream-enabled ? Theme.row-bg : ControlInspectState.logs-stream-connected ? Theme.live-emerald-soft : Theme.selected-bg;
     transform-scale: stream-ta.pressed ? 0.97 : 1.0;
     animate background { duration: Motion.fast; }
     animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
@@ -55,12 +56,12 @@ component LiveStreamToggle inherits Rectangle {
         padding-left: 10px; padding-right: 10px; spacing: 6px;
         Rectangle {
             width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
-            background: !ControlInspectState.logs-stream-enabled ? Theme.offline-fg : ControlInspectState.logs-stream-connected ? Theme.success-fg : Theme.accent;
+            background: !ControlInspectState.logs-stream-enabled ? Theme.offline-fg : ControlInspectState.logs-stream-connected ? Theme.live-emerald : Theme.accent;
         }
         Text {
             text: !ControlInspectState.logs-stream-enabled ? I18n.t("暂停", "Paused") : ControlInspectState.logs-stream-connected ? I18n.t("实时", "Live") : I18n.t("连接中", "Connecting");
             font-size: 11px; font-weight: 700; font-family: Theme.mono-font;
-            color: !ControlInspectState.logs-stream-enabled ? Theme.text-muted : ControlInspectState.logs-stream-connected ? Theme.success-fg : Theme.nav-active-fg;
+            color: !ControlInspectState.logs-stream-enabled ? Theme.text-muted : ControlInspectState.logs-stream-connected ? Theme.live-emerald : Theme.nav-active-fg;
             vertical-alignment: center;
         }
     }
@@ -82,6 +83,7 @@ export component LogsPanel inherits VerticalLayout {
     callback refresh-logs();
     callback export-logs();
     callback clear-logs();
+    callback copy-text(string);
 
     property <bool> compact-bar: root.window-width < 900px;
 
@@ -270,62 +272,89 @@ export component LogsPanel inherits VerticalLayout {
                     clip: true;
                     background: Math.mod(idx, 2) == 0 ? Theme.row-bg : Theme.row-alt-bg;
 
-                    row-body := HorizontalLayout {
-                        padding-left: 14px;
-                        padding-right: 14px;
-                        padding-top: 7px;
-                        padding-bottom: 7px;
-                        spacing: Theme.space-sm;
+                    // 2px leading severity vertical rail
+                    Rectangle {
+                        x: 0px;
+                        y: 0px;
+                        width: 2px;
+                        height: parent.height;
+                        background:
+                            entry.level == "error" ? Theme.error-fg
+                            : entry.level == "warn" ? Theme.warn-fg
+                            : entry.level == "info" ? Theme.telemetry-down
+                            : entry.level == "trace" ? Theme.telemetry-up
+                            : transparent;
+                    }
 
-                        VerticalLayout {
-                            alignment: center;
-                            Rectangle {
-                                width: 46px;
-                                height: 20px;
-                                border-radius: Theme.radius-xs;
-                                border-width: 1px;
-                                border-color:
-                                    entry.level == "error" ? Theme.error-border
-                                    : entry.level == "warn" ? Theme.warn-border
-                                    : entry.level == "info" ? Theme.telemetry-down.with-alpha(0.40)
-                                    : entry.level == "trace" ? Theme.telemetry-up.with-alpha(0.35)
-                                    : Theme.well-border;
-                                background:
-                                    entry.level == "error" ? Theme.error-bg
-                                    : entry.level == "warn" ? Theme.warn-bg
-                                    : entry.level == "info" ? Theme.proto-tls-bg
-                                    : entry.level == "trace" ? Theme.telemetry-up-soft
-                                    : Theme.inset-bg;
-                                Text {
-                                    width: 100%; height: 100%;
-                                    text:
-                                        entry.level == "error" ? "ERR"
-                                        : entry.level == "warn" ? "WRN"
-                                        : entry.level == "info" ? "INF"
-                                        : entry.level == "debug" ? "DBG"
-                                        : entry.level == "trace" ? "TRC"
-                                        : entry.level;
-                                    font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
-                                    horizontal-alignment: center; vertical-alignment: center;
-                                    color:
-                                        entry.level == "error" ? Theme.error-fg
-                                        : entry.level == "warn" ? Theme.warn-fg
-                                        : entry.level == "info" ? Theme.telemetry-down
-                                        : entry.level == "trace" ? Theme.telemetry-up
-                                        : Theme.text-secondary;
+                    ContextMenuArea {
+                        Menu {
+                            MenuItem {
+                                title: I18n.t("复制此日志", "Copy Log Line");
+                                activated => {
+                                    let line = "[" + entry.level + "] [" + entry.domain + "] " + entry.message;
+                                    root.copy-text(line);
+                                    ToastState.push(I18n.t("已复制日志行", "Copied log line"), "success");
                                 }
                             }
                         }
 
-                        Text {
-                            text: entry.domain; font-size: 12px; font-weight: 600; font-family: Theme.mono-font;
-                            color: Theme.text-secondary; width: 70px; vertical-alignment: center; overflow: elide;
-                        }
+                        row-body := HorizontalLayout {
+                            padding-left: 14px;
+                            padding-right: 14px;
+                            padding-top: 7px;
+                            padding-bottom: 7px;
+                            spacing: Theme.space-sm;
 
-                        Text {
-                            text: entry.message; font-size: 12px; font-family: Theme.mono-font;
-                            color: Theme.text-primary; horizontal-stretch: 1; min-width: 0px;
-                            wrap: word-wrap; vertical-alignment: center;
+                            VerticalLayout {
+                                alignment: center;
+                                Rectangle {
+                                    width: 46px;
+                                    height: 20px;
+                                    border-radius: Theme.radius-xs;
+                                    border-width: 1px;
+                                    border-color:
+                                        entry.level == "error" ? Theme.error-border
+                                        : entry.level == "warn" ? Theme.warn-border
+                                        : entry.level == "info" ? Theme.telemetry-down.with-alpha(0.40)
+                                        : entry.level == "trace" ? Theme.telemetry-up.with-alpha(0.35)
+                                        : Theme.well-border;
+                                    background:
+                                        entry.level == "error" ? Theme.error-bg
+                                        : entry.level == "warn" ? Theme.warn-bg
+                                        : entry.level == "info" ? Theme.proto-tls-bg
+                                        : entry.level == "trace" ? Theme.telemetry-up-soft
+                                        : Theme.inset-bg;
+                                    Text {
+                                        width: 100%; height: 100%;
+                                        text:
+                                            entry.level == "error" ? "ERR"
+                                            : entry.level == "warn" ? "WRN"
+                                            : entry.level == "info" ? "INF"
+                                            : entry.level == "debug" ? "DBG"
+                                            : entry.level == "trace" ? "TRC"
+                                            : entry.level;
+                                        font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
+                                        horizontal-alignment: center; vertical-alignment: center;
+                                        color:
+                                            entry.level == "error" ? Theme.error-fg
+                                            : entry.level == "warn" ? Theme.warn-fg
+                                            : entry.level == "info" ? Theme.telemetry-down
+                                            : entry.level == "trace" ? Theme.telemetry-up
+                                            : Theme.text-secondary;
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: entry.domain; font-size: 12px; font-weight: 600; font-family: Theme.mono-font;
+                                color: Theme.text-secondary; width: 70px; vertical-alignment: center; overflow: elide;
+                            }
+
+                            Text {
+                                text: entry.message; font-size: 12px; font-family: Theme.mono-font;
+                                color: Theme.text-primary; horizontal-stretch: 1; min-width: 0px;
+                                wrap: word-wrap; vertical-alignment: center;
+                            }
                         }
                     }
                 }

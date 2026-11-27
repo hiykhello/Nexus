@@ -18,6 +18,7 @@ namespace desktop_ui_helpers {
         MemberModelPipeline& member_models;
         ConnectionsModelPipeline& conn_models;
         LogsModelPipeline& log_models;
+        RateTracker& rate_tracker;
         std::vector<desktop::LogEntrySnapshot>& cached_logs;
         std::mutex& logs_mu;
         std::atomic<std::uint64_t>& last_log_seq;
@@ -127,6 +128,7 @@ namespace desktop_ui_helpers {
         });
         ctx.ui.on_select_member([&ctx, push_group_models](slint::SharedString group, slint::SharedString member) {
             std::string g(group), m(member);
+            ctx.rate_tracker.mark_onset(m);
             ctx.worker.post([&ctx, push_group_models, g = std::move(g), m = std::move(m)] {
                 (void)ctx.http_ctrl.select_group(g, m);
                 if (auto reply = ctx.http_ctrl.outbounds(); reply.ok)
@@ -135,6 +137,7 @@ namespace desktop_ui_helpers {
         });
         ctx.ui.on_reset_group_auto([&ctx, push_group_models](slint::SharedString group) {
             std::string g(group);
+            ctx.rate_tracker.mark_onset(tr(is_en_ui(ctx.ui), "自动", "Auto"));
             ctx.worker.post([&ctx, push_group_models, g = std::move(g)] {
                 (void)ctx.http_ctrl.reset_group_auto(g);
                 if (auto reply = ctx.http_ctrl.outbounds(); reply.ok)

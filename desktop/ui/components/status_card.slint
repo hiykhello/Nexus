@@ -1,12 +1,13 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
 import { ActiveConnectionItem, OutboundGroupItem } from "../types.slint";
-import { HeroStatusCard, SpeedMiniCard } from "dash_perf_cards.slint";
+import { DualTrackSpeedCard, HeroStatusCard } from "dash_perf_cards.slint";
 import { AppPerfCard, CorePerfCard } from "dash_process_cards.slint";
 import { ConnectionsPreviewCard, QuickSwitchRow } from "dash_row_cards.slint";
 import { OutboundModeCard, PolicyGroupsCard, RoutingSummaryCard, ServiceHealthCard } from "dash_utility_cards.slint";
+import { RouteTransitStrip } from "route_transit_strip.slint";
 
-// Zero-Scroll 4-Row Matte Bento Overview Console (1280x760 fits in one screen; stacks cleanly on compact <960px)
+// Zero-Scroll 5-Row Instrument Overview Console (1280x760 fits in one screen with 80px cushion; stacks cleanly on compact <960px)
 export component StatusCard inherits VerticalLayout {
     in property <length> window-width: 1280px;
     in property <bool> core-running: false;
@@ -37,18 +38,14 @@ export component StatusCard inherits VerticalLayout {
     in property <string> selected-group: "";
     in property <string> active-routing-name: "";
     in property <int> active-rule-count: 0;
+    in property <string> upload-rate: "0.0 KB/s";
+    in property <string> download-rate: "0.0 KB/s";
     in property <string> upload-total: "0 B";
     in property <string> download-total: "0 B";
     in property <string> down-speed-value: "0.0";
     in property <string> down-speed-unit: "KB/s";
-    in property <string> down-speed-peak: "0.0 KB/s";
-    in property <string> down-wave-area: "";
-    in property <string> down-wave-line: "";
     in property <string> up-speed-value: "0.0";
     in property <string> up-speed-unit: "KB/s";
-    in property <string> up-speed-peak: "0.0 KB/s";
-    in property <string> up-wave-area: "";
-    in property <string> up-wave-line: "";
     in property <string> diagnostic-message: "";
     in property <bool> diagnostic-ok: true;
     in property <string> hero-state-override: "";
@@ -70,21 +67,42 @@ export component StatusCard inherits VerticalLayout {
     callback open-groups();
     callback open-connections();
     callback open-rules();
+    callback open-host-settings();
 
     property <bool> is-desktop-grid: root.window-width >= 960px;
 
     padding: Theme.space-md;
     spacing: Theme.space-sm;
 
-    // Desktop Precision 4-Row Zero-Scroll Bento Grid (>= 960px)
+    // Desktop Precision 5-Row Zero-Scroll Bento Grid (>= 960px, min sum 624px <= 624px at 680px & 704px at 760px)
     if root.is-desktop-grid : VerticalLayout {
         vertical-stretch: 1;
         spacing: Theme.space-sm;
 
-        // Row 1 (2fr : 1fr : 1fr): Status Hero | Upload | Download
+        // Row 0 (44px): Live Route Transit Strip
+        RouteTransitStrip {
+            core-running: root.core-running;
+            tun-enabled: root.tun-enabled;
+            mixed-proxy-enabled: root.mixed-proxy-enabled;
+            mixed-proxy-port: root.mixed-proxy-port;
+            outbound-mode: root.outbound-mode;
+            active-rule-count: root.active-rule-count;
+            selected-group: root.selected-group;
+            active-node: root.active-node;
+            active-node-latency-ms: root.active-node-latency-ms;
+            download-rate: root.download-rate;
+            upload-rate: root.upload-rate;
+            active-sessions: root.active-sessions;
+            open-host-settings => { root.open-host-settings(); }
+            open-rules => { root.open-rules(); }
+            open-groups => { root.open-groups(); }
+            open-connections => { root.open-connections(); }
+        }
+
+        // Row 1 (142px, 2fr : 2fr): Status Hero | Spacious Dual-Track Throughput Sparkline
         HorizontalLayout {
             vertical-stretch: 0;
-            height: 150px;
+            height: 142px;
             spacing: Theme.space-sm;
 
             HeroStatusCard {
@@ -106,39 +124,23 @@ export component StatusCard inherits VerticalLayout {
                 open-groups => { root.open-groups(); }
             }
 
-            SpeedMiniCard {
-                horizontal-stretch: 1;
+            DualTrackSpeedCard {
+                horizontal-stretch: 2;
                 preferred-width: 0px;
                 min-width: 0px;
-                title: I18n.t("实时上传", "Upload");
-                rate-value: root.up-speed-value;
-                rate-unit: root.up-speed-unit;
-                peak-text: root.up-speed-peak;
-                total-text: root.upload-total;
-                wave-area: root.up-wave-area;
-                wave-line: root.up-wave-line;
-                channel-color: Theme.telemetry-up;
-            }
-
-            SpeedMiniCard {
-                horizontal-stretch: 1;
-                preferred-width: 0px;
-                min-width: 0px;
-                title: I18n.t("实时下载", "Download");
-                rate-value: root.down-speed-value;
-                rate-unit: root.down-speed-unit;
-                peak-text: root.down-speed-peak;
-                total-text: root.download-total;
-                wave-area: root.down-wave-area;
-                wave-line: root.down-wave-line;
-                channel-color: Theme.telemetry-down;
+                down-value: root.down-speed-value;
+                down-unit: root.down-speed-unit;
+                down-total: root.download-total;
+                up-value: root.up-speed-value;
+                up-unit: root.up-speed-unit;
+                up-total: root.upload-total;
             }
         }
 
-        // Row 2 (2fr : 1fr : 1fr): Active Connections Preview | App Performance | Core Performance
+        // Row 2 (min 176px, 2fr : 1fr : 1fr): Active Connections Preview | App Performance | Core Performance
         HorizontalLayout {
             vertical-stretch: 1;
-            min-height: 186px;
+            min-height: 176px;
             spacing: Theme.space-sm;
 
             ConnectionsPreviewCard {
@@ -173,10 +175,10 @@ export component StatusCard inherits VerticalLayout {
             }
         }
 
-        // Row 3 (1fr x 4): Service Health | Routing Rules | Outbound Mode | Policy Groups
+        // Row 3 (min 174px, 1fr x 4): Service Health | Routing Rules | Outbound Mode | Policy Groups
         HorizontalLayout {
             vertical-stretch: 1;
-            min-height: 184px;
+            min-height: 174px;
             spacing: Theme.space-sm;
 
             ServiceHealthCard {
@@ -221,7 +223,7 @@ export component StatusCard inherits VerticalLayout {
             }
         }
 
-        // Row 4 (1fr x 4): Port Proxy | LAN Proxy | System Proxy | TUN Mode
+        // Row 4 (56px, 1fr x 4): Port Proxy | LAN Proxy | System Proxy | TUN Mode
         QuickSwitchRow {
             mixed-enabled: root.mixed-proxy-enabled;
             mixed-port: root.mixed-proxy-port;
@@ -242,8 +244,28 @@ export component StatusCard inherits VerticalLayout {
         spacing: Theme.space-sm;
         alignment: start;
 
+        RouteTransitStrip {
+            compact: true;
+            core-running: root.core-running;
+            tun-enabled: root.tun-enabled;
+            mixed-proxy-enabled: root.mixed-proxy-enabled;
+            mixed-proxy-port: root.mixed-proxy-port;
+            outbound-mode: root.outbound-mode;
+            active-rule-count: root.active-rule-count;
+            selected-group: root.selected-group;
+            active-node: root.active-node;
+            active-node-latency-ms: root.active-node-latency-ms;
+            download-rate: root.download-rate;
+            upload-rate: root.upload-rate;
+            active-sessions: root.active-sessions;
+            open-host-settings => { root.open-host-settings(); }
+            open-rules => { root.open-rules(); }
+            open-groups => { root.open-groups(); }
+            open-connections => { root.open-connections(); }
+        }
+
         HeroStatusCard {
-            height: 146px;
+            height: 140px;
             core-running: root.core-running;
             core-toggling: root.core-toggling;
             core-uptime: root.core-uptime;
@@ -259,25 +281,14 @@ export component StatusCard inherits VerticalLayout {
             open-groups => { root.open-groups(); }
         }
 
-        HorizontalLayout {
-            height: 138px;
-            spacing: Theme.space-sm;
-            SpeedMiniCard {
-                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                title: I18n.t("实时上传", "Upload");
-                rate-value: root.up-speed-value; rate-unit: root.up-speed-unit;
-                peak-text: root.up-speed-peak; total-text: root.upload-total;
-                wave-area: root.up-wave-area; wave-line: root.up-wave-line;
-                channel-color: Theme.telemetry-up;
-            }
-            SpeedMiniCard {
-                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                title: I18n.t("实时下载", "Download");
-                rate-value: root.down-speed-value; rate-unit: root.down-speed-unit;
-                peak-text: root.down-speed-peak; total-text: root.download-total;
-                wave-area: root.down-wave-area; wave-line: root.down-wave-line;
-                channel-color: Theme.telemetry-down;
-            }
+        DualTrackSpeedCard {
+            height: 146px;
+            down-value: root.down-speed-value;
+            down-unit: root.down-speed-unit;
+            down-total: root.download-total;
+            up-value: root.up-speed-value;
+            up-unit: root.up-speed-unit;
+            up-total: root.upload-total;
         }
 
         QuickSwitchRow {

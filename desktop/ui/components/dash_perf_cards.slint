@@ -1,3 +1,4 @@
+import { TelemetryWaveState } from "../command_palette_state.slint";
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
@@ -50,17 +51,17 @@ export component HeroStatusCard inherits Rectangle {
     property <color> state-fg:
         root.is-error ? Theme.error-fg
         : root.is-degraded || root.core-toggling ? Theme.warn-fg
-        : root.core-running ? Theme.success-fg
+        : root.core-running ? Theme.live-emerald
         : Theme.offline-fg;
     property <brush> state-bg:
         root.is-error ? Theme.error-bg
         : root.is-degraded || root.core-toggling ? Theme.warn-bg
-        : root.core-running ? Theme.success-bg
+        : root.core-running ? Theme.live-emerald-soft
         : Theme.well-bg;
     property <color> state-bd:
         root.is-error ? Theme.error-border
         : root.is-degraded || root.core-toggling ? Theme.warn-border
-        : root.core-running ? Theme.success-border
+        : root.core-running ? Theme.live-emerald-border
         : Theme.well-border;
     property <string> state-label:
         root.is-error ? I18n.t("连接异常", "Error")
@@ -79,7 +80,7 @@ export component HeroStatusCard inherits Rectangle {
 
     border-radius: Theme.radius-card;
     border-width: 1px;
-    border-color: root.is-error ? Theme.error-border : root.core-running ? Theme.success-border : Theme.card-border;
+    border-color: root.is-error ? Theme.error-border : root.core-running ? Theme.live-emerald-border : Theme.card-border;
     background: Theme.card-surface;
 
     HorizontalLayout {
@@ -90,7 +91,7 @@ export component HeroStatusCard inherits Rectangle {
             horizontal-stretch: 1;
             min-width: 0px;
             alignment: space-between;
-            spacing: 8px;
+            spacing: 6px;
 
             HorizontalLayout {
                 spacing: 8px;
@@ -133,7 +134,7 @@ export component HeroStatusCard inherits Rectangle {
             }
 
             VerticalLayout {
-                spacing: 3px;
+                spacing: 2px;
                 Text {
                     text: root.headline;
                     font-size: 18px;
@@ -152,18 +153,12 @@ export component HeroStatusCard inherits Rectangle {
                 }
             }
 
+            // Anti-redundancy: Hero owns mode + uptime (RouteTransitStrip owns live latency & ingress path)
             HorizontalLayout {
                 spacing: 6px;
 
                 MetricPill {
                     text: root.mode-label;
-                }
-
-                if root.active-node-latency-ms > 0 : MetricPill {
-                    text: "\{root.active-node-latency-ms} ms";
-                    fg: Theme.latency-fg(root.active-node-latency-ms, "healthy");
-                    bg: Theme.latency-bg(root.active-node-latency-ms, "healthy");
-                    bd: Theme.well-border;
                 }
 
                 if root.core-running && root.core-uptime != "" : MetricPill {
@@ -186,11 +181,11 @@ export component HeroStatusCard inherits Rectangle {
                 border-width: 2px;
                 border-color:
                     pwr-fs.has-focus ? Theme.accent
-                    : root.core-running ? Theme.success-fg
+                    : root.core-running ? Theme.live-emerald
                     : root.core-toggling ? Theme.warn-fg
                     : pwr-ta.has-hover ? Theme.accent : Theme.hairline-strong;
                 background:
-                    root.core-running ? (pwr-ta.pressed ? Theme.success-fg.darker(0.15) : Theme.success-fg)
+                    root.core-running ? (pwr-ta.pressed ? Theme.live-emerald.darker(0.15) : Theme.live-emerald)
                     : pwr-ta.pressed ? Theme.well-bg
                     : pwr-ta.has-hover ? Theme.selected-bg : Theme.well-bg;
                 transform-scale: (pwr-ta.pressed && !root.core-toggling) ? 0.97 : 1.0;
@@ -225,22 +220,21 @@ export component HeroStatusCard inherits Rectangle {
                     width: 22px;
                     height: 22px;
                     source: root.core-running ? @image-url("../icons/stop.svg") : @image-url("../icons/play.svg");
-                    colorize: root.core-running ? Theme.success-on-fill : (pwr-ta.has-hover ? Theme.accent : Theme.text-primary);
+                    colorize: root.core-running ? Theme.live-emerald-on-fill : (pwr-ta.has-hover ? Theme.accent : Theme.text-primary);
                 }
             }
         }
     }
 }
 
-export component SpeedMiniCard inherits Rectangle {
-    in property <string> title: "";
-    in property <string> rate-value: "0.0";
-    in property <string> rate-unit: "KB/s";
-    in property <string> peak-text: "0.0 KB/s";
-    in property <string> total-text: "0 B";
-    in property <string> wave-area: "";
-    in property <string> wave-line: "";
-    in property <color> channel-color: Theme.telemetry-down;
+// Spacious 2fr Dual-Track Throughput Telemetry Card (shared Y-scale RX solid+fill, TX pre-segmented dashed, peak ceiling, onset tick)
+export component DualTrackSpeedCard inherits Rectangle {
+    in property <string> down-value: "0.0";
+    in property <string> down-unit: "KB/s";
+    in property <string> down-total: "0 B";
+    in property <string> up-value: "0.0";
+    in property <string> up-unit: "KB/s";
+    in property <string> up-total: "0 B";
 
     border-radius: Theme.radius-card;
     border-width: 1px;
@@ -250,110 +244,218 @@ export component SpeedMiniCard inherits Rectangle {
 
     VerticalLayout {
         padding: Theme.space-md;
-        spacing: Theme.space-xs;
+        spacing: 6px;
 
+        // Top calibration row: RX solid legend + TX dashed legend + shared scale ceiling
         HorizontalLayout {
-            spacing: 6px;
-            Rectangle {
-                width: 6px;
-                height: 6px;
-                y: (parent.height - self.height) / 2;
-                border-radius: 3px;
-                background: root.channel-color;
-            }
-            Text {
-                horizontal-stretch: 1;
-                min-width: 0px;
-                text: root.title;
-                font-size: 11px;
-                font-weight: 700;
-                color: Theme.text-secondary;
-                vertical-alignment: center;
-                overflow: elide;
-            }
-            Text {
-                min-width: 88px;
-                text: I18n.t("峰值 ", "Peak ") + root.peak-text;
-                font-size: 10px;
-                font-family: Theme.mono-font;
-                color: Theme.text-muted;
-                horizontal-alignment: right;
-                vertical-alignment: center;
-            }
-        }
+            vertical-stretch: 0;
+            spacing: Theme.space-md;
 
-        HorizontalLayout {
-            spacing: 4px;
-            alignment: start;
-            Text {
+            // RX channel readout (solid dot legend + fixed-width numeric slot)
+            VerticalLayout {
                 horizontal-stretch: 0;
-                min-width: 72px;
-                text: root.rate-value;
-                font-size: 22px;
-                font-weight: 800;
-                font-family: Theme.mono-font;
-                color: Theme.text-primary;
-                vertical-alignment: bottom;
+                spacing: 1px;
+                HorizontalLayout {
+                    spacing: 5px;
+                    Rectangle {
+                        width: 6px; height: 6px; y: (parent.height - self.height) / 2;
+                        border-radius: 3px; background: Theme.telemetry-down;
+                    }
+                    Text {
+                        text: I18n.t("下载", "RX") + " · " + root.down-total;
+                        font-size: 10px; font-weight: 600; font-family: Theme.mono-font;
+                        color: Theme.text-secondary; vertical-alignment: center;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: start;
+                    Text {
+                        horizontal-stretch: 0;
+                        min-width: 68px;
+                        text: root.down-value;
+                        font-size: 20px;
+                        font-weight: 800;
+                        font-family: Theme.mono-font;
+                        color: Theme.text-primary;
+                        vertical-alignment: bottom;
+                    }
+                    Text {
+                        horizontal-stretch: 0;
+                        min-width: 34px;
+                        text: root.down-unit;
+                        font-size: 11px;
+                        font-weight: 700;
+                        font-family: Theme.mono-font;
+                        color: Theme.telemetry-down;
+                        vertical-alignment: bottom;
+                    }
+                }
             }
-            Text {
+
+            Rectangle { width: 1px; y: 4px; height: 28px; background: Theme.hairline-subtle; }
+
+            // TX channel readout (2-dash legend for color-blind distinction + fixed-width numeric slot)
+            VerticalLayout {
                 horizontal-stretch: 0;
-                min-width: 34px;
-                text: root.rate-unit;
-                font-size: 11px;
-                font-weight: 700;
-                font-family: Theme.mono-font;
-                color: root.channel-color;
-                vertical-alignment: bottom;
+                spacing: 1px;
+                HorizontalLayout {
+                    spacing: 5px;
+                    HorizontalLayout {
+                        height: 2px;
+                        y: (parent.height - self.height) / 2;
+                        spacing: 2px;
+                        Rectangle { width: 4px; height: 2px; border-radius: 1px; background: Theme.telemetry-up; }
+                        Rectangle { width: 4px; height: 2px; border-radius: 1px; background: Theme.telemetry-up; }
+                    }
+                    Text {
+                        text: I18n.t("上传", "TX") + " · " + root.up-total;
+                        font-size: 10px; font-weight: 600; font-family: Theme.mono-font;
+                        color: Theme.text-secondary; vertical-alignment: center;
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 4px;
+                    alignment: start;
+                    Text {
+                        horizontal-stretch: 0;
+                        min-width: 68px;
+                        text: root.up-value;
+                        font-size: 20px;
+                        font-weight: 800;
+                        font-family: Theme.mono-font;
+                        color: Theme.text-primary;
+                        vertical-alignment: bottom;
+                    }
+                    Text {
+                        horizontal-stretch: 0;
+                        min-width: 34px;
+                        text: root.up-unit;
+                        font-size: 11px;
+                        font-weight: 700;
+                        font-family: Theme.mono-font;
+                        color: Theme.telemetry-up;
+                        vertical-alignment: bottom;
+                    }
+                }
             }
+
             Rectangle { horizontal-stretch: 1; }
+
+            // Shared vertical scale ceiling readout
+            VerticalLayout {
+                horizontal-stretch: 0;
+                alignment: start;
+                Text {
+                    min-width: 86px;
+                    text: I18n.t("标尺 ", "Scale ") + TelemetryWaveState.scale-peak-text;
+                    font-size: 10px;
+                    font-weight: 600;
+                    font-family: Theme.mono-font;
+                    color: Theme.text-muted;
+                    horizontal-alignment: right;
+                }
+            }
         }
 
-        Text {
-            text: I18n.t("累计 ", "Total ") + root.total-text;
-            font-size: 10px;
-            font-family: Theme.mono-font;
-            color: Theme.text-muted;
-            overflow: elide;
-        }
-
+        // Shared Dual-Track Wave Canvas (edge-to-edge, 50% gridline, RX solid+fill, TX dashed, onset marker)
         wave-well := Rectangle {
             vertical-stretch: 1;
-            min-height: 36px;
+            min-height: 46px;
             border-radius: Theme.radius-xs;
             background: Theme.well-bg.with-alpha(0.55);
             clip: true;
 
-            property <length> path-h: min(self.height, self.width * 48 / 320);
+            property <length> path-h: min(self.height, self.width * 60 / 560);
 
-            if root.wave-area != "" : Path {
+            // Subtle 50% reference line
+            Rectangle {
+                x: 0px;
+                y: parent.height * 0.5;
+                width: parent.width;
+                height: 1px;
+                background: Theme.hairline-subtle;
+            }
+
+            if TelemetryWaveState.rx-area != "" : Path {
                 x: 0px;
                 y: wave-well.height - wave-well.path-h;
                 width: wave-well.width;
                 height: wave-well.path-h;
-                viewbox-width: 320;
-                viewbox-height: 48;
-                commands: root.wave-area;
-                fill: root.channel-color.with-alpha(Theme.dark ? 0.16 : 0.12);
+                viewbox-width: 560;
+                viewbox-height: 60;
+                commands: TelemetryWaveState.rx-area;
+                fill: Theme.telemetry-down.with-alpha(Theme.dark ? 0.15 : 0.11);
             }
 
-            if root.wave-line != "" : Path {
+            if TelemetryWaveState.rx-line != "" : Path {
                 x: 0px;
                 y: wave-well.height - wave-well.path-h;
                 width: wave-well.width;
                 height: wave-well.path-h;
-                viewbox-width: 320;
-                viewbox-height: 48;
-                commands: root.wave-line;
-                stroke: root.channel-color;
-                stroke-width: 1.75px;
+                viewbox-width: 560;
+                viewbox-height: 60;
+                commands: TelemetryWaveState.rx-line;
+                stroke: Theme.telemetry-down;
+                stroke-width: 1.8px;
             }
 
-            if root.wave-line == "" : Rectangle {
+            if TelemetryWaveState.tx-dashed-line != "" : Path {
+                x: 0px;
+                y: wave-well.height - wave-well.path-h;
+                width: wave-well.width;
+                height: wave-well.path-h;
+                viewbox-width: 560;
+                viewbox-height: 60;
+                commands: TelemetryWaveState.tx-dashed-line;
+                stroke: Theme.telemetry-up;
+                stroke-width: 1.6px;
+            }
+
+            if TelemetryWaveState.rx-line == "" && TelemetryWaveState.tx-dashed-line == "" : Rectangle {
                 x: 0px;
                 y: parent.height - 4px;
                 width: parent.width;
                 height: 1.5px;
-                background: root.channel-color.with-alpha(0.32);
+                background: Theme.telemetry-down.with-alpha(0.32);
+            }
+
+            // Event onset vertical tick + tight clamped compact label (node/mode/reset/reload)
+            if TelemetryWaveState.has-onset && TelemetryWaveState.onset-ratio >= 0.0 && TelemetryWaveState.onset-ratio <= 1.0 : Rectangle {
+                property <length> tick-x: clamp(wave-well.width * TelemetryWaveState.onset-ratio, 2px, max(2px, wave-well.width - 2px));
+                x: 0px;
+                y: 0px;
+
+                Rectangle {
+                    x: parent.tick-x;
+                    y: 0px;
+                    width: 1px;
+                    height: parent.height;
+                    background: Theme.live-emerald.with-alpha(0.65);
+                }
+
+                if TelemetryWaveState.onset-label != "" : Rectangle {
+                    width: onset-lbl.preferred-width;
+                    x: clamp(parent.tick-x - self.width / 2, 4px, max(4px, parent.width - self.width - 4px));
+                    y: 3px;
+                    height: 16px;
+                    border-radius: 3px;
+                    border-width: 1px;
+                    border-color: Theme.live-emerald-border;
+                    background: Theme.live-emerald-soft;
+                    onset-lbl := HorizontalLayout {
+                        padding-left: 5px;
+                        padding-right: 5px;
+                        Text {
+                            text: TelemetryWaveState.onset-label;
+                            font-size: 9px;
+                            font-weight: 700;
+                            font-family: Theme.mono-font;
+                            color: Theme.live-emerald;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
             }
         }
     }

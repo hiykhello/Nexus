@@ -1,6 +1,6 @@
 import { Palette } from "std-widgets.slint";
 
-export enum ThemePreference { system, light, dark }
+export enum ThemePreference { system, obsidian, paper, amber }
 export enum AccentPreset { ocean, emerald, violet, amber, rose }
 
 export global Theme {
@@ -9,9 +9,9 @@ export global Theme {
 
     public function apply-preference(pref: ThemePreference) {
         preference = pref;
-        if (pref == ThemePreference.dark) {
+        if (pref == ThemePreference.obsidian || pref == ThemePreference.amber) {
             Palette.color-scheme = ColorScheme.dark;
-        } else if (pref == ThemePreference.light) {
+        } else if (pref == ThemePreference.paper) {
             Palette.color-scheme = ColorScheme.light;
         } else {
             Palette.color-scheme = ColorScheme.unknown;
@@ -19,61 +19,81 @@ export global Theme {
     }
 
     public function toggle-light-dark() {
-        apply-preference(dark ? ThemePreference.light : ThemePreference.dark);
+        apply-preference(dark ? ThemePreference.paper : ThemePreference.obsidian);
     }
 
     out property <bool> system-dark:
         Palette.color-scheme == ColorScheme.dark
         || (Palette.color-scheme == ColorScheme.unknown && Palette.foreground.to-hsv().value > 0.5);
 
+    out property <bool> is-amber: preference == ThemePreference.amber;
+
     out property <bool> dark:
-        preference == ThemePreference.dark ? true
-        : preference == ThemePreference.light ? false
+        (preference == ThemePreference.obsidian || preference == ThemePreference.amber) ? true
+        : preference == ThemePreference.paper ? false
         : system-dark;
 
-    // Brand accent presets (WCAG AA/AAA calibrated across all 10 Dark/Light combinations)
+    // Decoupled Signal Emerald channel (active tunnel / connected link state across ALL themes; WCAG AA >= 5.4:1)
+    out property <color> live-emerald: dark ? #10b981 : #047857;
+    out property <color> live-emerald-soft: dark ? #10b98124 : #dcfce7;
+    out property <color> live-emerald-border: dark ? #10b98158 : #04785745;
+    out property <color> live-emerald-on-fill: dark ? #07130f : #ffffff;
+
+    // Interactive Brand Accent (Obsidian Indigo / Paper Indigo / Studio Amber Gold + optional accent overrides)
     out property <color> accent:
-        accent-preset == AccentPreset.emerald ? (dark ? #22c55e : #15803d)
+        accent-preset == AccentPreset.emerald ? (dark ? #10b981 : #047857)
         : accent-preset == AccentPreset.violet ? (dark ? #a78bfa : #6d28d9)
-        : accent-preset == AccentPreset.amber ? (dark ? #f59e0b : #b45309)
-        : accent-preset == AccentPreset.rose ? (dark ? #fb7185 : #dc2626)
-        : (dark ? #3b82f6 : #1d4ed8);
+        : accent-preset == AccentPreset.amber ? (dark ? #e59a2e : #b45309)
+        : accent-preset == AccentPreset.rose ? (dark ? #f87171 : #dc2626)
+        : is-amber ? #e59a2e
+        : (dark ? #4f6ef7 : #3355e6);
 
-    out property <color> accent-fg: dark && (accent-preset == AccentPreset.emerald || accent-preset == AccentPreset.amber) ? #0b1220 : #ffffff;
-
-    // Flat crisp active pill tones (zero heavy blur/glow)
+    // Solid button fill (separated from border accent so white text on Obsidian #3f5ce0 achieves 5.50:1 >= AA)
     out property <color> pill-active-top:
-        accent-preset == AccentPreset.emerald ? (dark ? #22c55e : #16a34a)
+        accent-preset == AccentPreset.emerald ? (dark ? #10b981 : #059669)
         : accent-preset == AccentPreset.violet ? (dark ? #8b5cf6 : #7c3aed)
-        : accent-preset == AccentPreset.amber ? (dark ? #f59e0b : #d97706)
-        : accent-preset == AccentPreset.rose ? (dark ? #f43f5e : #e11d48)
-        : (dark ? #3b82f6 : #2563eb);
+        : accent-preset == AccentPreset.amber ? (dark ? #e59a2e : #b45309)
+        : accent-preset == AccentPreset.rose ? (dark ? #ef4444 : #dc2626)
+        : is-amber ? #e59a2e
+        : (dark ? #4f6ef7 : #3355e6);
+
     out property <color> pill-active-bot:
-        accent-preset == AccentPreset.emerald ? (dark ? #16a34a : #15803d)
-        : accent-preset == AccentPreset.violet ? (dark ? #7c3aed : #6d28d9)
-        : accent-preset == AccentPreset.amber ? (dark ? #d97706 : #b45309)
-        : accent-preset == AccentPreset.rose ? (dark ? #e11d48 : #be123c)
-        : (dark ? #2563eb : #1d4ed8);
+        accent-preset == AccentPreset.emerald ? (dark ? #10b981 : #047857)
+        : accent-preset == AccentPreset.violet ? (dark ? #6d28d9 : #6d28d9)
+        : accent-preset == AccentPreset.amber ? (dark ? #e59a2e : #b45309)
+        : accent-preset == AccentPreset.rose ? (dark ? #dc2626 : #dc2626)
+        : is-amber ? #e59a2e
+        : (dark ? #3f5ce0 : #2c4bd4);
+
+    // Dark ink on bright amber/emerald dark fills (8.01:1 on #e59a2e, 7.46:1 on #10b981); white on Indigo/Violet/Rose
     out property <color> pill-active-fg:
-        dark && (accent-preset == AccentPreset.emerald || accent-preset == AccentPreset.amber) ? #0b1220 : #ffffff;
+        dark && ((is-amber && accent-preset == AccentPreset.ocean) || accent-preset == AccentPreset.amber || accent-preset == AccentPreset.emerald)
+            ? #14120f : #ffffff;
+    out property <color> accent-fg: pill-active-fg;
 
     out property <color> accent-soft: accent.with-alpha(dark ? 0.16 : 0.11);
-    out property <color> nav-hover-bg: dark ? #20242c : #eceff3;
+    out property <color> nav-hover-bg: is-amber ? #2b2722 : dark ? #202530 : #e6e3db;
     out property <color> nav-active-bg: accent.with-alpha(dark ? 0.18 : 0.12);
-    out property <color> nav-active-fg: dark ? accent.brighter(0.22) : accent;
+    out property <color> nav-active-fg:
+        accent-preset == AccentPreset.emerald ? (dark ? #34d399 : #047857)
+        : accent-preset == AccentPreset.violet ? (dark ? #c4b5fd : #6d28d9)
+        : accent-preset == AccentPreset.amber ? (dark ? #f0ae4a : #b45309)
+        : accent-preset == AccentPreset.rose ? (dark ? #fda4af : #dc2626)
+        : is-amber ? #f0ae4a
+        : (dark ? #829bff : #2c4bd4);
     out property <brush> selected-bg: accent.with-alpha(dark ? 0.16 : 0.10);
-    out property <brush> selected-border: accent.with-alpha(dark ? 0.68 : 0.58);
+    out property <brush> selected-border: accent.with-alpha(dark ? 0.72 : 0.58);
 
-    // Decoupled Telemetry Channel Colors (fixed across ALL brand accents; WCAG AA >= 4.5:1)
+    // Decoupled Telemetry Channel Colors (fixed WCAG AA >= 5.7:1 across all themes)
     out property <color> telemetry-down: dark ? #38bdf8 : #0369a1;
-    out property <color> telemetry-up: dark ? #c084fc : #7c3aed;
+    out property <color> telemetry-up: is-amber ? #f0ae4a : (dark ? #c084fc : #7c3aed);
     out property <color> telemetry-up-soft: telemetry-up.with-alpha(dark ? 0.18 : 0.12);
 
-    // 5-tier Semantic Latency Palette (<80 fast, <180 good, <350 mid, >=350 slow, unprobed slate, timeout danger)
-    out property <color> lat-fast-fg: dark ? #22c55e : #15803d;
-    out property <color> lat-fast-bg: dark ? #16a34a22 : #dcfce7;
-    out property <color> lat-good-fg: dark ? #2dd4bf : #0f766e;
-    out property <color> lat-good-bg: dark ? #14b8a620 : #ccfbf1;
+    // 5-tier Semantic Latency Palette (<80 fast, <180 good, <350 mid, >=350 slow, timeout error)
+    out property <color> lat-fast-fg: dark ? #34d399 : #047857;
+    out property <color> lat-fast-bg: dark ? #10b98122 : #dcfce7;
+    out property <color> lat-good-fg: dark ? #38bdf8 : #0369a1;
+    out property <color> lat-good-bg: dark ? #0ea5e920 : #e0f2fe;
     out property <color> lat-mid-fg: dark ? #f59e0b : #b45309;
     out property <color> lat-mid-bg: dark ? #f59e0b22 : #fef3c7;
     out property <color> lat-slow-fg: dark ? #fb923c : #c2410c;
@@ -84,60 +104,60 @@ export global Theme {
     out property <color> proto-quic-bg: dark ? #f59e0b20 : #fef3c7;
     out property <color> proto-tls-fg: dark ? #38bdf8 : #0369a1;
     out property <color> proto-tls-bg: dark ? #0ea5e920 : #e0f2fe;
-    out property <color> proto-direct-fg: dark ? #22c55e : #15803d;
-    out property <color> proto-direct-bg: dark ? #16a34a20 : #dcfce7;
+    out property <color> proto-direct-fg: live-emerald;
+    out property <color> proto-direct-bg: live-emerald-soft;
 
-    // Matte Precision Surface Hierarchy
-    out property <color> surface-bg: dark ? #111317 : #f5f6f8;
-    out property <color> sidebar-card-bg: dark ? #15181e : #ffffff;
-    out property <color> sidebar-border: dark ? #262a33 : #e0e4ec;
+    // Committed Instrument Matte Surface Hierarchy (Obsidian Chassis / Paper Daylight / Studio Amber)
+    out property <color> sidebar-card-bg: is-amber ? #0e0d0c : dark ? #0d0f13 : #eceae4;
+    out property <color> surface-bg: is-amber ? #141311 : dark ? #12151b : #f6f5f2;
+    out property <color> sidebar-border: is-amber ? #2c2822 : dark ? #262b36 : #dddad2;
 
     // L1 Matte Card / L2 Well / L3 Inset
-    out property <color> card-bg: dark ? #191c22 : #ffffff;
+    out property <color> card-bg: is-amber ? #1c1a17 : dark ? #191d25 : #ffffff;
     out property <brush> card-surface: card-bg;
-    out property <color> overlay-bg: dark ? #1d2129 : #ffffff;
-    out property <color> well-bg: dark ? #20242c : #eceff3;
-    out property <color> inset-bg: dark ? #2a2f3a : #e2e6ee;
+    out property <color> overlay-bg: is-amber ? #211e1a : dark ? #1c212b : #ffffff;
+    out property <color> well-bg: is-amber ? #24211d : dark ? #202530 : #efede8;
+    out property <color> inset-bg: is-amber ? #2d2923 : dark ? #282e3b : #e5e2db;
 
     // 1px precision structural borders
-    out property <color> card-border: dark ? #262a33 : #e0e4ec;
-    out property <color> well-border: dark ? #2b303b : #dce1ea;
-    out property <color> hairline-subtle: dark ? #232730 : #e6eaf1;
-    out property <color> hairline-strong: dark ? #363c49 : #c8d0dc;
-    out property <color> modal-backdrop: dark ? #00000088 : #0f172a52;
-    out property <color> modal-border: dark ? #363c49 : #cbd5e1;
-    out property <color> popup-border: dark ? #363c49 : #cbd5e1;
+    out property <color> card-border: is-amber ? #2c2822 : dark ? #262b36 : #dddad2;
+    out property <color> well-border: is-amber ? #36312a : dark ? #2e3543 : #d4d0c7;
+    out property <color> hairline-subtle: is-amber ? #28241e : dark ? #242935 : #e6e3dc;
+    out property <color> hairline-strong: is-amber ? #474037 : dark ? #3b4354 : #beb9ae;
+    out property <color> modal-backdrop: dark ? #00000094 : #181c2454;
+    out property <color> modal-border: is-amber ? #474037 : dark ? #3b4354 : #c7c2b8;
+    out property <color> popup-border: is-amber ? #474037 : dark ? #3b4354 : #c7c2b8;
     out property <color> control-knob-bg: #ffffff;
     out property <color> selection-fg: #ffffff;
-    out property <color> scrollbar-rail-border: dark ? #262a33 : #e0e4ec;
-    out property <color> scrollbar-rail-bg: dark ? #15181e : #eef1f5;
-    out property <color> scrollbar-thumb-hover: dark ? #9aa3b2 : #475569;
-    out property <color> scrollbar-thumb: dark ? #555e6e : #94a3b8;
+    out property <color> scrollbar-rail-border: is-amber ? #2c2822 : dark ? #262b36 : #dddad2;
+    out property <color> scrollbar-rail-bg: is-amber ? #161411 : dark ? #151820 : #efede8;
+    out property <color> scrollbar-thumb-hover: is-amber ? #aea79c : dark ? #9ea8ba : #4d5565;
+    out property <color> scrollbar-thumb: is-amber ? #5c5448 : dark ? #555e70 : #9c978d;
 
     // Action pill semantic tones
     out property <color> pill-danger-bot: #dc2626;
-    out property <color> pill-direct-bot: #15803d;
+    out property <color> pill-direct-bot: #047857;
 
     out property <string> mono-font: "monospace";
-    out property <color> row-bg: dark ? #191c22 : #ffffff;
-    out property <color> row-alt-bg: dark ? #1d2027 : #f8f9fb;
-    out property <color> row-hover-bg: dark ? #252a34 : #eceff3;
+    out property <color> row-bg: card-bg;
+    out property <color> row-alt-bg: is-amber ? #201d19 : dark ? #1d222b : #faf9f6;
+    out property <color> row-hover-bg: is-amber ? #2b2722 : dark ? #252a35 : #e6e3db;
 
-    // Crisp WCAG AA typography & semantic statuses
-    out property <brush> text-primary: dark ? #eceff4 : #151820;
-    out property <brush> text-secondary: dark ? #9aa3b2 : #555e6e;
-    out property <brush> text-muted: dark ? #6e7787 : #646e80;
-    out property <brush> success-bg: dark ? #16a34a22 : #dcfce7;
-    out property <color> success-fg: dark ? #22c55e : #15803d;
-    out property <color> success-on-fill: dark ? #0b1220 : #ffffff;
-    out property <color> success-border: dark ? #22c55e48 : #15803d40;
+    // Calibrated WCAG 2.1 AA Typography & Semantic Statuses
+    out property <brush> text-primary: is-amber ? #f2efe9 : dark ? #eef1f6 : #181c24;
+    out property <brush> text-secondary: is-amber ? #aea79c : dark ? #9ea8ba : #4d5565;
+    out property <brush> text-muted: is-amber ? #928b7f : dark ? #838ea3 : #5e6575;
+    out property <brush> success-bg: live-emerald-soft;
+    out property <color> success-fg: live-emerald;
+    out property <color> success-on-fill: live-emerald-on-fill;
+    out property <color> success-border: live-emerald-border;
     out property <color> warn-bg: dark ? #f59e0b22 : #fef3c7;
     out property <color> warn-fg: dark ? #f59e0b : #b45309;
     out property <color> warn-border: dark ? #f59e0b48 : #b4530940;
-    out property <brush> error-bg: dark ? #ef444422 : #fee2e2;
-    out property <color> error-fg: dark ? #ef4444 : #dc2626;
-    out property <color> error-border: dark ? #ef44444c : #dc262640;
-    out property <color> offline-fg: dark ? #7c8596 : #646e80;
+    out property <brush> error-bg: dark ? #f8717122 : #fee2e2;
+    out property <color> error-fg: dark ? #f87171 : #b91c1c;
+    out property <color> error-border: dark ? #f8717150 : #b91c1c40;
+    out property <color> offline-fg: is-amber ? #8f887d : dark ? #838ea3 : #5e6575;
 
     // Semantic Latency Helpers
     public pure function latency-fg(ms: int, state: string) -> color {
@@ -154,7 +174,7 @@ export global Theme {
     public pure function latency-bg(ms: int, state: string) -> color {
         if (ms <= 0) {
             return (state == "timeout" || state == "unreachable" || state == "error" || state == "failed")
-                ? (dark ? #ef444422 : #fee2e2) : inset-bg;
+                ? (dark ? #f8717122 : #fee2e2) : inset-bg;
         }
         if (ms < 80) { return lat-fast-bg; }
         if (ms < 180) { return lat-good-bg; }

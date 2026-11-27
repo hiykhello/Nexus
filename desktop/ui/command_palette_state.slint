@@ -1,0 +1,95 @@
+export struct PaletteItem {
+    id: string,
+    kind: string,       // "action" | "node" | "nav" | "theme"
+    group: string,      // policy group tag or category label
+    title: string,
+    subtitle: string,
+    badge: string,      // e.g. "34 ms", "Rule", "Ctrl+K"
+    badge-tone: string, // "fast" | "good" | "mid" | "slow" | "error" | "accent" | "emerald" | "muted"
+    active: bool,
+}
+
+export struct GroupSpectrumStats {
+    fast-ratio: float,
+    good-ratio: float,
+    mid-ratio: float,
+    slow-ratio: float,
+    timeout-ratio: float,
+    p50-ms: int,
+    max-ms: int,
+    has-data: bool,
+}
+
+export global TelemetryWaveState {
+    in-out property <string> rx-area: "";
+    in-out property <string> rx-line: "";
+    in-out property <string> tx-dashed-line: "";
+    in-out property <string> scale-peak-text: "8.0 KB/s";
+    in-out property <bool> has-onset: false;
+    in-out property <float> onset-ratio: -1.0;
+    in-out property <string> onset-label: "";
+
+    in-out property <GroupSpectrumStats> spectrum: {
+        fast-ratio: 0.0,
+        good-ratio: 0.0,
+        mid-ratio: 0.0,
+        slow-ratio: 0.0,
+        timeout-ratio: 0.0,
+        p50-ms: -1,
+        max-ms: 0,
+        has-data: false,
+    };
+}
+
+export global CommandPaletteState {
+    in-out property <bool> open: false;
+    in-out property <string> query: "";
+    in-out property <int> selected-index: 0;
+    in-out property <[PaletteItem]> items: [];
+
+    // Inline live route + DNS diagnostic readout
+    in-out property <bool> diag-active: false;
+    in-out property <bool> diag-busy: false;
+    in-out property <string> diag-domain: "";
+    in-out property <string> diag-rule: "";
+    in-out property <string> diag-outbound: "";
+    in-out property <string> diag-dns-ip: "";
+    in-out property <string> diag-dns-rcode: "";
+    in-out property <bool> diag-dns-fakeip: false;
+    in-out property <int> diag-latency-ms: -1;
+    in-out property <string> diag-note: "";
+    in-out property <string> diag-error: "";
+
+    callback opened();
+    callback query-changed(string);
+    callback execute-item(string, string);
+    callback run-domain-diag(string);
+    callback create-rule-for-domain(string);
+    callback flush-fakeip-requested();
+
+    public function toggle-palette() {
+        if (open) {
+            open = false;
+        } else {
+            query = "";
+            selected-index = 0;
+            open = true;
+            opened();
+        }
+    }
+
+    public function open-with-query(initial: string) {
+        query = initial;
+        selected-index = 0;
+        open = true;
+        opened();
+        if (initial != "") {
+            query-changed(initial);
+            run-domain-diag(initial);
+        }
+    }
+
+    public function close-palette() {
+        open = false;
+    }
+}

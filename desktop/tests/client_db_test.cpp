@@ -199,8 +199,8 @@ namespace {
 
         auto prefs_out = desktop::load_ui_prefs_from_db(*db);
         expect(prefs_out.has_value() && prefs_out->sidebar_collapsed && !prefs_out->dash_show_connectivity &&
-               prefs_out->theme_preference == "dark",
-            "ui_prefs and sidebar_collapsed round-trip through SQLite host_kv");
+               prefs_out->theme_preference == "obsidian",
+            "ui_prefs and sidebar_collapsed round-trip through SQLite host_kv (legacy dark migrates to obsidian)");
         auto sc_kv = db->get_host_kv("sidebar_collapsed");
         expect(sc_kv.has_value() && sc_kv->has_value() && **sc_kv == "true", "sidebar_collapsed persisted directly in host_kv");
 

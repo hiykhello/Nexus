@@ -5,6 +5,151 @@ import { SlidingSegmentBar } from "glass_primitives.slint";
 import { NexusButton } from "nexus_buttons.slint";
 import { NexusSwitch } from "nexus_controls.slint";
 
+// Pure-Slint miniature chassis window swatch (0ms instant theme switching, zero bitmaps/gradients)
+component ThemeSwatchCard inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    in property <bool> split-system: false;
+    in property <color> rail-bg;
+    in property <color> canvas-bg;
+    in property <color> mini-card-bg;
+    in property <color> mini-border;
+    in property <color> swatch-accent;
+    in property <color> swatch-emerald;
+    callback chosen();
+
+    forward-focus: fs;
+    horizontal-stretch: 1;
+    preferred-width: 0px;
+    min-width: 112px;
+    height: 70px;
+    border-radius: Theme.radius-md;
+    border-width: fs.has-focus || root.selected ? 2px : 1px;
+    border-color:
+        fs.has-focus ? Theme.accent
+        : root.selected ? Theme.accent
+        : ta.has-hover ? Theme.hairline-strong
+        : Theme.well-border;
+    background: root.selected ? Theme.selected-bg : ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+    clip: true;
+
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.chosen(); }
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") { root.chosen(); return accept; }
+            reject
+        }
+    }
+
+    ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.chosen(); }
+    }
+
+    VerticalLayout {
+        padding: 6px;
+        spacing: 5px;
+
+        // Miniature window chassis preview
+        Rectangle {
+            vertical-stretch: 1;
+            border-radius: Theme.radius-xs;
+            border-width: 1px;
+            border-color: root.mini-border;
+            background: root.canvas-bg;
+            clip: true;
+
+            if !root.split-system : HorizontalLayout {
+                // Mini sidebar rail
+                Rectangle {
+                    width: 14px;
+                    background: root.rail-bg;
+                    Rectangle { x: 4px; y: 6px; width: 6px; height: 4px; border-radius: 2px; background: root.swatch-accent; }
+                    Rectangle { x: 4px; y: 13px; width: 6px; height: 3px; border-radius: 1.5px; background: root.mini-border; }
+                    Rectangle { x: 4px; y: 19px; width: 6px; height: 3px; border-radius: 1.5px; background: root.mini-border; }
+                    Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: 100%; background: root.mini-border; }
+                }
+                // Mini canvas + 2 matte cards + dual interactive/emerald dots
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    padding: 4px;
+                    spacing: 3px;
+                    Rectangle {
+                        height: 11px;
+                        border-radius: 2px;
+                        border-width: 1px;
+                        border-color: root.mini-border;
+                        background: root.mini-card-bg;
+                        Rectangle { x: 4px; y: 3px; width: 4px; height: 4px; border-radius: 2px; background: root.swatch-emerald; }
+                        Rectangle { x: 11px; y: 4px; width: 22px; height: 2.5px; border-radius: 1px; background: root.mini-border; }
+                        Rectangle { x: parent.width - 10px; y: 3px; width: 6px; height: 4px; border-radius: 2px; background: root.swatch-accent; }
+                    }
+                    HorizontalLayout {
+                        vertical-stretch: 1;
+                        spacing: 3px;
+                        Rectangle {
+                            horizontal-stretch: 1; border-radius: 2px; border-width: 1px;
+                            border-color: root.mini-border; background: root.mini-card-bg;
+                        }
+                        Rectangle {
+                            horizontal-stretch: 1; border-radius: 2px; border-width: 1px;
+                            border-color: root.mini-border; background: root.mini-card-bg;
+                        }
+                    }
+                }
+            }
+
+            // System Auto split preview: left Obsidian dark / right Paper daylight
+            if root.split-system : HorizontalLayout {
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: #12151b;
+                    Rectangle { x: 0px; y: 0px; width: 10px; height: 100%; background: #0d0f13; }
+                    Rectangle { x: 14px; y: 5px; width: max(12px, parent.width - 18px); height: 11px; border-radius: 2px; background: #191d25; border-width: 1px; border-color: #262b36; }
+                    Rectangle { x: 18px; y: 8px; width: 4px; height: 4px; border-radius: 2px; background: #10b981; }
+                    Rectangle { x: 14px; y: 19px; width: max(12px, parent.width - 18px); height: max(6px, parent.height - 24px); border-radius: 2px; background: #191d25; border-width: 1px; border-color: #262b36; }
+                }
+                Rectangle { width: 1px; background: Theme.hairline-strong; }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    background: #f6f5f2;
+                    Rectangle { x: 0px; y: 0px; width: 10px; height: 100%; background: #eceae4; }
+                    Rectangle { x: 14px; y: 5px; width: max(12px, parent.width - 18px); height: 11px; border-radius: 2px; background: #ffffff; border-width: 1px; border-color: #dddad2; }
+                    Rectangle { x: 18px; y: 8px; width: 4px; height: 4px; border-radius: 2px; background: #3355e6; }
+                    Rectangle { x: 14px; y: 19px; width: max(12px, parent.width - 18px); height: max(6px, parent.height - 24px); border-radius: 2px; background: #ffffff; border-width: 1px; border-color: #dddad2; }
+                }
+            }
+        }
+
+        // Swatch label + dual accent/emerald micro-dots
+        HorizontalLayout {
+            vertical-stretch: 0;
+            spacing: 4px;
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: root.label;
+                font-size: 11px;
+                font-weight: root.selected ? 700 : 600;
+                color: root.selected ? Theme.nav-active-fg : Theme.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Rectangle {
+                width: 6px; height: 6px; y: (parent.height - self.height) / 2;
+                border-radius: 3px; background: root.swatch-accent;
+            }
+            Rectangle {
+                width: 6px; height: 6px; y: (parent.height - self.height) / 2;
+                border-radius: 3px; background: root.swatch-emerald;
+            }
+        }
+    }
+}
+
 component AccentChip inherits Rectangle {
     in property <string> label;
     in property <color> swatch-color;
@@ -83,7 +228,7 @@ export component ThemeStudioCard inherits Rectangle {
             Text {
                 horizontal-stretch: 1;
                 min-width: 0px;
-                text: I18n.t("外观与语言", "Appearance & Language");
+                text: I18n.t("外观与仪表主题", "Appearance & Instrument Theme");
                 font-size: 14px;
                 font-weight: 700;
                 color: Theme.text-primary;
@@ -104,22 +249,43 @@ export component ThemeStudioCard inherits Rectangle {
             }
         }
 
-        HorizontalLayout {
+        // 4 Live Instrument Swatch Cards (0ms instant apply)
+        VerticalLayout {
             vertical-stretch: 0;
-            spacing: Theme.space-md;
-            Text { width: 72px; text: I18n.t("主题模式", "Theme"); font-size: 13px; font-weight: 500; color: Theme.text-secondary; vertical-alignment: center; }
-            SlidingSegmentBar {
-                horizontal-stretch: 1;
-                max-width: 360px;
-                bar-height: 32px;
-                options: [I18n.t("跟随系统", "System"), I18n.t("浅色", "Light"), I18n.t("深色", "Dark")];
-                current-index: Theme.preference == ThemePreference.light ? 1 : Theme.preference == ThemePreference.dark ? 2 : 0;
-                selected(idx) => {
-                    Theme.apply-preference(idx == 1 ? ThemePreference.light : idx == 2 ? ThemePreference.dark : ThemePreference.system);
-                    root.prefs-changed();
+            spacing: Theme.space-sm;
+            Text { text: I18n.t("主题预设", "Theme Preset"); font-size: 12px; font-weight: 600; color: Theme.text-secondary; }
+            HorizontalLayout {
+                spacing: Theme.space-sm;
+                ThemeSwatchCard {
+                    label: I18n.t("跟随系统", "System");
+                    split-system: true;
+                    rail-bg: #0d0f13; canvas-bg: #12151b; mini-card-bg: #191d25; mini-border: #3b4354;
+                    swatch-accent: #4f6ef7; swatch-emerald: #10b981;
+                    selected: Theme.preference == ThemePreference.system;
+                    chosen => { Theme.apply-preference(ThemePreference.system); root.prefs-changed(); }
+                }
+                ThemeSwatchCard {
+                    label: I18n.t("曜石仪表", "Obsidian");
+                    rail-bg: #0d0f13; canvas-bg: #12151b; mini-card-bg: #191d25; mini-border: #2e3543;
+                    swatch-accent: #4f6ef7; swatch-emerald: #10b981;
+                    selected: Theme.preference == ThemePreference.obsidian;
+                    chosen => { Theme.apply-preference(ThemePreference.obsidian); root.prefs-changed(); }
+                }
+                ThemeSwatchCard {
+                    label: I18n.t("暖纸日光", "Paper");
+                    rail-bg: #eceae4; canvas-bg: #f6f5f2; mini-card-bg: #ffffff; mini-border: #d4d0c7;
+                    swatch-accent: #3355e6; swatch-emerald: #047857;
+                    selected: Theme.preference == ThemePreference.paper;
+                    chosen => { Theme.apply-preference(ThemePreference.paper); root.prefs-changed(); }
+                }
+                ThemeSwatchCard {
+                    label: I18n.t("精密琥珀", "Amber");
+                    rail-bg: #0e0d0c; canvas-bg: #141311; mini-card-bg: #1c1a17; mini-border: #36312a;
+                    swatch-accent: #e59a2e; swatch-emerald: #10b981;
+                    selected: Theme.preference == ThemePreference.amber;
+                    chosen => { Theme.apply-preference(ThemePreference.amber); root.prefs-changed(); }
                 }
             }
-            Rectangle { horizontal-stretch: 1; }
         }
 
         HorizontalLayout {
@@ -148,11 +314,11 @@ export component ThemeStudioCard inherits Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 0;
                 spacing: 6px;
-                AccentChip { label: I18n.t("蔚蓝", "Ocean"); swatch-color: Theme.dark ? #3b82f6 : #1d4ed8; selected: Theme.accent-preset == AccentPreset.ocean; chosen => { Theme.accent-preset = AccentPreset.ocean; root.prefs-changed(); } }
-                AccentChip { label: I18n.t("翡翠", "Emerald"); swatch-color: Theme.dark ? #22c55e : #15803d; selected: Theme.accent-preset == AccentPreset.emerald; chosen => { Theme.accent-preset = AccentPreset.emerald; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("默认", "Default"); swatch-color: Theme.is-amber ? #e59a2e : (Theme.dark ? #4f6ef7 : #3355e6); selected: Theme.accent-preset == AccentPreset.ocean; chosen => { Theme.accent-preset = AccentPreset.ocean; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("翡翠", "Emerald"); swatch-color: Theme.dark ? #10b981 : #047857; selected: Theme.accent-preset == AccentPreset.emerald; chosen => { Theme.accent-preset = AccentPreset.emerald; root.prefs-changed(); } }
                 AccentChip { label: I18n.t("极光紫", "Violet"); swatch-color: Theme.dark ? #a78bfa : #6d28d9; selected: Theme.accent-preset == AccentPreset.violet; chosen => { Theme.accent-preset = AccentPreset.violet; root.prefs-changed(); } }
-                AccentChip { label: I18n.t("琥珀", "Amber"); swatch-color: Theme.dark ? #f59e0b : #b45309; selected: Theme.accent-preset == AccentPreset.amber; chosen => { Theme.accent-preset = AccentPreset.amber; root.prefs-changed(); } }
-                AccentChip { label: I18n.t("绯红", "Rose"); swatch-color: Theme.dark ? #fb7185 : #dc2626; selected: Theme.accent-preset == AccentPreset.rose; chosen => { Theme.accent-preset = AccentPreset.rose; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("琥珀", "Amber"); swatch-color: Theme.dark ? #e59a2e : #b45309; selected: Theme.accent-preset == AccentPreset.amber; chosen => { Theme.accent-preset = AccentPreset.amber; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("绯红", "Rose"); swatch-color: Theme.dark ? #f87171 : #dc2626; selected: Theme.accent-preset == AccentPreset.rose; chosen => { Theme.accent-preset = AccentPreset.rose; root.prefs-changed(); } }
             }
         }
 

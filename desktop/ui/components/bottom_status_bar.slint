@@ -1,5 +1,7 @@
+import { CommandPaletteState } from "../command_palette_state.slint";
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
+import { Shortcuts } from "../shortcuts.slint";
 import { Theme } from "../theme.slint";
 
 component FooterActionButton inherits Rectangle {
@@ -105,7 +107,7 @@ export component BottomStatusBar inherits Rectangle {
             background:
                 !root.diagnostic-ok && root.diagnostic-message != "" ? Theme.error-fg
                 : root.core-toggling ? Theme.warn-fg
-                : root.core-running ? Theme.success-fg
+                : root.core-running ? Theme.live-emerald
                 : Theme.offline-fg;
         }
 
@@ -122,6 +124,49 @@ export component BottomStatusBar inherits Rectangle {
             color: !root.diagnostic-ok && root.diagnostic-message != "" ? Theme.error-fg : Theme.text-secondary;
             vertical-alignment: center;
             overflow: elide;
+        }
+
+        VerticalLayout {
+            alignment: center;
+            Rectangle {
+                forward-focus: pal-fs;
+                horizontal-stretch: 0;
+                height: 22px;
+                border-radius: Theme.radius-xs;
+                border-width: pal-fs.has-focus ? 2px : 1px;
+                border-color: pal-fs.has-focus ? Theme.accent : (pal-ta.has-hover ? Theme.hairline-strong : Theme.well-border);
+                background: pal-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+
+                accessible-role: button;
+                accessible-label: I18n.t("命令面板", "Command Palette");
+                accessible-action-default => { CommandPaletteState.toggle-palette(); }
+
+                pal-fs := FocusScope {
+                    key-pressed(ev) => {
+                        if (ev.text == Key.Return || ev.text == " ") { CommandPaletteState.toggle-palette(); return accept; }
+                        reject
+                    }
+                }
+                pal-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { CommandPaletteState.toggle-palette(); }
+                }
+                HorizontalLayout {
+                    padding-left: 7px;
+                    padding-right: 7px;
+                    spacing: 5px;
+                    Image {
+                        width: 11px; height: 11px; y: (parent.height - self.height) / 2;
+                        source: @image-url("../icons/search.svg");
+                        colorize: Theme.text-secondary;
+                    }
+                    Text {
+                        text: Shortcuts.format-full(Shortcuts.command-palette);
+                        font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
+                        color: Theme.text-secondary; vertical-alignment: center;
+                    }
+                }
+            }
         }
 
         VerticalLayout {

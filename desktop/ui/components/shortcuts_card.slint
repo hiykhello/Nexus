@@ -110,6 +110,7 @@ component ShortcutRow inherits VerticalLayout {
 }
 
 component ShortcutsGroupA inherits VerticalLayout {
+    ShortcutRow { label: I18n.t("命令面板", "Command Palette"); action-id: "command-palette"; binding: Shortcuts.command-palette; }
     ShortcutRow { label: I18n.t("侧边栏", "Sidebar"); action-id: "toggle-sidebar"; binding: Shortcuts.toggle-sidebar; }
     ShortcutRow { label: I18n.t("热重载", "Reload"); action-id: "reload-config"; binding: Shortcuts.reload-config; }
     ShortcutRow { label: I18n.t("路由与 DNS", "Routing & DNS"); action-id: "open-rules"; binding: Shortcuts.open-rules; }

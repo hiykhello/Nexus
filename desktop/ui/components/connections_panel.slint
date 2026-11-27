@@ -1,4 +1,5 @@
 import { ListView } from "std-widgets.slint";
+import { CommandPaletteState } from "../command_palette_state.slint";
 import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
 import { Motion } from "../motion.slint";
@@ -263,6 +264,10 @@ export component ConnectionsPanel inherits VerticalLayout {
                                         activated => { root.select-connection-row(conn, proto-label, display-host); }
                                     }
                                     MenuItem {
+                                        title: I18n.t("在命令面板诊断此域名", "Diagnose Domain in Palette");
+                                        activated => { CommandPaletteState.open-with-query(conn.target != "" ? conn.target : display-host); }
+                                    }
+                                    MenuItem {
                                         title: I18n.t("为此目标创建代理规则", "Create Rule (Proxy)");
                                         activated => { root.create-rule-from-connection(display-host, conn.destination-port, proto-label, root.default-proxy-outbound, "route"); }
                                     }
@@ -350,20 +355,47 @@ export component ConnectionsPanel inherits VerticalLayout {
                                         }
                                     }
 
-                                    // Col 4: Outbound node
-                                    Text {
+                                    // Col 4: Semantic Outbound pill
+                                    Rectangle {
+                                        property <bool> is-reject: conn.outbound == "reject" || conn.outbound == "block";
+                                        property <string> ob-text: conn.outbound != "" ? conn.outbound : conn.path;
                                         width: 84px;
-                                        text: conn.outbound != "" ? conn.outbound : conn.path;
-                                        font-size: 11px; font-weight: 600; font-family: Theme.mono-font;
-                                        color: is-direct ? Theme.proto-direct-fg : Theme.text-secondary;
-                                        vertical-alignment: center; overflow: elide;
+                                        Rectangle {
+                                            x: 0px; y: (parent.height - self.height) / 2;
+                                            width: min(parent.width, ob-lbl.preferred-width + 12px);
+                                            height: 21px; border-radius: Theme.radius-xs;
+                                            background: is-direct ? Theme.live-emerald-soft : is-reject ? Theme.error-bg : Theme.well-bg;
+                                            ob-lbl := Text {
+                                                x: 6px; width: max(0px, parent.width - 12px); height: 100%;
+                                                text: ob-text;
+                                                font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
+                                                color: is-direct ? Theme.live-emerald : is-reject ? Theme.error-fg : Theme.text-secondary;
+                                                vertical-alignment: center; overflow: elide;
+                                            }
+                                        }
                                     }
 
-                                    // Col 5: Right-aligned DL / UL traffic
+                                    // Col 5: Right-aligned DL / UL traffic + 2px RX/TX proportion micro-bar
                                     VerticalLayout {
-                                        width: 82px; alignment: center; spacing: 1px;
+                                        width: 82px; alignment: center; spacing: 2px;
                                         Text { text: "↓ " + conn.download-text; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-down; horizontal-alignment: right; overflow: elide; }
                                         Text { text: "↑ " + conn.upload-text; font-size: 10px; font-weight: 600; font-family: Theme.mono-font; color: Theme.telemetry-up; horizontal-alignment: right; overflow: elide; }
+                                        if conn.has-traffic : Rectangle {
+                                            height: 2px;
+                                            border-radius: 1px;
+                                            background: Theme.inset-bg;
+                                            clip: true;
+                                            Rectangle {
+                                                x: 0px; y: 0px; height: 2px;
+                                                width: parent.width * (1.0 - clamp(conn.up-ratio, 0.0, 1.0));
+                                                background: Theme.telemetry-down;
+                                            }
+                                            Rectangle {
+                                                x: parent.width * (1.0 - clamp(conn.up-ratio, 0.0, 1.0)); y: 0px; height: 2px;
+                                                width: parent.width * clamp(conn.up-ratio, 0.0, 1.0);
+                                                background: Theme.telemetry-up;
+                                            }
+                                        }
                                     }
 
                                     // Col 6: Close action

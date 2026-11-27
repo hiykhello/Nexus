@@ -39,6 +39,13 @@ namespace desktop {
             return "en-US";
         }
 
+        auto normalize_theme_pref(std::string_view raw) -> std::string {
+            if (raw == "obsidian" || raw == "dark") return "obsidian";
+            if (raw == "paper" || raw == "daylight" || raw == "light") return "paper";
+            if (raw == "amber" || raw == "studio_amber") return "amber";
+            return "system";
+        }
+
         auto parse_dash_order(std::string_view sv) -> std::array<int, 4> {
             std::array<int, 4> out{0, 1, 2, 3};
             std::size_t idx = 0;
@@ -115,7 +122,7 @@ namespace desktop {
             if (eq == std::string_view::npos) continue;
             auto key = trim_str(sv.substr(0, eq));
             auto val = trim_str(sv.substr(eq + 1));
-            if (key == "theme" && (val == "system" || val == "light" || val == "dark")) prefs.theme_preference = val;
+            if (key == "theme") prefs.theme_preference = normalize_theme_pref(val);
             else if (key == "accent" && (val == "ocean" || val == "emerald" || val == "violet" || val == "amber" || val == "rose")) prefs.accent_preset = val;
             else if (key == "material" && (val == "solid" || val == "frosted" || val == "crystal")) prefs.material_preset = val;
             else if (key == "window_opacity") prefs.window_opacity = parse_float_val(val, prefs.window_opacity, 0.15f, 1.0f);
@@ -189,7 +196,7 @@ namespace desktop {
             "dash_info_order={},{},{},{}\n"
             "dash_deck_swapped={}\n"
             "tun_elevate_persistent={}\n",
-            prefs.theme_preference, prefs.accent_preset, prefs.material_preset,
+            normalize_theme_pref(prefs.theme_preference), prefs.accent_preset, prefs.material_preset,
             std::clamp(prefs.window_opacity, 0.15f, 1.0f),
             std::clamp(prefs.surface_opacity, 0.15f, 1.0f),
             prefs.blur_enabled ? "true" : "false",
@@ -238,7 +245,7 @@ namespace desktop {
         for (int v : sec) sec_arr.emplace_back(static_cast<std::int64_t>(v));
         for (int v : info) info_arr.emplace_back(static_cast<std::int64_t>(v));
         JsonObject root{
-            {"theme", prefs.theme_preference},
+            {"theme", normalize_theme_pref(prefs.theme_preference)},
             {"accent", prefs.accent_preset},
             {"material", prefs.material_preset},
             {"window_opacity", static_cast<double>(std::clamp(prefs.window_opacity, 0.15f, 1.0f))},
@@ -301,7 +308,7 @@ namespace desktop {
         };
         UiPrefs p{};
         auto th = json_get_string(o, "theme", "system");
-        if (th == "system" || th == "light" || th == "dark") p.theme_preference = std::move(th);
+        p.theme_preference = normalize_theme_pref(th);
         auto ac = json_get_string(o, "accent", "ocean");
         if (ac == "ocean" || ac == "emerald" || ac == "violet" || ac == "amber" || ac == "rose") p.accent_preset = std::move(ac);
         auto mt = json_get_string(o, "material", "frosted");

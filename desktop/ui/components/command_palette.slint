@@ -1,0 +1,470 @@
+import { ScrollView } from "std-widgets.slint";
+import { CommandPaletteState, PaletteItem } from "../command_palette_state.slint";
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
+import { NexusVScrollBar } from "glass_primitives.slint";
+import { NexusButton } from "nexus_buttons.slint";
+
+// 0ms Instant Global Command & Inline Route/DNS Diagnostic Palette (Ctrl+K)
+export component CommandPaletteModal inherits Rectangle {
+    private property <bool> diag-armed: false;
+    private property <length> list-scroll-y: 0px;
+    private property <length> max-list-h: max(80px, min(312px, root.height - 96px - (CommandPaletteState.diag-active ? 188px : 84px)));
+
+    function ensure-selected-visible(idx: int) {
+        let count = CommandPaletteState.items.length;
+        if (count <= 0) {
+            root.list-scroll-y = 0px;
+            return;
+        }
+        let view-h = min(root.max-list-h, count * 40px + 12px);
+        let content-h = count * 40px + 12px;
+        let max-scroll = max(0px, content-h - view-h);
+        if (max-scroll <= 0px) {
+            root.list-scroll-y = 0px;
+            return;
+        }
+        let row-top = 6px + idx * 40px;
+        let row-bot = row-top + 40px;
+        let cur-top = -root.list-scroll-y;
+        let cur-bot = cur-top + view-h;
+        if (row-top < cur-top) {
+            root.list-scroll-y = -clamp(row-top - 6px, 0px, max-scroll);
+        } else if (row-bot > cur-bot) {
+            root.list-scroll-y = -clamp(row-bot + 6px - view-h, 0px, max-scroll);
+        }
+    }
+
+    background: Theme.modal-backdrop;
+
+    init => { search-input.focus(); }
+
+    TouchArea {
+        clicked => { CommandPaletteState.close-palette(); }
+    }
+
+    // 180ms cancelable debounce for inline domain route+DNS diagnostics
+    diag-timer := Timer {
+        interval: 180ms;
+        running: root.diag-armed;
+        triggered => {
+            root.diag-armed = false;
+            CommandPaletteState.run-domain-diag(CommandPaletteState.query);
+        }
+    }
+
+    sheet := Rectangle {
+        width: max(360px, min(parent.width - 56px, 640px));
+        height: min(max(240px, parent.height - 96px), sheet-body.preferred-height);
+        x: (parent.width - self.width) / 2;
+        y: max(40px, (parent.height - self.height) * 0.22);
+        border-radius: Theme.radius-card;
+        border-width: 1px;
+        border-color: Theme.modal-border;
+        background: Theme.overlay-bg;
+        clip: true;
+
+        TouchArea {}
+
+        FocusScope {
+            capture-key-pressed(ev) => {
+                if (ev.text == Key.Escape) {
+                    CommandPaletteState.close-palette();
+                    return accept;
+                }
+                if (ev.text == Key.DownArrow) {
+                    if (CommandPaletteState.items.length > 0) {
+                        CommandPaletteState.selected-index = Math.mod(CommandPaletteState.selected-index + 1, CommandPaletteState.items.length);
+                        root.ensure-selected-visible(CommandPaletteState.selected-index);
+                    }
+                    return accept;
+                }
+                if (ev.text == Key.UpArrow) {
+                    if (CommandPaletteState.items.length > 0) {
+                        CommandPaletteState.selected-index = Math.mod(CommandPaletteState.selected-index + CommandPaletteState.items.length - 1, CommandPaletteState.items.length);
+                        root.ensure-selected-visible(CommandPaletteState.selected-index);
+                    }
+                    return accept;
+                }
+                if (ev.text == Key.Return) {
+                    if (CommandPaletteState.items.length > 0 && CommandPaletteState.selected-index >= 0 && CommandPaletteState.selected-index < CommandPaletteState.items.length) {
+                        let sel = CommandPaletteState.items[CommandPaletteState.selected-index];
+                        CommandPaletteState.execute-item(sel.kind, sel.id);
+                    } else if (CommandPaletteState.query != "") {
+                        root.diag-armed = false;
+                        CommandPaletteState.run-domain-diag(CommandPaletteState.query);
+                    }
+                    return accept;
+                }
+                reject
+            }
+
+            sheet-body := VerticalLayout {
+                alignment: start;
+
+                // Top Single-Input Omnibar
+                HorizontalLayout {
+                    vertical-stretch: 0;
+                    height: 48px;
+                    padding-left: 14px;
+                    padding-right: 12px;
+                    spacing: 10px;
+
+                    Image {
+                        width: 16px;
+                        height: 16px;
+                        y: (parent.height - self.height) / 2;
+                        source: @image-url("../icons/search.svg");
+                        colorize: Theme.accent;
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        min-width: 0px;
+
+                        if CommandPaletteState.query == "" : Text {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: parent.height;
+                            text: I18n.t("搜索节点、输入 > 执行命令，或输入域名即时诊断...", "Search nodes, type > for commands, or enter a domain to diagnose...");
+                            font-size: 13px;
+                            color: Theme.text-muted;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+
+                        search-input := TextInput {
+                            x: 0px;
+                            y: 0px;
+                            width: parent.width;
+                            height: parent.height;
+                            text <=> CommandPaletteState.query;
+                            font-size: 14px;
+                            font-weight: 500;
+                            color: Theme.text-primary;
+                            selection-background-color: Theme.accent;
+                            selection-foreground-color: Theme.accent-fg;
+                            vertical-alignment: center;
+                            edited => {
+                                CommandPaletteState.selected-index = 0;
+                                root.list-scroll-y = 0px;
+                                CommandPaletteState.query-changed(self.text);
+                                root.diag-armed = true;
+                                diag-timer.restart();
+                            }
+                        }
+                    }
+
+                    if CommandPaletteState.query != "" : Rectangle {
+                        horizontal-stretch: 0;
+                        width: 24px;
+                        height: 24px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: Theme.radius-sm;
+                        background: clr-ta.has-hover ? Theme.row-hover-bg : transparent;
+                        clr-ta := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => {
+                                root.diag-armed = false;
+                                root.list-scroll-y = 0px;
+                                CommandPaletteState.query = "";
+                                CommandPaletteState.selected-index = 0;
+                                CommandPaletteState.diag-active = false;
+                                CommandPaletteState.query-changed("");
+                                search-input.focus();
+                            }
+                        }
+                        Image {
+                            x: 5px; y: 5px; width: 14px; height: 14px;
+                            source: @image-url("../icons/x.svg");
+                            colorize: Theme.text-secondary;
+                        }
+                    }
+
+                    Rectangle {
+                        horizontal-stretch: 0;
+                        height: 22px;
+                        y: (parent.height - self.height) / 2;
+                        border-radius: Theme.radius-xs;
+                        border-width: 1px;
+                        border-color: Theme.well-border;
+                        background: Theme.well-bg;
+                        HorizontalLayout {
+                            padding-left: 6px; padding-right: 6px;
+                            Text { text: "ESC"; font-size: 10px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-muted; vertical-alignment: center; }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+                // Inline Live Domain Route + DNS Diagnostic Strip
+                if CommandPaletteState.diag-active : VerticalLayout {
+                    vertical-stretch: 0;
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 10px;
+                    padding-bottom: 10px;
+
+                    Rectangle {
+                        border-radius: Theme.radius-md;
+                        border-width: 1px;
+                        border-color: CommandPaletteState.diag-error != "" ? Theme.error-border : Theme.selected-border;
+                        background: Theme.well-bg;
+
+                        VerticalLayout {
+                            padding: 10px;
+                            spacing: 8px;
+
+                            HorizontalLayout {
+                                spacing: 8px;
+
+                                Rectangle {
+                                    width: 6px; height: 6px; y: (parent.height - self.height) / 2;
+                                    border-radius: 3px;
+                                    background:
+                                        CommandPaletteState.diag-error != "" ? Theme.error-fg
+                                        : CommandPaletteState.diag-busy ? Theme.warn-fg
+                                        : Theme.live-emerald;
+                                }
+
+                                Text {
+                                    horizontal-stretch: 0;
+                                    text: CommandPaletteState.diag-domain;
+                                    font-size: 12px; font-weight: 700; font-family: Theme.mono-font;
+                                    color: Theme.text-primary; vertical-alignment: center;
+                                }
+
+                                if CommandPaletteState.diag-note != "" : Text {
+                                    horizontal-stretch: 1; min-width: 0px;
+                                    text: CommandPaletteState.diag-note;
+                                    font-size: 10px; font-weight: 600; color: Theme.warn-fg;
+                                    vertical-alignment: center; overflow: elide;
+                                }
+
+                                if CommandPaletteState.diag-note == "" : Rectangle { horizontal-stretch: 1; }
+
+                                if CommandPaletteState.diag-dns-fakeip : NexusButton {
+                                    btn-height: 24px;
+                                    label: I18n.t("刷新 FakeIP", "Flush FakeIP");
+                                    clicked => { CommandPaletteState.flush-fakeip-requested(); }
+                                }
+
+                                NexusButton {
+                                    btn-height: 24px;
+                                    primary: true;
+                                    label: I18n.t("创建规则", "Add Rule");
+                                    clicked => { CommandPaletteState.create-rule-for-domain(CommandPaletteState.diag-domain); }
+                                }
+                            }
+
+                            if CommandPaletteState.diag-error != "" : Text {
+                                text: CommandPaletteState.diag-error;
+                                font-size: 11px; font-weight: 600; color: Theme.error-fg; wrap: word-wrap;
+                            }
+
+                            if CommandPaletteState.diag-error == "" : HorizontalLayout {
+                                spacing: 6px;
+
+                                Rectangle {
+                                    horizontal-stretch: 0; height: 22px; border-radius: Theme.radius-xs;
+                                    background: Theme.card-bg; border-width: 1px; border-color: Theme.card-border;
+                                    HorizontalLayout {
+                                        padding-left: 7px; padding-right: 7px;
+                                        Text {
+                                            text: CommandPaletteState.diag-busy ? I18n.t("匹配中...", "Matching...") : (CommandPaletteState.diag-rule != "" ? CommandPaletteState.diag-rule : I18n.t("默认路由", "Default"));
+                                            font-size: 11px; font-weight: 600; font-family: Theme.mono-font;
+                                            color: Theme.text-secondary; vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                Image { width: 11px; height: 11px; y: (parent.height - self.height) / 2; source: @image-url("../icons/chevron-right.svg"); colorize: Theme.live-emerald; }
+
+                                Rectangle {
+                                    horizontal-stretch: 0; height: 22px; border-radius: Theme.radius-xs;
+                                    background: CommandPaletteState.diag-outbound == "direct" ? Theme.live-emerald-soft : CommandPaletteState.diag-outbound == "reject" || CommandPaletteState.diag-outbound == "block" ? Theme.error-bg : Theme.accent-soft;
+                                    HorizontalLayout {
+                                        padding-left: 7px; padding-right: 7px;
+                                        Text {
+                                            text: CommandPaletteState.diag-outbound != "" ? CommandPaletteState.diag-outbound : "--";
+                                            font-size: 11px; font-weight: 700; font-family: Theme.mono-font;
+                                            color: CommandPaletteState.diag-outbound == "direct" ? Theme.live-emerald : CommandPaletteState.diag-outbound == "reject" || CommandPaletteState.diag-outbound == "block" ? Theme.error-fg : Theme.nav-active-fg;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                Image { width: 11px; height: 11px; y: (parent.height - self.height) / 2; source: @image-url("../icons/chevron-right.svg"); colorize: Theme.text-muted; }
+
+                                Text {
+                                    horizontal-stretch: 1; min-width: 0px;
+                                    text: CommandPaletteState.diag-dns-ip != ""
+                                        ? (CommandPaletteState.diag-dns-ip + (CommandPaletteState.diag-latency-ms >= 0 ? " · \{CommandPaletteState.diag-latency-ms} ms" : ""))
+                                        : (CommandPaletteState.diag-busy ? "DNS..." : (CommandPaletteState.diag-dns-rcode != "" ? CommandPaletteState.diag-dns-rcode : "--"));
+                                    font-size: 11px; font-weight: 600; font-family: Theme.mono-font;
+                                    color: Theme.text-primary; vertical-alignment: center; overflow: elide;
+                                }
+
+                                if CommandPaletteState.diag-dns-fakeip : Rectangle {
+                                    horizontal-stretch: 0; height: 18px; y: (parent.height - self.height) / 2;
+                                    border-radius: Theme.radius-xs; background: Theme.warn-bg;
+                                    HorizontalLayout {
+                                        padding-left: 5px; padding-right: 5px;
+                                        Text { text: "FakeIP"; font-size: 9px; font-weight: 700; font-family: Theme.mono-font; color: Theme.warn-fg; vertical-alignment: center; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Results List (0ms selection & scroll)
+                Rectangle {
+                    vertical-stretch: 0;
+                    height: CommandPaletteState.items.length == 0 ? 72px : min(root.max-list-h, CommandPaletteState.items.length * 40px + 12px);
+                    clip: true;
+
+                    if CommandPaletteState.items.length == 0 : VerticalLayout {
+                        alignment: center;
+                        padding: 16px;
+                        Text {
+                            text: I18n.t("无匹配项 — 按 Enter 诊断域名，或输入 > 查看快捷命令", "No matches — press Enter to diagnose domain, or type > for commands");
+                            font-size: 12px; color: Theme.text-muted; horizontal-alignment: center;
+                        }
+                    }
+
+                    if CommandPaletteState.items.length > 0 : Rectangle {
+                        pal-sv := ScrollView {
+                            width: 100%; height: 100%;
+                            vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                            content-width: self.visible-width;
+                            content-height: max(self.visible-height, pal-col.preferred-height);
+                            content-y <=> root.list-scroll-y;
+
+                            pal-col := VerticalLayout {
+                                x: 0px; y: 0px;
+                                width: pal-sv.visible-width;
+                                padding-left: 8px; padding-right: 12px; padding-top: 6px; padding-bottom: 6px;
+
+                                for item[idx] in CommandPaletteState.items : Rectangle {
+                                    property <bool> is-sel: idx == CommandPaletteState.selected-index;
+                                    height: 40px;
+                                    border-radius: Theme.radius-sm;
+                                    background: is-sel ? Theme.selected-bg : row-ta.has-hover ? Theme.row-hover-bg : transparent;
+
+                                    if is-sel : Rectangle {
+                                        x: 0px; y: 8px; width: 2.5px; height: 24px;
+                                        border-radius: 1.25px; background: Theme.accent;
+                                    }
+
+                                    row-ta := TouchArea {
+                                        mouse-cursor: pointer;
+                                        moved => { CommandPaletteState.selected-index = idx; }
+                                        clicked => { CommandPaletteState.execute-item(item.kind, item.id); }
+                                    }
+
+                                    HorizontalLayout {
+                                        padding-left: 10px; padding-right: 10px; spacing: 8px;
+
+                                        Rectangle {
+                                            horizontal-stretch: 0; height: 18px; y: (parent.height - self.height) / 2;
+                                            border-radius: Theme.radius-xs;
+                                            background: item.kind == "node" ? Theme.well-bg : item.kind == "theme" ? Theme.warn-bg : Theme.accent-soft;
+                                            HorizontalLayout {
+                                                padding-left: 6px; padding-right: 6px;
+                                                Text {
+                                                    text: item.group;
+                                                    font-size: 9px; font-weight: 700; font-family: Theme.mono-font;
+                                                    color: item.kind == "node" ? Theme.text-secondary : item.kind == "theme" ? Theme.warn-fg : Theme.nav-active-fg;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                        }
+
+                                        Text {
+                                            horizontal-stretch: 1; min-width: 0px;
+                                            text: item.title;
+                                            font-size: 13px; font-weight: is-sel || item.active ? 700 : 500;
+                                            color: Theme.text-primary; vertical-alignment: center; overflow: elide;
+                                        }
+
+                                        if item.subtitle != "" : Text {
+                                            horizontal-stretch: 0;
+                                            text: item.subtitle;
+                                            font-size: 11px; color: Theme.text-muted; vertical-alignment: center;
+                                        }
+
+                                        if item.active : Image {
+                                            width: 13px; height: 13px; y: (parent.height - self.height) / 2;
+                                            source: @image-url("../icons/check.svg");
+                                            colorize: Theme.live-emerald;
+                                        }
+
+                                        if item.badge != "" : Rectangle {
+                                            horizontal-stretch: 0; height: 20px; y: (parent.height - self.height) / 2;
+                                            border-radius: Theme.radius-xs;
+                                            background:
+                                                item.badge-tone == "fast" ? Theme.lat-fast-bg
+                                                : item.badge-tone == "good" ? Theme.lat-good-bg
+                                                : item.badge-tone == "mid" ? Theme.lat-mid-bg
+                                                : item.badge-tone == "slow" ? Theme.lat-slow-bg
+                                                : item.badge-tone == "error" ? Theme.error-bg
+                                                : item.badge-tone == "emerald" ? Theme.live-emerald-soft
+                                                : Theme.well-bg;
+                                            HorizontalLayout {
+                                                padding-left: 6px; padding-right: 6px;
+                                                Text {
+                                                    text: item.badge;
+                                                    font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
+                                                    color:
+                                                        item.badge-tone == "fast" ? Theme.lat-fast-fg
+                                                        : item.badge-tone == "good" ? Theme.lat-good-fg
+                                                        : item.badge-tone == "mid" ? Theme.lat-mid-fg
+                                                        : item.badge-tone == "slow" ? Theme.lat-slow-fg
+                                                        : item.badge-tone == "error" ? Theme.error-fg
+                                                        : item.badge-tone == "emerald" ? Theme.live-emerald
+                                                        : Theme.text-secondary;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        NexusVScrollBar {
+                            x: parent.width - self.width - 2px;
+                            y: 6px;
+                            height: max(0px, parent.height - 12px);
+                            viewport-size: pal-sv.visible-height;
+                            content-size: pal-sv.content-height;
+                            scroll-pos <=> pal-sv.content-y;
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+                // Compact Keyboard Protocol Footer
+                HorizontalLayout {
+                    vertical-stretch: 0;
+                    height: 30px;
+                    padding-left: 14px;
+                    padding-right: 14px;
+                    spacing: 12px;
+                    Text {
+                        text: I18n.t("↑↓ 选择 · ↵ 执行 · > 快捷命令 · 输入域名即时诊断 · Esc 关闭", "↑↓ Navigate · ↵ Run · > Commands · Type domain to diagnose · Esc Close");
+                        font-size: 10px;
+                        color: Theme.text-muted;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+    }
+}

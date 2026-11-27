@@ -61,6 +61,8 @@ namespace desktop_ui_helpers {
             std::string m(mode);
             if (m != "rule" && m != "global" && m != "direct") return;
             ws_ctx.ui.set_outbound_mode(mode);
+            ws_ctx.rate_tracker.mark_onset(
+                m == "global" ? tr(en, "全局", "Global") : m == "direct" ? tr(en, "直连", "Direct") : tr(en, "规则", "Rule"));
             if (persist_prefs) persist_prefs();
             if (ws_ctx.supervisor.running()) {
                 bool posted = ws_ctx.worker.post([&ws_ctx, persist_prefs, en, m, grp, prev_mode] {

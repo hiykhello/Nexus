@@ -8,6 +8,7 @@ import { OutboundMemberItem } from "../types.slint";
 export component GroupMemberCard inherits Rectangle {
     in property <OutboundMemberItem> member;
     in property <string> group-name: "";
+    in property <int> group-max-latency-ms: 0;
     callback select-clicked();
     callback toggle-pin-clicked();
     callback probe-clicked();
@@ -17,6 +18,8 @@ export component GroupMemberCard inherits Rectangle {
     property <bool> is-timeout: root.member.latency-ms <= 0 && (root.member.state == "timeout" || root.member.state == "unreachable" || root.member.state == "error" || root.member.state == "failed");
     property <color> lat-color: Theme.latency-fg(root.member.latency-ms, root.member.state);
     property <int> bars: Theme.latency-bars(root.member.latency-ms);
+    property <float> rel-lat-ratio: (root.member.latency-ms > 0 && root.group-max-latency-ms > 0)
+        ? clamp(root.member.latency-ms / root.group-max-latency-ms, 0.08, 1.0) : 0.0;
 
     changed is-selected => {
         if (self.is-selected) {
@@ -37,8 +40,26 @@ export component GroupMemberCard inherits Rectangle {
         root.member.selected ? Theme.selected-bg
         : member-ta.has-hover ? Theme.row-hover-bg
         : Theme.card-surface;
+    clip: true;
     animate border-color { duration: Motion.fast; }
     animate background { duration: Motion.fast; }
+
+    // Subtle relative-latency background fill + 2px bottom indicator (healthy nodes only; preserves >12:1 text contrast)
+    if root.rel-lat-ratio > 0.0 : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width * root.rel-lat-ratio;
+        height: parent.height;
+        background: lat-color.with-alpha(Theme.dark ? 0.07 : 0.05);
+    }
+
+    if root.rel-lat-ratio > 0.0 : Rectangle {
+        x: 0px;
+        y: parent.height - 2px;
+        width: parent.width * root.rel-lat-ratio;
+        height: 2px;
+        background: lat-color.with-alpha(Theme.dark ? 0.55 : 0.45);
+    }
 
     ContextMenuArea {
         Menu {
@@ -94,7 +115,7 @@ export component GroupMemberCard inherits Rectangle {
                         height: 14px;
                         y: (parent.height - self.height) / 2;
                         source: @image-url("../icons/check.svg");
-                        colorize: Theme.accent;
+                        colorize: Theme.live-emerald;
                     }
 
                     if !root.member.selected : Rectangle {

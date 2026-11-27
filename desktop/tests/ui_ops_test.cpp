@@ -7,6 +7,7 @@ import desktop.ui_prefs;
 import desktop.window_blur;
 
 #include "../src/speed_wave.hpp"
+#include "../src/flagship_helpers.hpp"
 
 namespace {
     auto expect(bool cond, std::string_view msg) -> void {
@@ -73,14 +74,31 @@ namespace {
         };
         expect(desktop::save_ui_prefs(tmp, in), "save ui prefs");
         auto out = desktop::load_ui_prefs(tmp);
-        expect(out.theme_preference == "dark" && out.accent_preset == "violet" && out.material_preset == "crystal",
-            "roundtrip enum strings");
+        expect(out.theme_preference == "obsidian" && out.accent_preset == "violet" && out.material_preset == "crystal",
+            "legacy dark migrates to obsidian and preserves accent/material");
         expect(std::abs(out.window_opacity - 0.75f) < 0.02f && std::abs(out.surface_opacity - 0.55f) < 0.02f &&
                out.blur_enabled && !out.ambient_glow && out.reduced_motion,
             "roundtrip sliders");
         expect(out.language == "en-us" && out.outbound_mode == "global" &&
                std::abs(out.sidebar_width - 212.0f) < 0.2f && out.sidebar_collapsed,
             "roundtrip layout and language");
+
+        // Verify 4-preset theme migration ("light"->"paper", "amber" roundtrip, unknown->"system")
+        {
+            std::ofstream leg(tmp, std::ios::binary | std::ios::trunc);
+            leg << "theme=light\n";
+        }
+        expect(desktop::load_ui_prefs(tmp).theme_preference == "paper", "legacy light migrates to paper");
+        in.theme_preference = "amber";
+        expect(desktop::save_ui_prefs(tmp, in) && desktop::load_ui_prefs(tmp).theme_preference == "amber",
+            "studio amber preset roundtrips cleanly");
+        auto j_leg = desktop::ui_prefs_from_json(R"({"theme":"dark"})");
+        auto j_amb = desktop::ui_prefs_from_json(R"({"theme":"studio_amber"})");
+        auto j_bad = desktop::ui_prefs_from_json(R"({"theme":"invalid"})");
+        expect(j_leg && j_leg->theme_preference == "obsidian" &&
+               j_amb && j_amb->theme_preference == "amber" &&
+               j_bad && j_bad->theme_preference == "system",
+            "JSON ui_prefs migrates legacy dark/studio_amber and sanitizes invalid themes");
         std::filesystem::remove(tmp, ec);
     }
 
@@ -384,6 +402,74 @@ namespace {
                rec.dash_info_order == std::array<int, 4>{0, 1, 2, 3} && !rec.dash_deck_swapped,
             "corrupt/duplicate dash orders recover to {0,1,2,3}");
     }
+
+    auto test_wave35_flagship_helpers() -> void {
+        // 1. Dual-track wave paths share Y scale and emit pre-segmented dashed TX
+        std::vector<double> rx = {10.0, 40.0, 220.0, 640.0, 380.0, 920.0, 500.0};
+        std::vector<double> tx = {5.0, 20.0, 80.0, 140.0, 90.0, 210.0, 110.0};
+        auto dual = desktop_ui_helpers::build_dual_speed_wave_paths(rx, tx, 24, 8.0, 560.0, 56.0);
+        expect(dual.rx_line.starts_with("M 0.0 ") && dual.rx_area.ends_with(" L 560.0 60.0 L 0.0 60.0 Z"),
+            "dual wave emits valid RX Bezier + area closing at y=60");
+        expect(dual.scale_top_kib > 200.0, "dual wave shared scale reflects RX peak");
+        expect(dual.tx_dashed_line.starts_with("M ") && dual.tx_dashed_line.contains(" L "),
+            "dual wave emits pre-segmented dashed TX SVG commands");
+        std::size_t dash_moves = 0;
+        for (std::size_t p = 0; (p = dual.tx_dashed_line.find("M ", p)) != std::string::npos; p += 2) ++dash_moves;
+        expect(dash_moves >= 15, "dashed TX produces >= 15 distinct dash segments across 320px");
+        expect(!dual.tx_dashed_line.contains(" -"), "dashed TX has no negative coordinates");
+
+        // 2. Onset marker tracker advances linearly and expires after 24 ticks
+        desktop_ui_helpers::OnsetMarkerTracker onset;
+        expect(!onset.active() && onset.ratio(24) < 0.0f, "onset starts inactive");
+        onset.mark("HK-Edge-01");
+        expect(onset.active() && std::abs(onset.ratio(24) - 1.0f) < 1e-4f, "fresh onset sits at rightmost slot (1.0)");
+        for (int i = 0; i < 12; ++i) onset.advance(24);
+        expect(onset.active() && onset.ratio(24) > 0.4f && onset.ratio(24) < 0.55f, "onset shifts left across 24-slot window");
+        for (int i = 0; i < 12; ++i) onset.advance(24);
+        expect(!onset.active() && onset.ratio(24) < 0.0f, "onset expires cleanly after slot 23");
+
+        // 3. GroupLatencySpectrum 5-tier buckets + P50 median + max_ms
+        std::vector<desktop::OutboundMemberSnapshot> members = {
+            {.name = "n1", .state = "healthy", .latency_ms = 30},
+            {.name = "n2", .state = "healthy", .latency_ms = 120},
+            {.name = "n3", .state = "healthy", .latency_ms = 240},
+            {.name = "n4", .state = "healthy", .latency_ms = 420},
+            {.name = "n5", .state = "timeout", .latency_ms = 0},
+        };
+        auto spec = desktop_ui_helpers::compute_group_latency_spectrum(members);
+        expect(spec.has_data && spec.p50_ms == 180 && spec.max_ms == 420,
+            "even healthy count computes exact median (120+240)/2=180 and max=420");
+        float sum = spec.fast_ratio + spec.good_ratio + spec.mid_ratio + spec.slow_ratio + spec.timeout_ratio;
+        expect(std::abs(sum - 1.0f) < 1e-4f && std::abs(spec.fast_ratio - 0.2f) < 1e-4f && std::abs(spec.timeout_ratio - 0.2f) < 1e-4f,
+            "5-tier spectrum buckets partition counted nodes cleanly");
+
+        // 4. Command palette domain detection, fuzzy scorer, explain parser & FakeIP detector
+        expect(desktop_ui_helpers::looks_like_domain_query("api.github.com") &&
+               desktop_ui_helpers::looks_like_domain_query("https://example.org:443/path") &&
+               !desktop_ui_helpers::looks_like_domain_query("> tun") &&
+               !desktop_ui_helpers::looks_like_domain_query("hk edge"),
+            "looks_like_domain_query accepts host/URL and rejects commands or spaced text");
+        expect(desktop_ui_helpers::normalize_domain_candidate("HTTPS://API.GitHub.com:443/v1") == "api.github.com",
+            "normalize_domain_candidate strips scheme/port/path and lowercases");
+        expect(desktop_ui_helpers::palette_fuzzy_score("hk01", "HK-Edge-01") > 0 &&
+               desktop_ui_helpers::palette_fuzzy_score("HK-Edge-01", "HK-Edge-01") >
+               desktop_ui_helpers::palette_fuzzy_score("hk01", "HK-Edge-01") &&
+               desktop_ui_helpers::palette_fuzzy_score("zzz", "HK-Edge-01") < 0,
+            "palette_fuzzy_score ranks exact > subsequence and rejects non-matches");
+        auto ex = desktop_ui_helpers::parse_explain_summary("matched-rule: geosite-dev\noutbound: HK-Edge-01\n");
+        expect(ex.rule == "geosite-dev" && ex.outbound == "HK-Edge-01", "parse_explain_summary extracts rule and outbound");
+        expect(desktop_ui_helpers::is_fakeip_address("198.18.0.42") && !desktop_ui_helpers::is_fakeip_address("1.1.1.1"),
+            "is_fakeip_address identifies RFC2544 FakeIP pool");
+
+        // 5. UTF-8-safe CJK truncation (never splits multi-byte codepoints)
+        desktop_ui_helpers::OnsetMarkerTracker cjk_onset;
+        cjk_onset.mark("香港-高速专线-01");
+        expect(cjk_onset.label == "香港-高速" && cjk_onset.label.size() <= 14,
+            "OnsetMarkerTracker::mark truncates CJK labels at valid UTF-8 boundaries");
+        auto ex_cjk = desktop_ui_helpers::parse_explain_summary("香港高速专线节点规则匹配演示超长文本测试截断逻辑验证");
+        expect(ex_cjk.rule.size() <= 48 && ex_cjk.rule.size() % 3 == 0,
+            "parse_explain_summary truncates CJK fallback lines at valid UTF-8 boundaries");
+    }
 }
 
 auto main() -> int {
@@ -397,6 +483,7 @@ auto main() -> int {
         test_ui_redesign_actions();
         test_speed_wave_paths();
         test_dash_layout_reorder_and_prefs();
+        test_wave35_flagship_helpers();
         std::println("nexus-desktop-ui-ops-tests: ALL PASSED");
         return 0;
     } catch (std::exception const& e) {

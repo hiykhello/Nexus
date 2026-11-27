@@ -97,8 +97,15 @@ export component WorkspaceProfilesView inherits VerticalLayout {
             Rectangle {
                 x: 0px; y: 0px; width: card-w; height: 76px;
                 border-radius: Theme.radius-card; border-width: 1px;
-                border-color: item.active ? Theme.selected-border : pta.has-hover ? Theme.hairline-strong : Theme.card-border;
+                border-color: item.active ? Theme.live-emerald-border : pta.has-hover ? Theme.hairline-strong : Theme.card-border;
                 background: item.active ? Theme.selected-bg : pta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
+                clip: true;
+
+                if item.active : Rectangle {
+                    x: 0px; y: 0px; width: 3px; height: parent.height;
+                    background: Theme.live-emerald;
+                }
+
                 pta := TouchArea {
                     mouse-cursor: pointer;
                     clicked => { WorkspaceState.activate-profile(item.id); }
@@ -239,7 +246,10 @@ export component WorkspaceSubscriptionsView inherits VerticalLayout {
             }
             if sub.quota-ratio > 0.0 : Rectangle {
                 height: 4px; border-radius: 2px; background: Theme.well-bg;
-                Rectangle { x: 0px; y: 0px; height: 4px; width: parent.width * min(1.0, max(0.0, sub.quota-ratio)); border-radius: 2px; background: Theme.accent; }
+                Rectangle {
+                    x: 0px; y: 0px; height: 4px; width: parent.width * min(1.0, max(0.0, sub.quota-ratio)); border-radius: 2px;
+                    background: sub.quota-ratio >= 0.90 ? Theme.error-fg : sub.quota-ratio >= 0.75 ? Theme.warn-fg : Theme.live-emerald;
+                }
             }
             if sub.prev-profile-id != "" || sub.next-profile-id != "" : Text {
                 text: I18n.t("订阅链: 前置=\{sub.prev-profile-id} · 落地=\{sub.next-profile-id}", "Sub-Chain: prev=\{sub.prev-profile-id} · next=\{sub.next-profile-id}");

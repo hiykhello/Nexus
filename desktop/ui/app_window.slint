@@ -1,5 +1,6 @@
 import { Palette, ScrollView } from "std-widgets.slint";
 import { OutboundGroupItem, OutboundMemberItem, LogLineItem, ActiveConnectionItem, ProfileItem, RouteRuleDraft, DnsRuleDraft, OutboundNodeDraft } from "types.slint";
+import { CommandPaletteState, GroupSpectrumStats, PaletteItem, TelemetryWaveState } from "command_palette_state.slint";
 import { ControlInspectState } from "control_inspect_state.slint";
 import { ToastState, TooltipState } from "feedback.slint";
 import { I18n } from "i18n.slint";
@@ -8,6 +9,7 @@ import { Motion } from "motion.slint";
 import { Shortcuts } from "shortcuts.slint";
 import { Theme, ThemePreference } from "theme.slint";
 import { WorkspaceState } from "workspace_state.slint";
+import { CommandPaletteModal } from "components/command_palette.slint";
 import { NexusVScrollBar } from "components/glass_primitives.slint";
 import { OverlayFeedbackLayer } from "components/overlay_layer.slint";
 import { Sidebar } from "components/sidebar.slint";
@@ -21,7 +23,7 @@ import { RuleModalDialog } from "components/rule_dns_editor.slint";
 import { OutboundModalDialog } from "components/outbound_modal_dialog.slint";
 import { AboutPanel } from "components/about_panel.slint";
 
-export { Theme, Shortcuts, I18n, Motion, LayoutMetrics, TooltipState, ToastState, WorkspaceState, ControlInspectState }
+export { Theme, Shortcuts, I18n, Motion, LayoutMetrics, TooltipState, ToastState, WorkspaceState, ControlInspectState, CommandPaletteState, TelemetryWaveState, PaletteItem, GroupSpectrumStats }
 
 export component AppWindow inherits Window {
     title: "Nexus";
@@ -120,14 +122,8 @@ export component AppWindow inherits Window {
     in-out property <string> core-memory-text: "--";
     in-out property <string> down-speed-value: "0.0";
     in-out property <string> down-speed-unit: "KB/s";
-    in-out property <string> down-speed-peak: "0.0 KB/s";
-    in-out property <string> down-wave-area: "";
-    in-out property <string> down-wave-line: "";
     in-out property <string> up-speed-value: "0.0";
     in-out property <string> up-speed-unit: "KB/s";
-    in-out property <string> up-speed-peak: "0.0 KB/s";
-    in-out property <string> up-wave-area: "";
-    in-out property <string> up-wave-line: "";
     in-out property <bool> lan-share-enabled: false;
     in-out property <string> lan-share-subtitle: "";
     in-out property <bool> conn-probe-busy: false;
@@ -161,11 +157,12 @@ export component AppWindow inherits Window {
     private property <ThemePreference> observed-theme-pref: Theme.preference;
     private property <bool> tab-initialized: false;
     private property <string> observed-recording: Shortcuts.recording-action;
+    private property <bool> observed-palette-open: CommandPaletteState.open;
 
     function sync-palette-scheme() {
-        if (Theme.preference == ThemePreference.dark) {
+        if (Theme.preference == ThemePreference.obsidian || Theme.preference == ThemePreference.amber) {
             Palette.color-scheme = ColorScheme.dark;
-        } else if (Theme.preference == ThemePreference.light) {
+        } else if (Theme.preference == ThemePreference.paper) {
             Palette.color-scheme = ColorScheme.light;
         }
     }
@@ -195,6 +192,10 @@ export component AppWindow inherits Window {
         if (root.observed-recording != "") { root-focus.focus(); }
     }
 
+    changed observed-palette-open => {
+        if (!root.observed-palette-open) { root-focus.focus(); }
+    }
+
     changed active-tab => { TooltipState.hide(); }
 
     init-guard := Timer { interval: 60ms; running: !root.tab-initialized; triggered => { root.tab-initialized = true; } }
@@ -202,6 +203,16 @@ export component AppWindow inherits Window {
     root-focus := FocusScope {
         capture-key-pressed(event) => {
             if (Shortcuts.recording-action != "") { Shortcuts.apply-recording(event); return accept; }
+            if (Shortcuts.matches(Shortcuts.command-palette, event)) {
+                root.rule-modal-open = false;
+                root.outbound-modal-open = false;
+                CommandPaletteState.toggle-palette();
+                return accept;
+            }
+            if (CommandPaletteState.open) {
+                if (event.text == Key.Escape) { CommandPaletteState.close-palette(); return accept; }
+                return reject;
+            }
             if (root.outbound-modal-open && event.text == Key.Escape) { root.outbound-modal-open = false; return accept; }
             if (root.rule-modal-open && event.text == Key.Escape) { root.rule-modal-open = false; return accept; }
             if (Shortcuts.matches(Shortcuts.toggle-sidebar, event)) {
@@ -282,9 +293,10 @@ export component AppWindow inherits Window {
                                 active-node-latency-ms: root.active-node-latency-ms; active-sessions: root.active-sessions;
                                 connections: root.connections; groups: root.groups; selected-group: root.selected-group;
                                 active-routing-name: root.active-routing-name; active-rule-count: root.active-rule-count;
+                                upload-rate: root.upload-rate; download-rate: root.download-rate;
                                 upload-total: root.upload-total; download-total: root.download-total;
-                                down-speed-value: root.down-speed-value; down-speed-unit: root.down-speed-unit; down-speed-peak: root.down-speed-peak; down-wave-area: root.down-wave-area; down-wave-line: root.down-wave-line;
-                                up-speed-value: root.up-speed-value; up-speed-unit: root.up-speed-unit; up-speed-peak: root.up-speed-peak; up-wave-area: root.up-wave-area; up-wave-line: root.up-wave-line;
+                                down-speed-value: root.down-speed-value; down-speed-unit: root.down-speed-unit;
+                                up-speed-value: root.up-speed-value; up-speed-unit: root.up-speed-unit;
                                 diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok; hero-state-override: root.hero-state-override;
                                 conn-probe-busy: root.conn-probe-busy;
                                 conn-google-ms: root.conn-google-ms; conn-cf-ms: root.conn-cf-ms; conn-github-ms: root.conn-github-ms; conn-youtube-ms: root.conn-youtube-ms;
@@ -300,6 +312,7 @@ export component AppWindow inherits Window {
                                 open-groups => { root.active-tab = 1; root.refresh-groups(); }
                                 open-connections => { root.active-tab = 2; root.refresh-connections(); }
                                 open-rules => { root.outbound-modal-open = false; root.rule-modal-tab = 0; root.rule-modal-open = true; }
+                                open-host-settings => { root.active-tab = 3; WorkspaceState.active-subtab = 3; root.refresh-profiles(); }
                             }
 
                             if active-tab == 0 && (root.width < 960px || root.height < 680px) : Rectangle {
@@ -327,9 +340,10 @@ export component AppWindow inherits Window {
                                         active-node-latency-ms: root.active-node-latency-ms; active-sessions: root.active-sessions;
                                         connections: root.connections; groups: root.groups; selected-group: root.selected-group;
                                         active-routing-name: root.active-routing-name; active-rule-count: root.active-rule-count;
+                                        upload-rate: root.upload-rate; download-rate: root.download-rate;
                                         upload-total: root.upload-total; download-total: root.download-total;
-                                        down-speed-value: root.down-speed-value; down-speed-unit: root.down-speed-unit; down-speed-peak: root.down-speed-peak; down-wave-area: root.down-wave-area; down-wave-line: root.down-wave-line;
-                                        up-speed-value: root.up-speed-value; up-speed-unit: root.up-speed-unit; up-speed-peak: root.up-speed-peak; up-wave-area: root.up-wave-area; up-wave-line: root.up-wave-line;
+                                        down-speed-value: root.down-speed-value; down-speed-unit: root.down-speed-unit;
+                                        up-speed-value: root.up-speed-value; up-speed-unit: root.up-speed-unit;
                                         diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok; hero-state-override: root.hero-state-override;
                                         conn-probe-busy: root.conn-probe-busy;
                                         conn-google-ms: root.conn-google-ms; conn-cf-ms: root.conn-cf-ms; conn-github-ms: root.conn-github-ms; conn-youtube-ms: root.conn-youtube-ms;
@@ -345,6 +359,7 @@ export component AppWindow inherits Window {
                                         open-groups => { root.active-tab = 1; root.refresh-groups(); }
                                         open-connections => { root.active-tab = 2; root.refresh-connections(); }
                                         open-rules => { root.outbound-modal-open = false; root.rule-modal-tab = 0; root.rule-modal-open = true; }
+                                        open-host-settings => { root.active-tab = 3; WorkspaceState.active-subtab = 3; root.refresh-profiles(); }
                                     }
                                 }
                                 NexusVScrollBar {
@@ -412,6 +427,7 @@ export component AppWindow inherits Window {
                                 search-changed(q) => { root.filter-logs-search(q); }
                                 refresh-logs => { root.refresh-logs(); }
                                 export-logs => { root.export-logs(); } clear-logs => { root.clear-logs(); }
+                                copy-text(t) => { root.copy-text(t); }
                             }
 
                             if active-tab == 5 : AboutPanel {
@@ -466,6 +482,8 @@ export component AppWindow inherits Window {
             close-requested => { root.outbound-modal-open = false; }
             add-outbound-node(draft) => { root.add-outbound-node(draft); }
         }
+
+        if CommandPaletteState.open : CommandPaletteModal { width: 100%; height: 100%; }
 
         OverlayFeedbackLayer { width: 100%; height: 100%; }
     }

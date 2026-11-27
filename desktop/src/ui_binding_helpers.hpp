@@ -35,8 +35,12 @@ namespace desktop_ui_helpers {
 
         auto const& theme = ui.global<nexus_ui::Theme>();
         theme.invoke_apply_preference(
-            p.theme_preference == "light" ? nexus_ui::ThemePreference::Light
-            : p.theme_preference == "dark" ? nexus_ui::ThemePreference::Dark
+            (p.theme_preference == "paper" || p.theme_preference == "light" || p.theme_preference == "daylight")
+                ? nexus_ui::ThemePreference::Paper
+            : (p.theme_preference == "obsidian" || p.theme_preference == "dark")
+                ? nexus_ui::ThemePreference::Obsidian
+            : (p.theme_preference == "amber" || p.theme_preference == "studio_amber")
+                ? nexus_ui::ThemePreference::Amber
             : nexus_ui::ThemePreference::System);
         theme.set_accent_preset(
             p.accent_preset == "emerald" ? nexus_ui::AccentPreset::Emerald
@@ -63,7 +67,10 @@ namespace desktop_ui_helpers {
         p.language = lang == nexus_ui::LanguagePreference::ZhCn ? "zh-cn" : lang == nexus_ui::LanguagePreference::EnUs ? "en-us" : "system";
         auto const& theme = ui.global<nexus_ui::Theme>();
         auto pref = theme.get_preference();
-        p.theme_preference = pref == nexus_ui::ThemePreference::Light ? "light" : pref == nexus_ui::ThemePreference::Dark ? "dark" : "system";
+        p.theme_preference = pref == nexus_ui::ThemePreference::Paper ? "paper"
+            : pref == nexus_ui::ThemePreference::Obsidian ? "obsidian"
+            : pref == nexus_ui::ThemePreference::Amber ? "amber"
+            : "system";
         auto accent = theme.get_accent_preset();
         p.accent_preset = accent == nexus_ui::AccentPreset::Emerald ? "emerald" : accent == nexus_ui::AccentPreset::Violet ? "violet"
             : accent == nexus_ui::AccentPreset::Amber ? "amber" : accent == nexus_ui::AccentPreset::Rose ? "rose" : "ocean";
@@ -138,10 +145,18 @@ namespace desktop_ui_helpers {
         ui.set_download_rate(slint::SharedString(rate.down_rate));
         ui.set_upload_total(slint::SharedString(format_bytes_human(m.upload_bytes)));
         ui.set_download_total(slint::SharedString(format_bytes_human(m.download_bytes)));
-        ui.set_down_speed_value(slint::SharedString(rate.down_value)); ui.set_down_speed_unit(slint::SharedString(rate.down_unit));
-        ui.set_down_speed_peak(slint::SharedString(rate.down_peak)); ui.set_down_wave_area(slint::SharedString(rate.down_wave_area)); ui.set_down_wave_line(slint::SharedString(rate.down_wave_line));
-        ui.set_up_speed_value(slint::SharedString(rate.up_value)); ui.set_up_speed_unit(slint::SharedString(rate.up_unit));
-        ui.set_up_speed_peak(slint::SharedString(rate.up_peak)); ui.set_up_wave_area(slint::SharedString(rate.up_wave_area)); ui.set_up_wave_line(slint::SharedString(rate.up_wave_line));
+        ui.set_down_speed_value(slint::SharedString(rate.down_value));
+        ui.set_down_speed_unit(slint::SharedString(rate.down_unit));
+        ui.set_up_speed_value(slint::SharedString(rate.up_value));
+        ui.set_up_speed_unit(slint::SharedString(rate.up_unit));
+        auto const& wave = ui.global<nexus_ui::TelemetryWaveState>();
+        wave.set_rx_area(slint::SharedString(rate.rx_area));
+        wave.set_rx_line(slint::SharedString(rate.rx_line));
+        wave.set_tx_dashed_line(slint::SharedString(rate.tx_dashed_line));
+        wave.set_scale_peak_text(slint::SharedString(rate.scale_peak));
+        wave.set_has_onset(rate.has_onset);
+        wave.set_onset_ratio(rate.onset_ratio);
+        wave.set_onset_label(slint::SharedString(rate.onset_label));
     }
 
     inline auto clear_telemetry_ui(nexus_ui::AppWindow& ui) -> void {
@@ -153,10 +168,16 @@ namespace desktop_ui_helpers {
         ui.set_active_sessions(0);
         ui.set_upload_rate(slint::SharedString("0.0 KB/s")); ui.set_download_rate(slint::SharedString("0.0 KB/s"));
         ui.set_upload_total(slint::SharedString("0 B")); ui.set_download_total(slint::SharedString("0 B"));
-        ui.set_down_speed_value(slint::SharedString("0.0")); ui.set_down_speed_unit(slint::SharedString("KB/s")); ui.set_down_speed_peak(slint::SharedString("0.0 KB/s"));
-        ui.set_down_wave_area(slint::SharedString("")); ui.set_down_wave_line(slint::SharedString(""));
-        ui.set_up_speed_value(slint::SharedString("0.0")); ui.set_up_speed_unit(slint::SharedString("KB/s")); ui.set_up_speed_peak(slint::SharedString("0.0 KB/s"));
-        ui.set_up_wave_area(slint::SharedString("")); ui.set_up_wave_line(slint::SharedString(""));
+        ui.set_down_speed_value(slint::SharedString("0.0")); ui.set_down_speed_unit(slint::SharedString("KB/s"));
+        ui.set_up_speed_value(slint::SharedString("0.0")); ui.set_up_speed_unit(slint::SharedString("KB/s"));
+        auto const& wave = ui.global<nexus_ui::TelemetryWaveState>();
+        wave.set_rx_area(slint::SharedString(""));
+        wave.set_rx_line(slint::SharedString(""));
+        wave.set_tx_dashed_line(slint::SharedString(""));
+        wave.set_scale_peak_text(slint::SharedString("8.0 KB/s"));
+        wave.set_has_onset(false);
+        wave.set_onset_ratio(-1.0f);
+        wave.set_onset_label(slint::SharedString(""));
     }
 
     inline auto push_toast(nexus_ui::AppWindow const& ui, std::string const& msg, std::string_view tone = "info") -> void {
@@ -197,11 +218,13 @@ namespace desktop_ui_helpers {
         bool active_auto = false;
         int healthy_cnt = 0;
         int total_cnt = 0;
+        GroupLatencySpectrum spec{};
         for (auto const& g : cached_groups) {
             if (g.tag == active_tag) {
                 active_mode = g.mode;
                 active_auto = !g.manual_override;
                 total_cnt = static_cast<int>(g.members.size());
+                spec = compute_group_latency_spectrum(g.members);
                 ui_members.reserve(g.members.size());
                 for (auto const& m : g.members) {
                     if (m.latency_ms > 0) ++healthy_cnt;
@@ -220,6 +243,10 @@ namespace desktop_ui_helpers {
         ui.set_groups(std::make_shared<slint::VectorModel<nexus_ui::OutboundGroupItem>>(std::move(ui_groups)));
         member_models.replace(ui_members, member_filter, sort_mode);
         ui.set_active_group_fastest_ms(member_models.fastest_latency_ms());
+        ui.global<nexus_ui::TelemetryWaveState>().set_spectrum({
+            spec.fast_ratio, spec.good_ratio, spec.mid_ratio, spec.slow_ratio, spec.timeout_ratio,
+            spec.p50_ms, spec.max_ms, spec.has_data,
+        });
         sync_active_node_to_ui(ui, cached_groups, active_tag);
     }
 

@@ -8,6 +8,7 @@ export struct KeyBinding {
 }
 
 export global Shortcuts {
+    in-out property <KeyBinding> command-palette: { ctrl: true, alt: false, shift: false, key: "k" };
     in-out property <KeyBinding> toggle-sidebar: { ctrl: true, alt: false, shift: false, key: "b" };
     in-out property <KeyBinding> reload-config: { ctrl: true, alt: false, shift: false, key: "r" };
     in-out property <KeyBinding> open-rules: { ctrl: true, alt: false, shift: true, key: "r" };
@@ -127,7 +128,8 @@ export global Shortcuts {
     }
 
     function set-action(action: string, b: KeyBinding) {
-        if (action == "toggle-sidebar") { toggle-sidebar = b; }
+        if (action == "command-palette") { command-palette = b; }
+        else if (action == "toggle-sidebar") { toggle-sidebar = b; }
         else if (action == "reload-config") { reload-config = b; }
         else if (action == "open-rules") { open-rules = b; }
         else if (action == "quit-app") { quit-app = b; }
@@ -172,6 +174,7 @@ export global Shortcuts {
             shift: ev.modifiers.shift,
             key: normalize-key(ev.text),
         };
+        if (equals-binding(command-palette, nb)) { command-palette = { ctrl: false, alt: false, shift: false, key: "" }; }
         if (equals-binding(toggle-sidebar, nb)) { toggle-sidebar = { ctrl: false, alt: false, shift: false, key: "" }; }
         if (equals-binding(reload-config, nb)) { reload-config = { ctrl: false, alt: false, shift: false, key: "" }; }
         if (equals-binding(open-rules, nb)) { open-rules = { ctrl: false, alt: false, shift: false, key: "" }; }
@@ -190,6 +193,7 @@ export global Shortcuts {
     }
 
     public function reset-defaults() {
+        command-palette = { ctrl: true, alt: false, shift: false, key: "k" };
         toggle-sidebar = { ctrl: true, alt: false, shift: false, key: "b" };
         reload-config = { ctrl: true, alt: false, shift: false, key: "r" };
         open-rules = { ctrl: true, alt: false, shift: true, key: "r" };

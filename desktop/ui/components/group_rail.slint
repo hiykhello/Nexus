@@ -1,9 +1,44 @@
 import { ScrollView } from "std-widgets.slint";
+import { GroupSpectrumStats, TelemetryWaveState } from "../command_palette_state.slint";
 import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { OutboundGroupItem } from "../types.slint";
-import { NexusVScrollBar, ProportionBar } from "glass_primitives.slint";
+import { NexusVScrollBar } from "glass_primitives.slint";
+
+// 3px 5-tier proportional latency spectrum bar (0ms instant width updates)
+export component LatencySpectrumBar inherits Rectangle {
+    in property <GroupSpectrumStats> stats: TelemetryWaveState.spectrum;
+    in property <length> bar-radius: 1.5px;
+
+    height: 3px;
+    border-radius: root.bar-radius;
+    background: Theme.inset-bg;
+    clip: true;
+
+    if root.stats.has-data : HorizontalLayout {
+        if root.stats.fast-ratio > 0.0 : Rectangle {
+            width: parent.width * root.stats.fast-ratio;
+            background: Theme.lat-fast-fg;
+        }
+        if root.stats.good-ratio > 0.0 : Rectangle {
+            width: parent.width * root.stats.good-ratio;
+            background: Theme.lat-good-fg;
+        }
+        if root.stats.mid-ratio > 0.0 : Rectangle {
+            width: parent.width * root.stats.mid-ratio;
+            background: Theme.lat-mid-fg;
+        }
+        if root.stats.slow-ratio > 0.0 : Rectangle {
+            width: parent.width * root.stats.slow-ratio;
+            background: Theme.lat-slow-fg;
+        }
+        if root.stats.timeout-ratio > 0.0 : Rectangle {
+            width: parent.width * root.stats.timeout-ratio;
+            background: Theme.error-fg;
+        }
+    }
+}
 
 // Wide Studio (>=1200px) 224px vertical policy-group rail with Group Health & Latency Summary Footer
 export component GroupRail inherits Rectangle {
@@ -223,32 +258,20 @@ export component GroupRail inherits Rectangle {
                 }
                 Rectangle {
                     width: 6px; height: 6px; y: (parent.height - self.height) / 2; border-radius: 3px;
-                    background: root.healthy-count > 0 ? Theme.success-fg : Theme.offline-fg;
+                    background: root.healthy-count > 0 ? Theme.live-emerald : Theme.offline-fg;
                 }
             }
 
-            ProportionBar {
-                first-ratio: root.total-count > 0 ? (root.healthy-count / root.total-count) : 0.0;
-                first-color: Theme.success-fg;
-                second-color: Theme.error-fg;
-                has-data: root.total-count > 0 && root.healthy-count > 0;
-                has-second: root.total-count > root.healthy-count;
+            LatencySpectrumBar {
+                stats: TelemetryWaveState.spectrum;
             }
 
             HorizontalLayout {
-                spacing: 4px;
+                spacing: 2px;
 
                 VerticalLayout {
                     horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; alignment: center; spacing: 1px;
-                    Text { text: "\{root.total-count}"; font-size: 13px; font-weight: 800; font-family: Theme.mono-font; color: Theme.text-primary; horizontal-alignment: center; }
-                    Text { text: I18n.t("总节点", "Total"); font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
-                }
-
-                Rectangle { width: 1px; y: 4px; height: 22px; background: Theme.hairline-subtle; }
-
-                VerticalLayout {
-                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; alignment: center; spacing: 1px;
-                    Text { text: "\{root.healthy-count}"; font-size: 13px; font-weight: 800; font-family: Theme.mono-font; color: root.healthy-count > 0 ? Theme.success-fg : Theme.text-muted; horizontal-alignment: center; }
+                    Text { text: "\{root.healthy-count}/\{root.total-count}"; font-size: 11px; font-weight: 800; font-family: Theme.mono-font; color: root.healthy-count > 0 ? Theme.live-emerald : Theme.text-muted; horizontal-alignment: center; }
                     Text { text: I18n.t("可用", "Ready"); font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
                 }
 
@@ -257,8 +280,21 @@ export component GroupRail inherits Rectangle {
                 VerticalLayout {
                     horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; alignment: center; spacing: 1px;
                     Text {
+                        text: TelemetryWaveState.spectrum.p50-ms > 0 ? "\{TelemetryWaveState.spectrum.p50-ms}ms" : "--";
+                        font-size: 11px; font-weight: 800; font-family: Theme.mono-font;
+                        color: TelemetryWaveState.spectrum.p50-ms > 0 ? Theme.latency-fg(TelemetryWaveState.spectrum.p50-ms, "healthy") : Theme.text-muted;
+                        horizontal-alignment: center;
+                    }
+                    Text { text: "P50"; font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
+                }
+
+                Rectangle { width: 1px; y: 4px; height: 22px; background: Theme.hairline-subtle; }
+
+                VerticalLayout {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; alignment: center; spacing: 1px;
+                    Text {
                         text: root.fastest-latency-ms > 0 ? "\{root.fastest-latency-ms}ms" : "--";
-                        font-size: 12px; font-weight: 800; font-family: Theme.mono-font;
+                        font-size: 11px; font-weight: 800; font-family: Theme.mono-font;
                         color: root.fastest-latency-ms > 0 ? Theme.latency-fg(root.fastest-latency-ms, "healthy") : Theme.text-muted;
                         horizontal-alignment: center;
                     }
@@ -371,6 +407,28 @@ export component GroupSummaryStrip inherits Rectangle {
             }
         }
 
+        if TelemetryWaveState.spectrum.p50-ms > 0 : Rectangle {
+            horizontal-stretch: 0;
+            height: 22px;
+            y: (parent.height - self.height) / 2;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.well-border;
+            background: Theme.well-bg;
+            HorizontalLayout {
+                padding-left: 7px;
+                padding-right: 7px;
+                Text {
+                    text: "P50 \{TelemetryWaveState.spectrum.p50-ms} ms";
+                    font-size: 10px;
+                    font-weight: 700;
+                    font-family: Theme.mono-font;
+                    color: Theme.latency-fg(TelemetryWaveState.spectrum.p50-ms, "healthy");
+                    vertical-alignment: center;
+                }
+            }
+        }
+
         if root.total-count > 0 : Rectangle {
             horizontal-stretch: 0;
             height: 22px;
@@ -398,9 +456,18 @@ export component GroupSummaryStrip inherits Rectangle {
                     height: 6px;
                     y: (parent.height - self.height) / 2;
                     border-radius: 3px;
-                    background: root.healthy-count > 0 ? Theme.success-fg : Theme.offline-fg;
+                    background: root.healthy-count > 0 ? Theme.live-emerald : Theme.offline-fg;
                 }
             }
         }
+    }
+
+    // Flush 3px 5-tier latency spectrum bar along bottom edge
+    if TelemetryWaveState.spectrum.has-data : LatencySpectrumBar {
+        x: 0px;
+        y: parent.height - 3px;
+        width: parent.width;
+        bar-radius: 0px;
+        stats: TelemetryWaveState.spectrum;
     }
 }
