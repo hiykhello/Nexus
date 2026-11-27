@@ -1,6 +1,6 @@
-# Nexus Core 审计缺陷与修复跟踪（Rounds 5–7）
+# Nexus Core 审计缺陷与修复跟踪（Rounds 5–8）
 
-本文档为七轮内核专项审计（共 **54 项：`20 P1 + 33 P2 + 1 P3`**）的后半部分，收录 Rounds 5–7 共 23 项（`7 P1 + 16 P2`）；Rounds 1–4 明细与全轮次总览见 [Part 1：Rounds 1–4](kernel-audit-findings.md)。
+本文档为八轮内核专项审计（共 **63 项：`23 P1 + 39 P2 + 1 P3`**）的后半部分，收录 Rounds 5–8 共 32 项（`10 P1 + 22 P2`）；Rounds 1–4 明细与全轮次总览见 [Part 1：Rounds 1–4](kernel-audit-findings.md)。
 
 > **异步化架构原则（Round 7 起强制执行）**：**能异步就异步，同步路径尽可能删除。** 控制管道 I/O、多候选 DNS 探测、主机名解析与 NTP 同步等路径一律采用非阻塞/异步状态机并接入统一截止时间与 `stop_token` 取消机制，严禁在宿主主循环或关机流程中同步阻塞。
 
@@ -247,3 +247,97 @@
 - **根因**：NTP 停止仅回收线程，未重置进程级全局时钟偏移，禁用启动时亦未清零。
 - **修复设计**：在 NTP 服务停止以及新实例以禁用 NTP 启动时均显式将全局时钟偏移重置为 `0`。
 - **回归验收**：单元测试写入非零偏移后执行停止与禁用模式启动，断言全局 NTP 偏移均归零。
+
+---
+
+## 8. Round 8（3 P1 + 6 P2，静态审查按根因去重）
+
+### 8.1 总览
+
+| 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
+| --- | --- | --- | --- | --- |
+| `R8 P1-1` | P1 | OpenVPN 推送协商 | 客户端 `PUSH_REQUEST\0` 经 `std::string_view` 丢失末尾 NUL 字节，上游服务端忽略命令 | 修复中 |
+| `R8 P1-2` | P1 | SSH 会话换钥 | 对端 `SSH_MSG_KEXINIT`/`NEWKEYS` 或本地 1 GiB 换钥阈值直接退出读循环并切断全部通道 | 修复中 |
+| `R8 P1-3` | P1 | Linux L3 网桥 | `AF_PACKET/SOCK_DGRAM` 发送时 `sll_addr`/`sll_halen` 全零且忽略 `sendto()` 失败仍累加计数 | 修复中 |
+| `R8 P2-1` | P2 | XHTTP `stream-up` | 分离上下行连接池取消时仅比对票据值，不同 HTTP/3 连接同流 ID 漏释放上传流 | 修复中 |
+| `R8 P2-2` | P2 | Windows 日志轮转 | 旧日志移至 `.1` 失败被忽略，随后用空临时文件覆盖当前日志致内容丢失 | 修复中 |
+| `R8 P2-3` | P2 | OpenVPN `keepalive` | `PushConfig::ping_s` 默认 `10` 且握手后无条件覆盖本地 `keepalive`（含显式 `0`） | 修复中 |
+| `R8 P2-4` | P2 | mDNS 服务发现 | `convert_mdns_response` 要求每条记录含 `address` 且只编码 `A`/`AAAA`，过滤 `PTR`/`SRV`/`TXT` | 修复中 |
+| `R8 P2-5` | P2 | DERP WebSocket | DERP 服务端消费客户端 Ping（`0x9`）后未回复携带同载荷的 Pong（`0xA`） | 修复中 |
+| `R8 P2-6` | P2 | Linux 内存监视器 | 取 RSS 与固定 `/sys/fs/cgroup/memory.current` 最大值，共享父组噪音误伤接入拒绝 | 修复中 |
+
+### 8.2 P1 级缺陷明细
+
+#### R8 P1-1 — OpenVPN 客户端 `PUSH_REQUEST\0` 丢失末尾 NUL 字节
+
+- **触发与影响**：客户端向标准上游 OpenVPN 服务端发送 `PUSH_REQUEST` 时缺少末尾 `\0` 终止符，上游服务端忽略未终止命令导致推送拉取超时失败。
+- **涉及模块**：`src/relay/openvpn_outbound.cpp`、`src/openvpn/server.cpp`。
+- **根因**：客户端用 `std::string_view` 从含 `\0` 的字面量构造时在首个 NUL 截断为 12 字节；内置服务端又仅校验前缀未校验终止符，掩盖了该线规偏差。
+- **修复设计**：客户端显式发送完整 13 字节（含末尾 `0x00`），内置服务端同步改为严格校验以 `\0` 终止的 `PUSH_REQUEST\0`。
+- **回归验收**：单元测试直接断言客户端发出的 13 字节线上载荷以 `0x00` 结尾，且内置服务端拒绝未终止的 12 字节请求。
+
+#### R8 P1-2 — SSH 对端换钥与 1 GiB 阈值直接切断全部转发通道
+
+- **触发与影响**：长连接 SSH 隧道遭遇对端发起重协商（`SSH_MSG_KEXINIT`/`SSH_MSG_NEWKEYS`）或触及本地 1 GiB 字节换钥阈值时，整条会话被终止并切断所有活动 TCP 转发流。
+- **涉及模块**：`src/ssh/session.cppm`（及 `src/ssh/` 传输与密钥交换模块）。
+- **根因**：认证后读取循环将 `SSH_MSG_KEXINIT`/`SSH_MSG_NEWKEYS` 视同断连直接退出循环，退出守卫随即取消全部转发通道；本地字节阈值亦直接关停会话。
+- **修复设计**：按 RFC 4253 §9 在现有 SSH 连接上实现异步原地换钥（保留原始 `session_id`、在 `KEXINIT` 至 `NEWKEYS` 间暂缓通道出向数据、收发 `NEWKEYS` 独立切换加解密状态并清零换钥计数），同时支持对端发起、本地阈值与双方并发换钥。
+- **回归验收**：单元测试验证对端发起换钥与本地阈值换钥均在原连接完成，期间活动转发通道持续无中断收发数据。
+
+#### R8 P1-3 — Linux L3 桥发送零目的 MAC 且忽略 `sendto()` 返回值
+
+- **触发与影响**：Linux L3 桥通过 `AF_PACKET/SOCK_DGRAM` 转发单播帧时目的 MAC 为全零而被链路层丢弃，同时 `sendto()` 失败仍被计入成功转发统计。
+- **涉及模块**：`src/tools/svc_bridge.cpp`。
+- **根因**：`sockaddr_ll` 仅填写协议族、网卡索引与以太类型，未填充 `sll_halen`/`sll_addr`；且发送调用忽略了 `::sendto(...)` 返回值。
+- **修复设计**：针对出接口解析下一跳邻居 MAC（IPv4/IPv6 多播与广播按 RFC 映射 MAC，单播经非阻塞邻居/路由表查询并带 TTL 缓存，解析失败直接丢弃计数），正确写入 `sll_halen = 6` 与 `sll_addr`；仅当 `::sendto(...)` 完整发送时累加转发计数。
+- **回归验收**：单元测试覆盖单播邻居解析、IPv4/IPv6 多播 MAC 映射、邻居缺失丢弃及 `sendto` 失败不累加转发计数。
+
+### 8.3 P2 级缺陷明细
+
+#### R8 P2-1 — XHTTP `stream-up` 不同 HTTP/3 连接同流 ID 漏释放上传流
+
+- **触发与影响**：XHTTP `stream-up` 模式在独立上下行 HTTP/3 连接池间取消或结束会话时，若两条不同连接恰好分配到相同数字流 ID，上传流被漏释放造成池槽位泄漏。
+- **涉及模块**：`src/relay/xhttp_stream_client.cppm`、`src/relay/xhttp_http3_client.cppm`、`src/transport/xhttp/`。
+- **根因**：释放逻辑仅靠比较 `upload_ticket == download_ticket` 避免 `stream-one` 双重释放，未区分两者是否来自同一连接池/单流。
+- **修复设计**：显式标记是否处于 `stream-one` 共用单流状态，仅在确认共用单流时跳过二次释放；`stream-up` 下即使票据数值相同也始终独立释放上传流。
+- **回归验收**：单元测试在 `stream-up` 下注入相同数值的上下行流票据，断言取消/关闭时上下行两个连接池均收到释放调用。
+
+#### R8 P2-2 — Windows 日志轮转中旧日志移至 `.1` 失败致原日志清空丢失
+
+- **触发与影响**：Windows 下 `.1` 备份被外部读取器占用导致当前日志移至 `.1` 失败时，轮转仍继续用空临时文件覆盖当前日志并返回成功，原有日志内容永久丢失。
+- **涉及模块**：`src/logging/sink_windows.cpp`。
+- **根因**：轮转流程忽略了当前日志重命名为 `.1` 的错误返回值，直接执行后续临时文件覆盖步骤。
+- **修复设计**：严格检查向 `.1` 移动及各级备份移位的结果；移动失败时立即删除未使用的临时文件、以追加模式重新打开原活动日志并返回轮转错误，确保零字节丢失。
+- **回归验收**：单元测试模拟移至 `.1` 失败场景，断言原日志文件完整保留、无数据丢失且返回明确错误。
+
+#### R8 P2-3 — OpenVPN `PushConfig::ping_s` 无条件覆盖本地 `keepalive`
+
+- **触发与影响**：本地显式配置 `keepalive 0`（禁用保活）的 OpenVPN 客户端在服务端 `PUSH_REPLY` 未下发 `ping` 指令时仍被强行改写为 `10s` 保活。
+- **涉及模块**：`src/openvpn/types.cppm`、`src/openvpn/push.cpp`、`src/relay/openvpn_outbound.cpp`。
+- **根因**：`PushConfig::ping_s` 与 `ping_restart_s` 采用带非零默认值的普通整型，握手后无条件覆盖本地保活配置。
+- **修复设计**：将 `PushConfig::ping_s` 与 `ping_restart_s` 改为 `std::optional<std::uint32_t>`，仅在服务端于 `PUSH_REPLY` 中显式下发对应选项时覆盖本地设置。
+- **回归验收**：单元测试验证本地 `keepalive 0` 收到无 `ping` 的 `PUSH_REPLY` 时维持 `0`，收到含 `ping 15` 的 `PUSH_REPLY` 时更新为 `15`。
+
+#### R8 P2-4 — mDNS `convert_mdns_response` 过滤有效 `PTR`/`SRV`/`TXT` 记录
+
+- **触发与影响**：通过 mDNS 转发查询服务发现记录（`PTR` / `SRV` / `TXT`）时，尽管底层已解析出合法应答，转换层仍将其全部过滤导致查询一直等到超时。
+- **涉及模块**：`src/tools/dns_mdns_transport.cpp`、`src/dns/mdns.cpp`。
+- **根因**：`convert_mdns_response` 要求每条记录具备 `rec.address` 且只实现了 `A`/`AAAA` 编码分支。
+- **修复设计**：按查询与记录类型完整编码 `PTR`（type 12 线规域名）、`SRV`（type 33 优先级/权重/端口/目标域名）与 `TXT`（type 16 RFC 1035 字符串块）RDATA，继续过滤 `rec.ttl == 0` 撤销记录并透传真实 `rec.ttl`。
+- **回归验收**：单元测试验证 `PTR`、`SRV`、`TXT` mDNS 应答均转为合法标准 DNS 线规响应（`ANCOUNT > 0`），查询立即返回不超时。
+
+#### R8 P2-5 — DERP WebSocket 服务端消费 Ping 后未回复 Pong
+
+- **触发与影响**：客户端通过 DERP WebSocket 连接发送保活 Ping（`0x9`）帧时收不到 Pong（`0xA`）响应，导致依赖 WebSocket 心跳的对端误判连接假死并断线重连。
+- **涉及模块**：`src/tools/svc_derp.cpp`、`src/tailscale/derp_server.cppm`、`src/tailscale/derp_server.cpp`。
+- **根因**：WebSocket 帧读取器仅消耗了 Ping 帧载荷并推进缓冲区偏移，未按 RFC 6455 §5.5.2 回复 Pong 帧。
+- **修复设计**：收到客户端 Ping（`0x9`）后立即构造无掩码服务端 Pong（`0x8A` + 长度 + 相同载荷）并通过既有异步出站写队列发送。
+- **回归验收**：单元测试向 DERP WebSocket 处理器发送带载荷的掩码 Ping 帧，断言写队列立即产出载荷一致的无掩码 Pong 帧。
+
+#### R8 P2-6 — Linux 内存监视器读取共享父 cgroup 用量误触发接入拒绝
+
+- **触发与影响**：在桌面或共享宿主机环境下，其他进程占用共享父 cgroup 内存时触发 Nexus 紧急内存卸荷并拒绝新连接，即使 Nexus 自身进程 RSS 很小。
+- **涉及模块**：`src/memory/watchdog.cpp`、`src/memory/watchdog.cppm`。
+- **根因**：监视器固定读取 `/sys/fs/cgroup/memory.current` 并取 `std::max(rss, cgroup)` 驱动连接准入控制。
+- **修复设计**：解析 `/proc/self/cgroup` 定位进程实际所属 cgroup v2 路径，在采样结构中分别记录 `process_rss_bytes` 与 `cgroup_bytes`；进程预算默认由 `process_rss_bytes` 驱动，仅在非根独立受限 cgroup（具备有限 `memory.max`）下结合容器限额评估，绝不因根/父组噪音拒绝新连接。
+- **回归验收**：单元测试验证 `/proc/self/cgroup` 解析、RSS 与 cgroup 分离记录，以及共享/根 cgroup 高占用不误触发低 RSS 进程卸荷。

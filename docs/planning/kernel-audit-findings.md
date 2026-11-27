@@ -1,6 +1,6 @@
 # Nexus Core 审计缺陷与修复跟踪（Rounds 1–4）
 
-本文档为七轮内核专项审计（共 **54 项：`20 P1 + 33 P2 + 1 P3`**）的前半部分，收录 Rounds 1–4 缺陷明细；Rounds 5–7（含「能异步就异步、同步路径尽可能删除」架构约束）见 [Part 2：Rounds 5–7](kernel-audit-findings-r5-r7.md)。
+本文档为八轮内核专项审计（共 **63 项：`23 P1 + 39 P2 + 1 P3`**）的前半部分，收录 Rounds 1–4 缺陷明细；Rounds 5–8（含「能异步就异步、同步路径尽可能删除」架构约束）见 [Part 2：Rounds 5–8](kernel-audit-findings-r5-r7.md)。
 
 | 轮次 | 基线 / 来源 | 统计 | 所在文档 |
 | --- | --- | --- | --- |
@@ -11,7 +11,8 @@
 | Round 5 | Linux 本地实测复现 | `5 P2` | [Part 2 §5](kernel-audit-findings-r5-r7.md#5-round-55-p2linux-本地实测复现) |
 | Round 6 | 源码与本地实测复现 | `3 P1 + 6 P2` | [Part 2 §6](kernel-audit-findings-r5-r7.md#6-round-63-p1--6-p2源码与本地实测复现) |
 | Round 7 | 静态审计（去重于 R1–R6） | `4 P1 + 5 P2` | [Part 2 §7](kernel-audit-findings-r5-r7.md#7-round-74-p1--5-p2静态审计去重于-r1r6) |
-| **合计** | **7 轮** | **`20 P1 + 33 P2 + 1 P3`（54 项）** | — |
+| Round 8 | 静态审查（按根因去重于 R1–R7） | `3 P1 + 6 P2` | [Part 2 §8](kernel-audit-findings-r5-r7.md#8-round-83-p1--6-p2静态审查按根因去重) |
+| **合计** | **8 轮** | **`23 P1 + 39 P2 + 1 P3`（63 项）** | — |
 
 ## 1. Round 1（基线 `d10c429`：5 P1 + 2 P2）
 
@@ -348,4 +349,4 @@
 
 ---
 
-后续轮次（Rounds 5–7，含 `7 P1 + 16 P2` 及异步化架构红线）详见 [Nexus Core 审计缺陷与修复跟踪（Rounds 5–7）](kernel-audit-findings-r5-r7.md)。
+后续轮次（Rounds 5–8，含 `10 P1 + 22 P2` 及异步化架构红线）详见 [Nexus Core 审计缺陷与修复跟踪（Rounds 5–8）](kernel-audit-findings-r5-r7.md)。
