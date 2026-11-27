@@ -1,6 +1,6 @@
 # Nexus Core 审计缺陷与修复跟踪
 
-本文记录针对基线提交 `d10c429`（Round 1：`5 P1 + 2 P2`）、`0e52ae8`（Round 2：`3 P1 + 4 P2`）及 Round 3（`4 P1 + 3 P2`，均已本地复现验证）共三轮 21 项内核专项审计发现，明确触发条件、影响范围、根因定位、修复设计与回归验收目标，配合源码修复与自动化单元测试同步闭环。
+本文记录针对基线提交 `d10c429`（Round 1：`5 P1 + 2 P2`）、`0e52ae8`（Round 2：`3 P1 + 4 P2`）、Round 3（`4 P1 + 3 P2`）及 Round 4（`1 P1 + 8 P2 + 1 P3`，实测复现）共四轮 31 项（`13 P1 + 17 P2 + 1 P3`）内核专项审计发现，明确触发条件、影响范围、根因定位、修复设计与回归验收目标，配合源码修复与自动化单元测试同步闭环。
 
 ## 1. Round 1（基线 `d10c429`：5 P1 + 2 P2）
 
@@ -229,3 +229,108 @@
 - **根因**：显式 `member` 处理分支虽将名称写入去重集合，但未在已存在时跳过原节点输出，导致先前 `use` 展开的同名成员与显式成员重复输出。
 - **修复设计**：无论 `member` 位于 `use` 之前还是之后均执行一致去重，若显式 `member` 已由先前的 `use` 展开则跳过重复发射。
 - **回归验收**：单元测试分别展开 `member "edge"` + `use "a"` 与 `use "a"` + `member "edge"` 两种顺序，断言均只输出唯一一条 `member "edge"` 且均通过配置解析校验。
+
+---
+
+## 4. Round 4（1 P1 + 8 P2 + 1 P3，实测复现）
+
+### 4.1 总览
+
+| 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
+| --- | --- | --- | --- | --- |
+| `R4 P1-1` | P1 | HTTP 控制面清缓存 | 清缓存请求 `target` 类型无效时意外执行 `all` 并返回 HTTP `200` | 修复中 |
+| `R4 P2-1` | P2 | `nexus check` 预检 | `nexus check` 放行缺失本地 DNS `rule-set` 的配置，实际启动时失败 | 修复中 |
+| `R4 P2-2` | P2 | `state` CLI 子命令 | `state` 子命令（`inspect` / `clear-cache` / `reset`）忽略全局 `-D` 工作目录 | 修复中 |
+| `R4 P2-3` | P2 | 嵌入式 C API | `nexus_core_run_args` 返回后未恢复工作目录，后续调用沿用上次 `-D` | 修复中 |
+| `R4 P2-4` | P2 | TUN 桥接出站读包 | TUN 出站读取遇短缓冲区先丢弃队首包再报告队空 | 修复中 |
+| `R4 P2-5` | P2 | HTTP-Only 控制面 | 仅开启 HTTP 控制端时 `/v1/status` 返回空 `instance_id` | 修复中 |
+| `R4 P2-6` | P2 | 配置目录分片加载 | 目录内的显式 `--host-override` 先被当作普通分片扫描触发 `duplicate workers` | 修复中 |
+| `R4 P2-7` | P2 | POSIX CLI 日志跟踪 | `control ... logs --follow` 将游标推至全局 `latest` 导致跳条 | 修复中 |
+| `R4 P2-8` | P2 | HTTP 策略组切换 | `POST /v1/groups/{tag}/select` 拒绝 `{"auto":true}` 且 `--auto` 回显错误 `selected` | 修复中 |
+| `R4 P3-1` | P3 | HTTP 日志查询解码 | HTTP 日志搜索静默丢弃含 `%2F` 的过滤条件 | 修复中 |
+
+### 4.2 P1 级缺陷明细
+
+#### R4 P1-1 — 清缓存请求 `target` 类型无效时意外执行 `all`
+
+- **触发与影响**：向 HTTP 清缓存接口发送非法类型或非法值的 `target`（如 `{"target":123}`、`{"target":true}`、`{"target":"invalid"}` 或畸形 JSON）时，服务端静默退回默认 `all` 清空全部缓存并返回 HTTP `200`。
+- **涉及模块**：`src/control_api/http_extra_routes.cppm`。
+- **根因**：请求体字段解析失败时未中止处理，直接保留默认值 `all` 进入清缓存执行路径。
+- **修复设计**：严格区分字段缺省（空请求体或 `{}` 默认 `all`）与字段存在但类型/取值非法或 JSON 畸形，后者在调用清理逻辑前直接返回 HTTP `400`。
+- **回归验收**：单元测试断言 `{}` 与 `{"target":"dns"}` 返回 `200`，而 `{"target":123}`、`{"target":true}`、`{"target":"invalid"}` 及畸形 JSON 全部返回 `400` 且清理回调零调用。
+
+### 4.3 P2 级缺陷明细
+
+#### R4 P2-1 — `nexus check` 放行缺失本地 DNS `rule-set` 的配置
+
+- **触发与影响**：配置中引用了不存在的本地 DNS `rule-set` 文件时，`nexus check` 校验通过，但在 `nexus run` 启动阶段失败。
+- **涉及模块**：`src/tools/rule_explain.cpp`、`src/tools/proxy_run.cppm`。
+- **根因**：`nexus check` 预检流程漏掉了 `proxy_run.cppm` 启动阶段执行的 `load_dns_rules` 校验。
+- **修复设计**：在 `rule_explain.cpp` 的 `check` 路径补齐与 `proxy_run.cppm` 一致的 `load_dns_rules` 加载校验。
+- **回归验收**：单元测试对缺失本地 DNS `rule-set` 的配置执行 `check`，断言返回非零失败状态。
+
+#### R4 P2-2 — `state` 子命令忽略全局 `-D`
+
+- **触发与影响**：带全局 `-D <dir>` 调用 `state inspect` / `state clear-cache` / `state reset` 时，相对路径配置与状态目录按旧工作目录解析，操作落到错误目录。
+- **涉及模块**：`src/tools/state_cli.cpp`。
+- **根因**：`state` 子命令共用的配置读取路径未优先应用全局 `-D` 工作目录。
+- **修复设计**：在 `state_cli.cpp` 加载配置前与 `check` / `run` 保持一致，先切换/应用全局 `-D` 目录。
+- **回归验收**：单元测试通过 `-D <temp_dir>` 传入相对配置名调用 `state` 子命令，断言准确命中 `<temp_dir>` 下的配置与状态。
+
+#### R4 P2-3 — 嵌入式 C API 沿用上次调用的 `-D`
+
+- **触发与影响**：嵌入式调用方先执行带 `-D` 的 `nexus_core_run_args`，返回后再调用相对路径检查（如 `check_config("core.kdl")`）时仍停留在上次 `-D` 目录。
+- **涉及模块**：`src/tools/core_c_api.cpp`、`src/tools/route_files.cpp`。
+- **根因**：`nexus_core_run_args` 退出时仅清除运行状态标记，未保存并恢复进程工作目录。
+- **修复设计**：通过 RAII 守卫在 `nexus_core_run_args` 入口记录原工作目录，退出任意路径自动恢复原工作目录。
+- **回归验收**：单元测试在调用带 `-D` 的 `nexus_core_run_args` 返回后断言当前工作目录及相对路径解析恢复至调用前状态。
+
+#### R4 P2-4 — TUN 出站读取遇短缓冲区丢包并报队空
+
+- **触发与影响**：嵌入式 TUN 桥接出站读包接口收到小于队首包长的缓冲区时，队首数据包被直接弹出丢弃，且调用方收到“队列为空”结果。
+- **涉及模块**：`src/platform/tun_bridge.cppm`、`src/tools/core_c_api.cpp`、`include/nexus/core_c_api.h`。
+- **根因**：读取路径在校验调用方缓冲区容量前已将队首数据包从队列移除。
+- **修复设计**：弹出前先比较 `buf_len < front.size()`；容量不足时保留队首包不动，通过输出长度写回所需字节数并返回明确的容量不足错误码（区分成功与队空）。
+- **回归验收**：单元测试先以短缓冲区读取 128 字节包，断言返回容量不足错误与 `128` 所需长度，随后以 128 字节缓冲区重试成功取回完整原包。
+
+#### R4 P2-5 — 仅开启 HTTP 控制端时 `/v1/status` `instance_id` 为空
+
+- **触发与影响**：仅启用 HTTP 控制面而关闭本地 UDS 控制套接字时，`/v1/status` 返回空 `instance_id: ""`，客户端无法识别 Core 进程重启。
+- **涉及模块**：`src/tools/proxy_http_control.cppm`、`src/tools/proxy_run.cppm`、`src/tools/control_posix.cpp`。
+- **根因**：HTTP 状态接口仅从本地 UDS 控制对象读取实例标识，未在 HTTP-only 场景下独立生成并持有实例标识。
+- **修复设计**：在未启用 UDS 控制时为运行实例生成并持有稳定唯一的非空 `instance_id`（复用同源标识生成逻辑），保证每次进程启动在 `/v1/status` 返回独立非空值。
+- **回归验收**：单元测试在 UDS 控制未激活时查询 HTTP 状态快照，断言 `instance_id` 非空且两次独立实例生成不同标识。
+
+#### R4 P2-6 — 目录内的显式 `--host-override` 先被当作普通分片扫描
+
+- **触发与影响**：将 `--host-override` 指向配置目录内的某个 `.kdl` 文件时，目录扫描先把它当作普通分片合并一次，随后覆盖合并阶段再次加载引发 `duplicate workers` 等重复字段错误。
+- **涉及模块**：`src/tools/route_files.cpp`。
+- **根因**：目录分片扫描未排除命令行显式指定的 `--host-override` 文件路径。
+- **修复设计**：规范化比对 `--host-override` 目标路径并在目录分片枚举阶段跳过该文件，使其仅参与最终覆盖合并阶段。
+- **回归验收**：单元测试在配置目录内放置 `--host-override` 文件执行加载，断言不触发重复字段错误且覆盖值正确生效。
+
+#### R4 P2-7 — POSIX CLI `logs --follow` 跳条
+
+- **触发与影响**：POSIX 命令行执行 `nexus control ... logs --follow --limit 1` 跟踪多条积压日志时，首条输出后游标跳过中间未打印条目。
+- **涉及模块**：`src/tools/control_posix.cpp`。
+- **根因**：轮询循环将下一次请求的 `since` 游标推进至日志环全局 `latest`，而非本批实际打印的最后一条日志序号。
+- **修复设计**：本批存在交付条目时将游标推进至末条已打印日志的 `seq`；仅在空页/已淘汰场景才安全推进至 `latest`。
+- **回归验收**：单元测试模拟 5 条未淘汰积压日志配合 `--limit 1` 连续拉取，断言按序完整输出 `seq=1..5` 且零跳条。
+
+#### R4 P2-8 — HTTP 策略组接口拒绝 `{"auto":true}` 且 `--auto` 回显错误 `selected`
+
+- **触发与影响**：调用 `POST /v1/groups/{tag}/select` 发送规范允许的 `{"auto":true}` 恢复自动选择时被拒绝；传入 `{"member":"--auto"}` 时响应字段 `selected` 原样回显 `"--auto"` 而非实际生效成员名。
+- **涉及模块**：`src/control_api/http_server.cpp`。
+- **根因**：请求解析未支持布尔 `auto` 字段，且响应构造直接回填请求字符串而未回查策略组当前实际生效成员。
+- **修复设计**：按控制面规范支持 `{"auto":true}`（并拒绝非法类型的 `auto` 字段返回 `400`），恢复自动选择后在 `selected` 字段返回策略组实际解析出的当前成员名。
+- **回归验收**：单元测试校验 `{"auto":true}` 与 `{"member":"--auto"}` 均成功恢复自动选择且响应 `selected` 为真实成员名（非 `"--auto"`），非法 `{"auto":"yes"}` 返回 `400`。
+
+### 4.4 P3 级缺陷明细
+
+#### R4 P3-1 — HTTP 日志搜索静默丢弃含 `%2F` 的过滤条件
+
+- **触发与影响**：HTTP 日志检索查询参数包含 URL 编码斜杠 `%2F`（如路径或 CIDR 过滤串）时，过滤条件被静默丢弃并返回未过滤日志。
+- **涉及模块**：`src/control_api/http_format.cppm`。
+- **根因**：查询参数值解析误复用了拒绝编码斜杠的路径解码函数，且在解码失败时静默忽略该查询参数。
+- **修复设计**：提供专用的查询参数百分号解码器，允许合法 `%2F` 解码为 `/`，并在遇到畸形百分号转义时显式返回 HTTP `400` 而非静默丢弃条件。
+- **回归验收**：单元测试校验含 `%2F` 的日志查询参数正确解码并生效过滤，畸形 `%ZZ` 查询参数返回 HTTP `400`。
