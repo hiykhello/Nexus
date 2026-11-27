@@ -12,11 +12,11 @@
 
 | 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `R5 P2-1` | P2 | 文件订阅热重载 | 重载失败后原有文件订阅停止自动周期刷新 | 修复中 |
-| `R5 P2-2` | P2 | 订阅模式热重载校验 | 启用订阅时更换 `selector-state-directory` 误报成功却继续写旧目录 | 修复中 |
-| `R5 P2-3` | P2 | 热添加策略组切换 | 已有文件订阅的实例首次热添加手动策略组后可见但 `select` 报 `selection-unavailable` | 修复中 |
-| `R5 P2-4` | P2 | 远程 DNS 规则集热重载 | 更换远程 DNS `rule-set` URL 后热重载未拉取新地址而报错 | 修复中 |
-| `R5 P2-5` | P2 | 进程累计流量统计 | 监听器换代排空回收后同一进程的 `/v1/status` 累计流量倒退回 `0` | 修复中 |
+| `R5 P2-1` | P2 | 文件订阅热重载 | 重载失败后原有文件订阅停止自动周期刷新 | 已修复（`267e267`） |
+| `R5 P2-2` | P2 | 订阅模式热重载校验 | 启用订阅时更换 `selector-state-directory` 误报成功却继续写旧目录 | 已修复（`267e267`） |
+| `R5 P2-3` | P2 | 热添加策略组切换 | 已有文件订阅的实例首次热添加手动策略组后可见但 `select` 报 `selection-unavailable` | 已修复（`267e267`） |
+| `R5 P2-4` | P2 | 远程 DNS 规则集热重载 | 更换远程 DNS `rule-set` URL 后热重载未拉取新地址而报错 | 已修复（`267e267`） |
+| `R5 P2-5` | P2 | 进程累计流量统计 | 监听器换代排空回收后同一进程的 `/v1/status` 累计流量倒退回 `0` | 已修复（`267e267`） |
 
 ### 5.2 P2 级缺陷明细
 
@@ -68,15 +68,15 @@
 
 | 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `R6 P1-1` | P1 | HTTP 订阅缓存 | 订阅更换 URL 后仍按订阅名发送旧 ETag 并在 `304` 时沿用旧资源节点 | 修复中 |
-| `R6 P1-2` | P1 | 远程规则集校验 | 同 URL 的多条远程规则集引用仅沿用首条校验策略，后声明的 `sha256` 未生效 | 修复中 |
-| `R6 P1-3` | P1 | ACME 凭据原子提交 | ACME 可将证书与私钥不匹配的一代分步落盘并标记续签成功，TLS 拒绝未回传 | 修复中 |
-| `R6 P2-1` | P2 | SS-2022 原生 UDP | 原生 UDP 规则加载对已 mmap 的 NXMM 索引规则读到空串报 `invalid NXMM file size` | 修复中 |
-| `R6 P2-2` | P2 | `fixed-udp` 路由模式 | `fixed-udp` 有序规则分支跳过运行模式判断，切至 `direct` 后仍支配新流 | 修复中 |
-| `R6 P2-3` | P2 | ACME 订单状态机 | 订单迟到的 `ready` 状态错过唯一 `finalize` 分支导致永远无法提交 CSR | 修复中 |
-| `R6 P2-4` | P2 | SRS 派生 NXMM 缓存 | 派生目录 `cache/nxmm` 无预算回收持续增长，且 `clear-cache --rulesets` 遗漏清理 | 修复中 |
-| `R6 P2-5` | P2 | Windows 控制面实例 ID | Windows 命名管道 `LocalControl::instance()` 返回固定管道名，跨重启不变 | 修复中 |
-| `R6 P2-6` | P2 | Linux KDE 系统代理 | KDE 后端接受 `--pac-url` 后仅写 `ProxyType=2`，未读写/恢复 `Proxy Config Script` | 修复中 |
+| `R6 P1-1` | P1 | HTTP 订阅缓存 | 订阅更换 URL 后仍按订阅名发送旧 ETag 并在 `304` 时沿用旧资源节点 | 已修复（`267e267`） |
+| `R6 P1-2` | P1 | 远程规则集校验 | 同 URL 的多条远程规则集引用仅沿用首条校验策略，后声明的 `sha256` 未生效 | 已修复（`267e267`） |
+| `R6 P1-3` | P1 | ACME 凭据原子提交 | ACME 可将证书与私钥不匹配的一代分步落盘并标记续签成功，TLS 拒绝未回传 | 已修复（`267e267`） |
+| `R6 P2-1` | P2 | SS-2022 原生 UDP | 原生 UDP 规则加载对已 mmap 的 NXMM 索引规则读到空串报 `invalid NXMM file size` | 已修复（`267e267`） |
+| `R6 P2-2` | P2 | `fixed-udp` 路由模式 | `fixed-udp` 有序规则分支跳过运行模式判断，切至 `direct` 后仍支配新流 | 已修复（`267e267`） |
+| `R6 P2-3` | P2 | ACME 订单状态机 | 订单迟到的 `ready` 状态错过唯一 `finalize` 分支导致永远无法提交 CSR | 已修复（`267e267`） |
+| `R6 P2-4` | P2 | SRS 派生 NXMM 缓存 | 派生目录 `cache/nxmm` 无预算回收持续增长，且 `clear-cache --rulesets` 遗漏清理 | 已修复（`267e267`） |
+| `R6 P2-5` | P2 | Windows 控制面实例 ID | Windows 命名管道 `LocalControl::instance()` 返回固定管道名，跨重启不变 | 已修复（`267e267`） |
+| `R6 P2-6` | P2 | Linux KDE 系统代理 | KDE 后端接受 `--pac-url` 后仅写 `ProxyType=2`，未读写/恢复 `Proxy Config Script` | 已修复（`267e267`） |
 
 ### 6.2 P1 级缺陷明细
 
@@ -162,15 +162,15 @@
 
 | 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `R7 P1-1` | P1 | Windows TUN 初始化 | 调用 `InitializeIpInterfaceEntry` 误用 2 参函数指针而非单参 `PMIB_IPINTERFACE_ROW` | 修复中 |
-| `R7 P1-2` | P1 | Darwin/Windows TUN 路由 | 排除路由缺失或出口指向 TUN 时仍安装捕获路由并报成功，引发路由环路 | 修复中 |
-| `R7 P1-3` | P1 | Windows 状态持久化 | 目录句柄无写权限却调用 `FlushFileBuffers`，导致正常落盘仍报持久化未确认 / FakeIP 保存失败 | 修复中 |
-| `R7 P1-4` | P1 | Windows 控制管道 | `control.poll()` 同步调用 `FlushFileBuffers`，慢客户端可直接卡死宿主主循环 | 修复中 |
-| `R7 P2-1` | P2 | DHCP IPv6 DNS | 租约解析剥离链路本地地址 `%iface` 且端点构造丢失 `sin6_scope_id` | 修复中 |
-| `R7 P2-2` | P2 | DHCP 多上游查询 | 多个 DHCP DNS 上游串行复用同一总截止时间，首选超时即饿死备用服务器 | 修复中 |
-| `R7 P2-3` | P2 | 用户态 TCP 快速重传 | 将双向数据段或窗口更新误计为重复 ACK，违反 RFC 5681 §2 误触发快速重传 | 修复中 |
-| `R7 P2-4` | P2 | NTP 异步解析与取消 | `sync_once` 同步调用 `getaddrinfo` 不受超时与 `stop_token` 覆盖，阻塞核心停机 | 修复中 |
-| `R7 P2-5` | P2 | 嵌入式 NTP 时钟偏移 | 重启后新配置禁用 NTP 时仍沿用上一实例的进程级全局时钟偏移 | 修复中 |
+| `R7 P1-1` | P1 | Windows TUN 初始化 | 调用 `InitializeIpInterfaceEntry` 误用 2 参函数指针而非单参 `PMIB_IPINTERFACE_ROW` | 已修复（`267e267`） |
+| `R7 P1-2` | P1 | Darwin/Windows TUN 路由 | 排除路由缺失或出口指向 TUN 时仍安装捕获路由并报成功，引发路由环路 | 已修复（`267e267`） |
+| `R7 P1-3` | P1 | Windows 状态持久化 | 目录句柄无写权限却调用 `FlushFileBuffers`，导致正常落盘仍报持久化未确认 / FakeIP 保存失败 | 已修复（`267e267`） |
+| `R7 P1-4` | P1 | Windows 控制管道 | `control.poll()` 同步调用 `FlushFileBuffers`，慢客户端可直接卡死宿主主循环 | 已修复（`267e267`） |
+| `R7 P2-1` | P2 | DHCP IPv6 DNS | 租约解析剥离链路本地地址 `%iface` 且端点构造丢失 `sin6_scope_id` | 已修复（`267e267`） |
+| `R7 P2-2` | P2 | DHCP 多上游查询 | 多个 DHCP DNS 上游串行复用同一总截止时间，首选超时即饿死备用服务器 | 已修复（`267e267`） |
+| `R7 P2-3` | P2 | 用户态 TCP 快速重传 | 将双向数据段或窗口更新误计为重复 ACK，违反 RFC 5681 §2 误触发快速重传 | 已修复（`267e267`） |
+| `R7 P2-4` | P2 | NTP 异步解析与取消 | `sync_once` 同步调用 `getaddrinfo` 不受超时与 `stop_token` 覆盖，阻塞核心停机 | 已修复（`267e267`） |
+| `R7 P2-5` | P2 | 嵌入式 NTP 时钟偏移 | 重启后新配置禁用 NTP 时仍沿用上一实例的进程级全局时钟偏移 | 已修复（`267e267`） |
 
 ### 7.2 P1 级缺陷明细
 
@@ -256,15 +256,15 @@
 
 | 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `R8 P1-1` | P1 | OpenVPN 推送协商 | 客户端 `PUSH_REQUEST\0` 经 `std::string_view` 丢失末尾 NUL 字节，上游服务端忽略命令 | 修复中 |
-| `R8 P1-2` | P1 | SSH 会话换钥 | 对端 `SSH_MSG_KEXINIT`/`NEWKEYS` 或本地 1 GiB 换钥阈值直接退出读循环并切断全部通道 | 修复中 |
-| `R8 P1-3` | P1 | Linux L3 网桥 | `AF_PACKET/SOCK_DGRAM` 发送时 `sll_addr`/`sll_halen` 全零且忽略 `sendto()` 失败仍累加计数 | 修复中 |
-| `R8 P2-1` | P2 | XHTTP `stream-up` | 分离上下行连接池取消时仅比对票据值，不同 HTTP/3 连接同流 ID 漏释放上传流 | 修复中 |
-| `R8 P2-2` | P2 | Windows 日志轮转 | 旧日志移至 `.1` 失败被忽略，随后用空临时文件覆盖当前日志致内容丢失 | 修复中 |
-| `R8 P2-3` | P2 | OpenVPN `keepalive` | `PushConfig::ping_s` 默认 `10` 且握手后无条件覆盖本地 `keepalive`（含显式 `0`） | 修复中 |
-| `R8 P2-4` | P2 | mDNS 服务发现 | `convert_mdns_response` 要求每条记录含 `address` 且只编码 `A`/`AAAA`，过滤 `PTR`/`SRV`/`TXT` | 修复中 |
-| `R8 P2-5` | P2 | DERP WebSocket | DERP 服务端消费客户端 Ping（`0x9`）后未回复携带同载荷的 Pong（`0xA`） | 修复中 |
-| `R8 P2-6` | P2 | Linux 内存监视器 | 取 RSS 与固定 `/sys/fs/cgroup/memory.current` 最大值，共享父组噪音误伤接入拒绝 | 修复中 |
+| `R8 P1-1` | P1 | OpenVPN 推送协商 | 客户端 `PUSH_REQUEST\0` 经 `std::string_view` 丢失末尾 NUL 字节，上游服务端忽略命令 | 已修复（`267e267`） |
+| `R8 P1-2` | P1 | SSH 会话换钥 | 对端 `SSH_MSG_KEXINIT`/`NEWKEYS` 或本地 1 GiB 换钥阈值直接退出读循环并切断全部通道 | 已修复（`267e267`） |
+| `R8 P1-3` | P1 | Linux L3 网桥 | `AF_PACKET/SOCK_DGRAM` 发送时 `sll_addr`/`sll_halen` 全零且忽略 `sendto()` 失败仍累加计数 | 已修复（`267e267`） |
+| `R8 P2-1` | P2 | XHTTP `stream-up` | 分离上下行连接池取消时仅比对票据值，不同 HTTP/3 连接同流 ID 漏释放上传流 | 已修复（`267e267`） |
+| `R8 P2-2` | P2 | Windows 日志轮转 | 旧日志移至 `.1` 失败被忽略，随后用空临时文件覆盖当前日志致内容丢失 | 已修复（`267e267`） |
+| `R8 P2-3` | P2 | OpenVPN `keepalive` | `PushConfig::ping_s` 默认 `10` 且握手后无条件覆盖本地 `keepalive`（含显式 `0`） | 已修复（`267e267`） |
+| `R8 P2-4` | P2 | mDNS 服务发现 | `convert_mdns_response` 要求每条记录含 `address` 且只编码 `A`/`AAAA`，过滤 `PTR`/`SRV`/`TXT` | 已修复（`267e267`） |
+| `R8 P2-5` | P2 | DERP WebSocket | DERP 服务端消费客户端 Ping（`0x9`）后未回复携带同载荷的 Pong（`0xA`） | 已修复（`267e267`） |
+| `R8 P2-6` | P2 | Linux 内存监视器 | 取 RSS 与固定 `/sys/fs/cgroup/memory.current` 最大值，共享父组噪音误伤接入拒绝 | 已修复（`267e267`） |
 
 ### 8.2 P1 级缺陷明细
 

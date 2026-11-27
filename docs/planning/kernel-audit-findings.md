@@ -20,13 +20,13 @@
 
 | 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `P1-1` | P1 | TUN 热重载 | 仅修改 `route-address-set` / `route-exclude-address-set` 引用文件时未同步系统路由 | 修复中 |
-| `P1-2` | P1 | 全局路由模式 | `mode global <组名>` 手动切换策略组成员后新连接仍走旧成员 | 修复中 |
-| `P1-3` | P1 | OpenVPN | 控制消息分段到达时 `pump_app_recv()` 空转至超时 | 修复中 |
-| `P1-4` | P1 | OpenConnect DTLS | DTLS 1.3 `ClientHello` 不符合 RFC 9147 §5.3 版本与扩展规范 | 修复中 |
-| `P1-5` | P1 | OpenConnect 数据面 | 严格 DTLS 模式（`dtls #true`, `dtls-fallback #false`）握手前仍经 CSTP 发包 | 修复中 |
-| `P2-1` | P2 | 控制面日志订阅 | WebSocket（`/v1/ws`）与 SSE（`/v1/events/logs`）积压超 64 条时静默跳条 | 修复中 |
-| `P2-2` | P2 | Tailscale MagicDNS | 增量 `MapResponse` 仅含 `Domain` 且省略 `DNSConfig` 时清空已有分域 DNS 配置 | 修复中 |
+| `P1-1` | P1 | TUN 热重载 | 仅修改 `route-address-set` / `route-exclude-address-set` 引用文件时未同步系统路由 | 已修复（`267e267`） |
+| `P1-2` | P1 | 全局路由模式 | `mode global <组名>` 手动切换策略组成员后新连接仍走旧成员 | 已修复（`267e267`） |
+| `P1-3` | P1 | OpenVPN | 控制消息分段到达时 `pump_app_recv()` 空转至超时 | 已修复（`267e267`） |
+| `P1-4` | P1 | OpenConnect DTLS | DTLS 1.3 `ClientHello` 不符合 RFC 9147 §5.3 版本与扩展规范 | 已修复（`267e267`） |
+| `P1-5` | P1 | OpenConnect 数据面 | 严格 DTLS 模式（`dtls #true`, `dtls-fallback #false`）握手前仍经 CSTP 发包 | 已修复（`267e267`） |
+| `P2-1` | P2 | 控制面日志订阅 | WebSocket（`/v1/ws`）与 SSE（`/v1/events/logs`）积压超 64 条时静默跳条 | 已修复（`267e267`） |
+| `P2-2` | P2 | Tailscale MagicDNS | 增量 `MapResponse` 仅含 `Domain` 且省略 `DNSConfig` 时清空已有分域 DNS 配置 | 已修复（`267e267`） |
 
 ---
 
@@ -98,13 +98,13 @@
 
 | 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `R2 P1-1` | P1 | DNS 消息缓存与热重载 | 配置 `message-cache-directory` 后 DNS 监听器忽略规则文件热更新 | 修复中 |
-| `R2 P1-2` | P1 | `fixed-udp` 直连出站 | `fixed-udp` 直连出口忽略 `udp-bind-port`、源地址与接口等 socket 绑定配置 | 修复中 |
-| `R2 P1-3` | P1 | 加密 DNS 统一磁盘缓存 | 使用系统 CA（省略 `ca-file`）组合 `state.cache-directory` 阻止启动 | 修复中 |
-| `R2 P2-1` | P2 | DNS 缓存清理与持久化 | 在线 `clear-cache dns` 后同一监听器的新查询无法再持久化落盘 | 修复中 |
-| `R2 P2-2` | P2 | `fixed-udp` 零长数据报 | `fixed-udp` 入口丢弃合法 0 字节数据报，反向路径将 0 字节应答误判为 EOF | 修复中 |
-| `R2 P2-3` | P2 | 路由模式持久化回报 | 状态目录 `fsync` 失败致持久性未确认时控制命令仍返回成功（退出码 `0`） | 修复中 |
-| `R2 P2-4` | P2 | mDNS 转发 | mDNS 转发将所有 A/AAAA 记录 TTL 写死 `60` 秒，且返回 `TTL = 0` 撤销记录 | 修复中 |
+| `R2 P1-1` | P1 | DNS 消息缓存与热重载 | 配置 `message-cache-directory` 后 DNS 监听器忽略规则文件热更新 | 已修复（`267e267`） |
+| `R2 P1-2` | P1 | `fixed-udp` 直连出站 | `fixed-udp` 直连出口忽略 `udp-bind-port`、源地址与接口等 socket 绑定配置 | 已修复（`267e267`） |
+| `R2 P1-3` | P1 | 加密 DNS 统一磁盘缓存 | 使用系统 CA（省略 `ca-file`）组合 `state.cache-directory` 阻止启动 | 已修复（`267e267`） |
+| `R2 P2-1` | P2 | DNS 缓存清理与持久化 | 在线 `clear-cache dns` 后同一监听器的新查询无法再持久化落盘 | 已修复（`267e267`） |
+| `R2 P2-2` | P2 | `fixed-udp` 零长数据报 | `fixed-udp` 入口丢弃合法 0 字节数据报，反向路径将 0 字节应答误判为 EOF | 已修复（`267e267`） |
+| `R2 P2-3` | P2 | 路由模式持久化回报 | 状态目录 `fsync` 失败致持久性未确认时控制命令仍返回成功（退出码 `0`） | 已修复（`267e267`） |
+| `R2 P2-4` | P2 | mDNS 转发 | mDNS 转发将所有 A/AAAA 记录 TTL 写死 `60` 秒，且返回 `TTL = 0` 撤销记录 | 已修复（`267e267`） |
 
 ### 2.2 P1 级缺陷明细
 
@@ -174,13 +174,13 @@
 
 | 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `R3 P1-1` | P1 | 凭据导入与清理 | 同一 `--secrets-dir` 中同名节点二次导入失败时误删上次成功导入的凭据文件 | 修复中 |
-| `R3 P1-2` | P1 | 订阅凭据热重载 | 文件订阅仅轮换密码且路径不变时热重载走纯路由分支，未重建出站 | 修复中 |
-| `R3 P1-3` | P1 | 多订阅节点展开 | 多订阅含同名节点时全局按裸标签保留首项，导致策略组 `use "<订阅>"` 指向错误服务器 | 修复中 |
-| `R3 P1-4` | P1 | 第三方 YAML 订阅导入 | `src/provider/clash_yaml.cpp` 单遍遍历组名，前向引用子组被替换成全部节点 | 修复中 |
-| `R3 P2-1` | P2 | 热重载排空连接治理 | 监听器热重载后控制面查不到也关不掉 `retired_tcp` 排空期旧连接 | 修复中 |
-| `R3 P2-2` | P2 | 策略组健康探测状态 | 普通配置下成功的策略组探测被 `group-health` 与 HTTP 状态持续报告为 `stale` | 修复中 |
-| `R3 P2-3` | P2 | 策略组成员去重顺序 | 策略组中 `use` 与显式 `member` 书写顺序决定配置能否通过校验启动 | 修复中 |
+| `R3 P1-1` | P1 | 凭据导入与清理 | 同一 `--secrets-dir` 中同名节点二次导入失败时误删上次成功导入的凭据文件 | 已修复（`267e267`） |
+| `R3 P1-2` | P1 | 订阅凭据热重载 | 文件订阅仅轮换密码且路径不变时热重载走纯路由分支，未重建出站 | 已修复（`267e267`） |
+| `R3 P1-3` | P1 | 多订阅节点展开 | 多订阅含同名节点时全局按裸标签保留首项，导致策略组 `use "<订阅>"` 指向错误服务器 | 已修复（`267e267`） |
+| `R3 P1-4` | P1 | 第三方 YAML 订阅导入 | `src/provider/kdl_emit.cpp`（YAML/JSON 订阅组解析导入器）单遍遍历组名，前向引用子组被替换成全部节点 | 已修复（`267e267`） |
+| `R3 P2-1` | P2 | 热重载排空连接治理 | 监听器热重载后控制面查不到也关不掉 `retired_tcp` 排空期旧连接 | 已修复（`267e267`） |
+| `R3 P2-2` | P2 | 策略组健康探测状态 | 普通配置下成功的策略组探测被 `group-health` 与 HTTP 状态持续报告为 `stale` | 已修复（`267e267`） |
+| `R3 P2-3` | P2 | 策略组成员去重顺序 | 策略组中 `use` 与显式 `member` 书写顺序决定配置能否通过校验启动 | 已修复（`267e267`） |
 
 ### 3.2 P1 级缺陷明细
 
@@ -211,7 +211,7 @@
 #### R3 P1-4 — 第三方 YAML 订阅导入器将前向引用子组替换成全部节点
 
 - **触发与影响**：导入格式为第三方 YAML 订阅且 `proxy-groups` 中父组声明位于其引用的子组之前时，子组引用被丢弃，父组被静默回填为全部代理节点列表。
-- **涉及模块**：`src/provider/clash_yaml.cpp`。
+- **涉及模块**：`src/provider/kdl_emit.cpp`（YAML/JSON 订阅组解析导入器）。
 - **根因**：解析器单遍顺序遍历策略组并只记录已访问组名；遇到前向引用子组时判定未知导致成员列表为空，进而触发兜底填充全部节点。
 - **修复设计**：改为两遍解析：第一遍收集全部声明的规范化策略组名，第二遍再依据完整节点集合与完整组名集合解析每个组的成员引用。
 - **回归验收**：单元测试构造 `parent` 先于 `child` 声明的 YAML 订阅（`child` 仅含 `edgeB`，总节点含 `edgeA`、`edgeB`），断言导入后 `parent` 精确引用 `child` 而非 `[edgeA, edgeB]`。
@@ -250,16 +250,16 @@
 
 | 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
 | --- | --- | --- | --- | --- |
-| `R4 P1-1` | P1 | HTTP 控制面清缓存 | 清缓存请求 `target` 类型无效时意外执行 `all` 并返回 HTTP `200` | 修复中 |
-| `R4 P2-1` | P2 | `nexus check` 预检 | `nexus check` 放行缺失本地 DNS `rule-set` 的配置，实际启动时失败 | 修复中 |
-| `R4 P2-2` | P2 | `state` CLI 子命令 | `state` 子命令（`inspect` / `clear-cache` / `reset`）忽略全局 `-D` 工作目录 | 修复中 |
-| `R4 P2-3` | P2 | 嵌入式 C API | `nexus_core_run_args` 返回后未恢复工作目录，后续调用沿用上次 `-D` | 修复中 |
-| `R4 P2-4` | P2 | TUN 桥接出站读包 | TUN 出站读取遇短缓冲区先丢弃队首包再报告队空 | 修复中 |
-| `R4 P2-5` | P2 | HTTP-Only 控制面 | 仅开启 HTTP 控制端时 `/v1/status` 返回空 `instance_id` | 修复中 |
-| `R4 P2-6` | P2 | 配置目录分片加载 | 目录内的显式 `--host-override` 先被当作普通分片扫描触发 `duplicate workers` | 修复中 |
-| `R4 P2-7` | P2 | POSIX CLI 日志跟踪 | `control ... logs --follow` 将游标推至全局 `latest` 导致跳条 | 修复中 |
-| `R4 P2-8` | P2 | HTTP 策略组切换 | `POST /v1/groups/{tag}/select` 拒绝 `{"auto":true}` 且 `--auto` 回显错误 `selected` | 修复中 |
-| `R4 P3-1` | P3 | HTTP 日志查询解码 | HTTP 日志搜索静默丢弃含 `%2F` 的过滤条件 | 修复中 |
+| `R4 P1-1` | P1 | HTTP 控制面清缓存 | 清缓存请求 `target` 类型无效时意外执行 `all` 并返回 HTTP `200` | 已修复（`267e267`） |
+| `R4 P2-1` | P2 | `nexus check` 预检 | `nexus check` 放行缺失本地 DNS `rule-set` 的配置，实际启动时失败 | 已修复（`267e267`） |
+| `R4 P2-2` | P2 | `state` CLI 子命令 | `state` 子命令（`inspect` / `clear-cache` / `reset`）忽略全局 `-D` 工作目录 | 已修复（`267e267`） |
+| `R4 P2-3` | P2 | 嵌入式 C API | `nexus_core_run_args` 返回后未恢复工作目录，后续调用沿用上次 `-D` | 已修复（`267e267`） |
+| `R4 P2-4` | P2 | TUN 桥接出站读包 | TUN 出站读取遇短缓冲区先丢弃队首包再报告队空 | 已修复（`267e267`） |
+| `R4 P2-5` | P2 | HTTP-Only 控制面 | 仅开启 HTTP 控制端时 `/v1/status` 返回空 `instance_id` | 已修复（`267e267`） |
+| `R4 P2-6` | P2 | 配置目录分片加载 | 目录内的显式 `--host-override` 先被当作普通分片扫描触发 `duplicate workers` | 已修复（`267e267`） |
+| `R4 P2-7` | P2 | POSIX CLI 日志跟踪 | `control ... logs --follow` 将游标推至全局 `latest` 导致跳条 | 已修复（`267e267`） |
+| `R4 P2-8` | P2 | HTTP 策略组切换 | `POST /v1/groups/{tag}/select` 拒绝 `{"auto":true}` 且 `--auto` 回显错误 `selected` | 已修复（`267e267`） |
+| `R4 P3-1` | P3 | HTTP 日志查询解码 | HTTP 日志搜索静默丢弃含 `%2F` 的过滤条件 | 已修复（`267e267`） |
 
 ### 4.2 P1 级缺陷明细
 
