@@ -1,6 +1,6 @@
 # Nexus Core 审计缺陷与修复跟踪
 
-本文记录针对基线提交 `d10c429`（Round 1：`5 P1 + 2 P2`）、`0e52ae8`（Round 2：`3 P1 + 4 P2`）、Round 3（`4 P1 + 3 P2`）、Round 4（`1 P1 + 8 P2 + 1 P3`）及 Round 5（`5 P2`，Linux 本地实测复现）共五轮 36 项（`13 P1 + 22 P2 + 1 P3`）内核专项审计发现，明确触发条件、影响范围、根因定位、修复设计与回归验收目标，配合源码修复与自动化单元测试同步闭环。
+本文记录针对基线提交 `d10c429`（Round 1：`5 P1 + 2 P2`）、`0e52ae8`（Round 2：`3 P1 + 4 P2`）、Round 3（`4 P1 + 3 P2`）、Round 4（`1 P1 + 8 P2 + 1 P3`）、Round 5（`5 P2`）及 Round 6（`3 P1 + 6 P2`，源码与本地实测复现）共六轮 45 项（`16 P1 + 28 P2 + 1 P3`）内核专项审计发现，明确触发条件、影响范围、根因定位、修复设计与回归验收目标，配合源码修复与自动化单元测试同步闭环。
 
 ## 1. Round 1（基线 `d10c429`：5 P1 + 2 P2）
 
@@ -390,3 +390,97 @@
 - **根因**：`poll_retired()` 回收并销毁已排空的 `RetiredTcpGeneration` 时，未将其最终 `rx_bytes` / `tx_bytes` 并入进程级单调累计计数器。
 - **修复设计**：维护进程级已回收累计字节计数（`reclaimed_rx_bytes` / `reclaimed_tx_bytes`），在 `poll_retired()` 移除旧代前先折叠其最终字节数，并在状态统计中汇总 `reclaimed + active + draining_retired`，保证同进程累计流量单调不退且不重复计算。
 - **回归验收**：单元测试在产生流量并完成监听器换代与旧代排空回收后查询状态统计，断言累计字节数保留既有总量、绝不回退且不双计。
+
+---
+
+## 6. Round 6（3 P1 + 6 P2，源码与本地实测复现）
+
+### 6.1 总览
+
+| 编号 | 级别 | 子系统 | 缺陷摘要 | 当前状态 |
+| --- | --- | --- | --- | --- |
+| `R6 P1-1` | P1 | HTTP 订阅缓存 | 订阅更换 URL 后仍按订阅名发送旧 ETag 并在 `304` 时沿用旧资源节点 | 修复中 |
+| `R6 P1-2` | P1 | 远程规则集校验 | 同 URL 的多条远程规则集引用仅沿用首条校验策略，后声明的 `sha256` 未生效 | 修复中 |
+| `R6 P1-3` | P1 | ACME 凭据原子提交 | ACME 可将证书与私钥不匹配的一代分步落盘并标记续签成功，TLS 拒绝未回传 | 修复中 |
+| `R6 P2-1` | P2 | SS-2022 原生 UDP | 原生 UDP 规则加载对已 mmap 的 NXMM 索引规则读到空串报 `invalid NXMM file size` | 修复中 |
+| `R6 P2-2` | P2 | `fixed-udp` 路由模式 | `fixed-udp` 有序规则分支跳过运行模式判断，切至 `direct` 后仍支配新流 | 修复中 |
+| `R6 P2-3` | P2 | ACME 订单状态机 | 订单迟到的 `ready` 状态错过唯一 `finalize` 分支导致永远无法提交 CSR | 修复中 |
+| `R6 P2-4` | P2 | SRS 派生 NXMM 缓存 | 派生目录 `cache/nxmm` 无预算回收持续增长，且 `clear-cache --rulesets` 遗漏清理 | 修复中 |
+| `R6 P2-5` | P2 | Windows 控制面实例 ID | Windows 命名管道 `LocalControl::instance()` 返回固定管道名，跨重启不变 | 修复中 |
+| `R6 P2-6` | P2 | Linux KDE 系统代理 | KDE 后端接受 `--pac-url` 后仅写 `ProxyType=2`，未读写/恢复 `Proxy Config Script` | 修复中 |
+
+### 6.2 P1 级缺陷明细
+
+#### R6 P1-1 — HTTP 订阅换 URL 后沿用上一个资源的节点
+
+- **触发与影响**：同名 HTTP 订阅更换资源 URL 后，请求仍携带上一资源的 `ETag`；若新地址返回 `304`，内核继续复用旧 URL 的节点正文。
+- **涉及模块**：`src/tools/proxy_providers.cpp`、`src/tools/proxy_providers.cppm`。
+- **根因**：缓存文件仅按订阅名寻址，未将完整资源 URL 纳入缓存身份与验证器同源校验。
+- **修复设计**：将缓存身份绑定至完整规范化 URL，严格校验验证器与正文同源；URL 变更时绝不发送旧 `If-None-Match` 且不复用旧正文。
+- **回归验收**：单元测试将同名 HTTP 订阅切换至新 URL，断言请求不携带旧 `ETag` 且绝不复用旧节点正文。
+
+#### R6 P1-2 — 同 URL 的远程规则集引用共用第一条引用的校验策略
+
+- **触发与影响**：路由或 DNS 中多处引用同一远程规则集 URL 且附带不同 `sha256`（或仅后者声明 `sha256`）时，后声明的摘要约束未参与校验。
+- **涉及模块**：`src/config/`（远程规则集配置校验）、`src/tools/route_files.cpp`、`src/tools/proxy_listener_reload.cppm`。
+- **根因**：下载任务按 URL 收集时仅保留首条声明，后续引用绑定同 URL 缓存正文时未重新核对自身 `sha256` 约束。
+- **修复设计**：配置期直接拒绝同一 URL 下的冲突 `sha256` 声明，并在每次将缓存或下载正文绑定到规则集引用时再次校验该引用的 `sha256` 约束。
+- **回归验收**：单元测试验证同 URL 冲突 `sha256` 在配置期报错，且绑定阶段对每条引用强制执行独立 `sha256` 校验。
+
+#### R6 P1-3 — ACME 可把证书与私钥不匹配的一代保存为续签成功
+
+- **触发与影响**：ACME 签发结果若与 CSR 私钥不匹配或落盘中途失败，磁盘可能残留跨代错配 cert/key 且续签循环误判成功休眠至过期；冷启动亦先安装磁盘错配记录。
+- **涉及模块**：`src/service/acme/client.cpp`、`src/service/acme/store.cpp`、`src/tools/svc_acme.cpp`。
+- **根因**：签发阶段仅检查证书有效期即分两次独立替换 cert/key 文件并更新续签状态，未做公私钥配对校验，且 TLS 加载拒绝未回传至签发流程。
+- **修复设计**：落盘前与冷启动加载时均校验叶证书公钥与私钥配对；cert+key 以整对原子提交消除跨代窗口；先发布激活在线 TLS 凭据并回传失败，仅在激活成功后更新续签状态。
+- **回归验收**：单元测试注入公钥不匹配证书断言被拒绝（不落盘、不激活、不更新续签时间），匹配证书则原子提交并成功激活。
+
+### 6.3 P2 级缺陷明细
+
+#### R6 P2-1 — SS-2022 原生 UDP 遇到 NXMM 索引规则阻止实例启动
+
+- **触发与影响**：含 NXMM 索引规则的配置通过 `nexus check`，但在启用 SS-2022 原生 UDP 启动时报错 `invalid NXMM file size`。
+- **涉及模块**：`src/tools/route_files.cpp`、`src/tools/route_files_nxmm.cppm`（及原生 UDP 规则加载路径）。
+- **根因**：规则加载器将 mmap 匹配器保存在 `data_mmaps[i]` 并留空 `data[i]` 字节串，原生 UDP 路径仍从空 `data[i]` 重新解析 NXMM。
+- **修复设计**：让原生 UDP 与 TCP 路径共享已加载的 `data_mmaps` / `MmapMatcher` 表示，避免重复解析空字节串。
+- **回归验收**：单元测试使用真实 NXMM 索引规则初始化 SS-2022 原生 UDP 路由，断言启动成功且按预期命中分流。
+
+#### R6 P2-2 — `fixed-udp` 有序规则仍支配 `direct` 模式下的新流
+
+- **触发与影响**：`fixed-udp` 配置有序 `block` 等规则并将运行模式切换至 `direct`（或 `global`）后，新建立的 UDP 流仍受有序规则支配。
+- **涉及模块**：`src/relay/fixed_udp_inbound.cpp`。
+- **根因**：`fixed-udp` 有序规则分支直接执行命中动作，跳过了运行模式决策。
+- **修复设计**：与普通 UDP 入口共用运行模式决策（`direct` / `global` / `rule`），在评估有序规则前先按运行模式路由。
+- **回归验收**：环回单元测试配置有序 `block` 规则后切至 `direct` 模式，断言新客户端 UDP 数据报直连到达并回显。
+
+#### R6 P2-3 — ACME 订单迟到的 `ready` 状态无法进入 `finalize`
+
+- **触发与影响**：ACME 订单在首轮轮询结束时仍处于 `pending`，进入第二轮后才转为 `ready` 时，客户端持续空等 `valid` 永不提交 CSR。
+- **涉及模块**：`src/service/acme/client.cpp`。
+- **根因**：实现拆为两段无退避循环且仅在首段结束后检查一次 `finalize`，二段不再触发 `finalize`。
+- **修复设计**：改为统一的状态机驱动轮询循环（含退避间隔与总截止时间），按 `pending`/`ready`/`processing`/`valid`/`invalid` 状态流转并在 `ready` 时执行一次 `finalize`。
+- **回归验收**：单元测试模拟多轮 `pending` 后才转 `ready` 的 ACME 服务端，断言 `finalize` 被正常调用且签发成功。
+
+#### R6 P2-4 — SRS 派生缓存 `cache/nxmm` 持续增长且清规则缓存后仍保留
+
+- **触发与影响**：SRS 编译派生的 `cache/nxmm` 文件随更新无限增长，且执行 `state clear-cache --rulesets` 或在线清理规则集缓存后仍残留磁盘。
+- **涉及模块**：`src/tools/route_files_nxmm.cppm`、`src/state/ruleset_cache.cppm`、`src/state/ruleset_cache.cpp`、`src/tools/state_cli.cpp`。
+- **根因**：派生 NXMM 文件未纳入规则集缓存字节预算回收，且清理路径遗漏 `cache/nxmm` 目录。
+- **修复设计**：为 `cache/nxmm` 增加按规则集缓存预算淘汰最旧非活跃文件的回收机制，并将该目录纳入 CLI 与控制面 `clear-cache` 的 `rulesets` / `all` 清理范围。
+- **回归验收**：单元测试验证超预算触发旧派生文件淘汰，以及 `clear-cache --rulesets` 与在线清理均完整清除 `cache/nxmm`。
+
+#### R6 P2-5 — Windows 管道实例标识跨进程重启不变
+
+- **触发与影响**：Windows 端重启同一配置的 Core 进程后，`LocalControl::instance()` 返回值完全相同，无法区分跨重启进程实例。
+- **涉及模块**：`src/tools/control_windows.cpp`。
+- **根因**：`LocalControl::instance()` 直接返回确定性的规范化命名管道路径 `pipe_utf8`。
+- **修复设计**：在创建 `LocalControl` 时为每个进程实例生成独立高熵随机实例标识并由 `instance()` 返回。
+- **回归验收**：单元测试验证连续创建的实例生成彼此不同的非空实例标识，且保持 Windows C++23 编译洁净。
+
+#### R6 P2-6 — KDE 后端接受 PAC URL 后未写入该地址
+
+- **触发与影响**：Linux KDE 系统代理后端接收 `--pac-url` 返回退出码 `0`，但实际未写入 PAC 脚本地址且禁用时未恢复原配置。
+- **涉及模块**：`src/platform/system_proxy.cpp`。
+- **根因**：启用路径仅写入 `ProxyType=2`，遗漏对 `Proxy Config Script` 的快照读取、写入与禁用恢复，状态查询亦未读取该键。
+- **修复设计**：快照保存既有 `Proxy Config Script`，启用时同时写入 `Proxy Config Script` 与 `ProxyType=2`（任一失败即返回错误），状态查询读取该键，禁用时完整恢复或清除。
+- **回归验收**：隔离 `PATH` 下的模拟 `kreadconfig6`/`kwriteconfig6` 单元测试验证启用同时写入两键、状态可读回、禁用完整恢复原值。
