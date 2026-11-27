@@ -96,4 +96,4 @@
 | --- | --- |
 | [实施路线](planning/roadmap.md) · [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) · [功能完整度清单](planning/feature-completion.md) · [拨号字段覆盖](planning/dial-field-coverage.md) | 总体演进路径、协议矩阵补齐顺序、内核增强与能力覆盖清单 |
 | [网络栈验证](planning/network-validation.md) · [性能验证](planning/performance-validation.md) · [Linux 集成验证](planning/linux-validation.md) · [Linux 内核验收](planning/proxy-kernel-linux-validation.md) · [DNS 与状态验证](planning/dns-state-validation.md) | 各子系统测试策略与实机验收基线 |
-| [内核审计缺陷与修复跟踪](planning/kernel-audit-findings.md) | 基线 `d10c429` / `0e52ae8` 及 Round 3–6 六轮内核专项审计发现（`16 P1 + 28 P2 + 1 P3`，共 45 项）根因、修复设计与回归验收清单 |
+| [内核审计缺陷跟踪（R1–R4）](planning/kernel-audit-findings.md) · [（R5–R7）](planning/kernel-audit-findings-r5-r7.md) | 七轮内核专项审计发现（`20 P1 + 33 P2 + 1 P3`，共 54 项）根因、异步化红线、修复设计与回归验收清单 |
