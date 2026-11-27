@@ -45,7 +45,7 @@ inbound "edge" type="vless" {{
     tls {{ certificate-file "{root / 'cert'}"; private-key-file "{root / 'key'}"; }}
 }}
 outbound "direct" type="direct"
-routing {{ {program}default-outbound "direct"; }}
+routing {{ {program}final "direct"; }}
 ''')
     tls = ssl.create_default_context(cafile=root / "cert")
     parked = contextlib.ExitStack()

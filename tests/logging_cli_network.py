@@ -27,7 +27,7 @@ role "client"
 {control_node}
 inbound "private-input" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 {extra}
 '''
 

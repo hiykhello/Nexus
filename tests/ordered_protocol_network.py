@@ -105,11 +105,13 @@ role "client"
 inbound "local" type="mixed" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
 routing {{
-  rule-set "http" path="http.kdl" format="kdl"
-  rule-set "tls" path="tls.beve" format="beve"
-  rule-set "dns" path="dns.kdl" format="kdl"
-  rule-set "ssh" path="ssh.kdl" format="kdl"
-  rule-set "stun" path="stun.kdl" format="kdl"
+  rulesets {{
+      "http" path="http.kdl" format="kdl"
+      "tls" path="tls.beve" format="beve"
+      "dns" path="dns.kdl" format="kdl"
+      "ssh" path="ssh.kdl" format="kdl"
+      "stun" path="stun.kdl" format="kdl"
+  }}
   tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{
     rule action="sniff"
     rule action="reject" rule-set="http" domain-source="sniffed"
@@ -118,7 +120,7 @@ routing {{
     rule action="reject" rule-set="ssh"
     rule action="reject" rule-set="stun"
   }}
-  default-outbound "direct"
+  final "direct"
 }}
 ''')
         with nexus_process(binary, config):

@@ -91,7 +91,7 @@ inbound "input" type="socks5" {{ listen host="127.0.0.1" port={port}; authentica
 outbound "direct" type="direct"
 outbound "blocked" type="block"
 outbound "private-selector" type="selector" {{ member "direct"; member "blocked"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
     config.write_text(source)
     with nexus_process(binary, config):

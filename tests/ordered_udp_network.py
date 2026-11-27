@@ -23,13 +23,13 @@ role "client"
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}; }}
 outbounds {{ direct "direct"; }}
 routing {{
-    rule-set "blocked" path="blocked.kdl" format="kdl"
+    rulesets {{ "blocked" path="blocked.kdl" format="kdl"; }}
     tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{
         rule action="sniff"
         rule action="reject" rule-set="blocked" domain-source="sniffed"
         rule action="route" outbound="direct"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         proc = subprocess.Popen([sys.argv[1], "run", "--config", str(root / "config.kdl")], stderr=subprocess.PIPE)

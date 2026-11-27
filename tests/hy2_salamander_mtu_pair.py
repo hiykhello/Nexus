@@ -252,7 +252,7 @@ inbound "edge" type="hysteria2" {{ listen host="{host}" port={port};
  {server_quic}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             client.write_text(f'''schema-version 1
 role "client"
@@ -264,7 +264,7 @@ outbound "edge" type="hysteria2" {{ server host="{host}" port={port}; udp-fragme
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
  {client_quic}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             with Echo() as echo, nexus_process(str(binary), str(server)) as server_process, nexus_process(str(binary), str(client)) as client_process:
                 if delayed: mtu_delayed_restore(front)

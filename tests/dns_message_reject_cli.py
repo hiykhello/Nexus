@@ -23,7 +23,7 @@ dns {{ listen host="127.0.0.1" port={listen}; server "unused" type="udp" host="1
 }}
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={proxy}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 def query(name,ident):
     question=b"".join(bytes([len(label)])+label.encode() for label in name.split("."))+b"\0\0\1\0\1"

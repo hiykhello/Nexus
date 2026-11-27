@@ -43,7 +43,7 @@ inbound "local" type="{inbound}" {{
   authentication "password" username="{username}" password-file="{password}"
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 
 

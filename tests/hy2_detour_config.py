@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-hy2-detour-config-') as directory
 role "client"
 inbound "local" type="socks5" { listen host="127.0.0.1" port=12345; authentication "none"; }
 outbound "direct" type="direct"
-''' + outbounds + '\nrouting { default-outbound "edge"; }\n')
+''' + outbounds + '\nrouting { final "edge"; }\n')
         result = subprocess.run([str(binary), 'run', '--config', str(path)], capture_output=True, text=True, timeout=5)
         if result.returncode == 0 or expected.lower() not in result.stderr.lower():
             raise RuntimeError(f'{name}: unexpected result {result.returncode}: {result.stdout} {result.stderr}')

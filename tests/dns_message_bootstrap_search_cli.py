@@ -101,7 +101,7 @@ role "client"
 dns {{ listen host="127.0.0.1" port={listen}; server "local" type="local"; server "remote" type="udp" host="{hostname}" port={remote.getsockname()[1]} domain-resolver="local"; final "remote"; }}
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={proxy}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             process = subprocess.Popen([str(binary), "run", "--config", str(config)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             try:

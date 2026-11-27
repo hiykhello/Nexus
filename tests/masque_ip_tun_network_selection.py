@@ -64,7 +64,7 @@ outbound "edge" type="masque" {{
     authentication {{ bearer-file "{token}"; }}
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             for label in ("primary", "backup"):
                 impairment = stall_primary_connects(namespaces["primary"], port, udp=True) if label == "backup" else nullcontext()

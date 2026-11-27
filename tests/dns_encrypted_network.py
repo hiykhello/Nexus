@@ -97,7 +97,7 @@ dns {{
   final "secure"
   disable-cache #true
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 
 

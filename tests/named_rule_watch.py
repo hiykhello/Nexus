@@ -43,7 +43,7 @@ dns {{
 http-clients {{
   updates {{ outbound "edge"; domain-resolver "selected"; ca-file "{root / 'cert'}"; timeout-ms {timeout}; }}
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     return config
 
@@ -58,7 +58,7 @@ inbound "edge" type="trojan" {{
   tls {{ certificate-file "{root / 'cert'}"; private-key-file "{root / 'key'}"; }}
 }}
 outbound "direct" type="direct" {{ inet4-bind-address "127.0.0.3"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     return config
 

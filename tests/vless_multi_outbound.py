@@ -34,9 +34,9 @@ workers {PROXY_WORKERS}
 inbounds {{ mixed "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }} }}
 outbounds {{ direct "direct"; {outbound("good", upstream_port)}; {outbound("closed", closed_port)}; }}
 routing {{
- rule-set "selected" path="multi-rules.kdl" format="kdl"
+ rulesets {{ "selected" path="multi-rules.kdl" format="kdl"; }}
  rules {{ - kind="rule-set" value="selected" outbound="{first}"; }}
- default-outbound "{fallback}"
+ final "{fallback}"
 }}
 ''')
             proc = subprocess.Popen([NEXUS, "run", "--config", config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

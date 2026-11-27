@@ -32,10 +32,12 @@ role "client"
 inbounds {{ mixed "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }} }}
 outbounds {{ direct "direct"; block "reject"; }}
 routing {{
- rule-set "a" path="a.kdl" format="kdl"
- rule-set "b" path="b.kdl" format="kdl"
+ rulesets {{
+     "a" path="a.kdl" format="kdl"
+     "b" path="b.kdl" format="kdl"
+ }}
  rules {{ - kind="rule-set" value="a" outbound="{first}"; - kind="rule-set" value="b" outbound="{second}"; }}
- default-outbound "direct"
+ final "direct"
 }}
 ''')
         proc = subprocess.Popen([binary, "run", "--config", config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

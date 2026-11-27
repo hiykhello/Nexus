@@ -72,7 +72,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentica
 dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ bootstrap-resolver "boot"; server host="edge.test" port={upstream.getsockname()[1]}; authentication {{ uuid-file "{uuid}"; }}; tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         env=os.environ.copy(); env["LD_PRELOAD"]=str(guard)
         process=subprocess.Popen([binary,"run","--config",config],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)

@@ -62,7 +62,7 @@ outbound "edge" type="masque" {{
   local-address "fd10::2/128"
   mtu 1280
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 '''
             path.write_text(config)
             with nexus_process(binary, path):

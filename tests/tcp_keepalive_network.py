@@ -62,7 +62,7 @@ workers {workers}
 dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.port}; strategy "ipv4_only"; }}
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct" {{ {fields} }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     connections = 0
     try:
@@ -121,7 +121,7 @@ def preparation_failure(binary, root, configured=None, port=None, label="direct"
 role "client"
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct" {{ {SETTINGS} }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     with socket.socket() as origin:
         origin.bind(("127.0.0.1", 0))

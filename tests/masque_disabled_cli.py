@@ -24,7 +24,7 @@ inbound "masque" type="masque" {{
  allow cidr="127.0.0.0/8" first-port=1 last-port=65535
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     result = subprocess.run([binary, 'run', '--config', config], capture_output=True, text=True, timeout=10)
     if result.returncode == 0 or 'MASQUE is unavailable in this build' not in result.stderr:

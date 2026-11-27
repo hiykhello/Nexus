@@ -14,7 +14,7 @@ inbounds {
   }
 }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )";
     auto valid=config::parse_kdl(config);if(!valid || valid->inbounds.size()!=1 || !valid->inbounds[0].masque || valid->inbounds[0].masque->destinations.size()!=1)return 1;
     for(auto text:{replace(config,"127.0.0.0/8","127.0.0.1/8"),replace(config,"127.0.0.0/8","127.0.0.0/33"),replace(config,"first-port=1","first-port=0"),replace(config,"bearer-file \"/tmp/secret\"","bearer-file \"relative\""),replace(config,"    allow cidr=\"127.0.0.0/8\" first-port=1 last-port=65535\n","")})if(config::parse_kdl(text))return 2;

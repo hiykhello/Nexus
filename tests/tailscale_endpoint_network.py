@@ -262,7 +262,7 @@ def run_case(binary, fixture, root, child_prefix, mode):
 role "client"
 inbound "socks" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct" {{ bind-interface "{DEVICE}"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
                 with process(["stdbuf", "-oL", binary, "run", "--config", proxy_config]) as proxy:
                     if b"SOCKS5 listening" not in line(proxy):
@@ -396,9 +396,9 @@ inbound "socks" type="socks5" {{ listen host="127.0.0.1" port={port}; authentica
 outbound "direct" type="direct"
 outbound "mesh" type="tailscale" {{ endpoint-file "{outbound}"; }}
 routing {{
-    rule-set "mesh-hosts" format="kdl" path="mesh-routes.kdl"
+    rulesets {{ "mesh-hosts" format="kdl" path="mesh-routes.kdl"; }}
     rules {{ - kind="rule-set" value="mesh-hosts" outbound="mesh"; }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         with process([*child_prefix, binary, "endpoint", "run", "--config", endpoint]) as second, \

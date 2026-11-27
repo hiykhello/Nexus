@@ -277,9 +277,9 @@ namespace config {
         auto& d = config.defaults;
         if (!d.configured()) return {};
         if (d.default_domain_resolver) {
-            if (!config.dns) return std::unexpected("routing default-domain-resolver requires a dns block");
+            if (!config.dns) return std::unexpected("dns default resolver requires a dns block");
             auto idx = config.dns->resolver_index(*d.default_domain_resolver);
-            if (!idx) return std::unexpected("routing default-domain-resolver not found: " + *d.default_domain_resolver);
+            if (!idx) return std::unexpected("dns default resolver not found: " + *d.default_domain_resolver);
             d.default_domain_resolver_index = *idx;
         }
         auto inherit_binding = [&](platform::SocketBinding& b, bool has_explicit_network) -> void {

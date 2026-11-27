@@ -75,7 +75,7 @@ inbounds {{
   shadowsocks "b" {{ listen host="127.0.0.1" port={second_port}; method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
 }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "deny" path="deny.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; final "direct"; }}
 ''')
     for invalid,mode in [("AAAA",0o600),(base64.b64encode(bytes(range(size))).decode(),0o644)]:
         key.write_text(invalid); key.chmod(mode)

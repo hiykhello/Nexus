@@ -89,7 +89,7 @@ outbound "edge" type="hysteria2" {{ server host="{host}" port={port}; {fragment}
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
  quic {{ salamander-password-file "{root / 'obfs'}"; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
                 with Echo() as echo, nexus_process(str(binary), str(path)):
                     half_close(front); udp_echo(front, echo.port)
@@ -109,7 +109,7 @@ routing {{ default-outbound "edge"; }}
  tls {{ certificate-file "{root / 'cert'}"; private-key-file "{root / 'key'}"; }}
  quic {{ salamander-password-file "{root / 'obfs'}"; }}
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             outbound = {'type': 'hysteria2', 'server': host, 'server_port': port, 'password': 'test-password',
                         'tls': {'enabled': True, 'server_name': 'localhost', 'certificate_path': str(root / 'cert'), 'alpn': ['h3']}, 'obfs': obfs}

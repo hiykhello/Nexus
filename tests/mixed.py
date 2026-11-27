@@ -60,9 +60,9 @@ inbound "local" type="mixed" {{
 outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {{
-    rule-set "blocked" path="blocked.kdl" format="kdl"
+    rulesets {{ "blocked" path="blocked.kdl" format="kdl"; }}
     rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     (root / 'blocked.kdl').write_text('schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="blocked.test"\n')
@@ -261,7 +261,7 @@ inbound "local" type="mixed" {{
     authentication "password" username="alice" password-file="{secret}"
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     valid = b"pRoXy-aUtHoRiZaTiOn: bAsIc " + base64.b64encode(b"alice:hello:world") + b"\r\n"
     invalid = b"Proxy-Authorization: Basic " + base64.b64encode(b"alice:incorrect") + b"\r\n"

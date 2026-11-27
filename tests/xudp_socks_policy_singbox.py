@@ -74,7 +74,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={listen}; authenti
 outbound "direct" type="direct"
 outbound "reject" type="block"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={front};{flow} authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "cover.example"; ca-file "{root/'cert'}"; verify #true; }} }}
-routing {{ rule-set "block" path="block.kdl" format="kdl"; rules {{ - kind="rule-set" value="block" outbound="reject"; }}; default-outbound "edge"; }}
+routing {{ rulesets {{ "block" path="block.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="block" outbound="reject"; }}; final "edge"; }}
 ''')
     subprocess.run(["sing-box","check","-c",root/"box.json"],capture_output=True,check=True)
     box=subprocess.Popen(["sing-box","run","-c",root/"box.json"],stderr=subprocess.PIPE); proxy=None

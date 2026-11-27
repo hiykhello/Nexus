@@ -34,7 +34,7 @@ outbound "edge" type="trojan" {{
     authentication {{ password-file "{password}"; }}
     tls {{ server-name "{name}"; ca-file "{root / 'cert'}"; fingerprint "{fingerprint}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(binary, config), connect(front) as client:
             client.sendall(b"\x05\x01\0")
@@ -84,7 +84,7 @@ outbound "edge" type="hysteria2" {{
     authentication {{ password-file "{password}"; }}
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; fingerprint "{fingerprint}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         args = [peer, root / "cert", root / "key", str(1000 + algorithm), str(listener.fileno())]
         if cipher:

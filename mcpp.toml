@@ -1889,3 +1889,8 @@ required_features = ["control-http", "vless", "trojan", "anytls", "ss2022", "hy2
 kind = "bin"
 main = "tests/wave37_persisted_refresh_unit.cpp"
 required_features = ["http-client", "srs", "test-bins"]
+
+[targets.wave38-canonical-kdl-unit]
+kind = "bin"
+main = "tests/wave38_canonical_kdl_unit.cpp"
+required_features = ["dns-response", "http-client", "srs", "test-bins"]

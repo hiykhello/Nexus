@@ -24,7 +24,7 @@ outbound "edge" type="vless" {{
     {transport}
     {extra}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
 
 

@@ -56,7 +56,7 @@ namespace {
             if (g > 0) kdl += std::format("    member \"sel-{:02d}\"\n", g - 1);
             kdl += "  }\n";
         }
-        kdl += "}\nrouting {\n  default-outbound \"sel-25\"\n}\n";
+        kdl += "}\nrouting {\n  final \"sel-25\"\n}\n";
 
         auto parsed = config::parse_kdl(kdl);
         require(parsed.has_value(), parsed ? "" : "520 outbounds + 26 selectors parse: " + parsed.error());
@@ -135,7 +135,7 @@ namespace {
                 "schema-version 1\nrole \"server\"\n"
                 "inbounds {\n" + body + "}\n"
                 "outbounds { outbound \"direct\" type=\"direct\"; }\n"
-                "routing { default-outbound \"direct\"; }\n";
+                "routing { final \"direct\"; }\n";
             auto r = config::parse_kdl(kdl);
             require(r.has_value(), r ? "" : std::string(label) + ": " + r.error());
             return std::move(*r);
@@ -394,7 +394,7 @@ namespace {
         for (int s = 200; s < 224; ++s) kdl += std::format(" {}", s);
         kdl += "\n";
         for (int i = 0; i < 72; ++i) kdl += std::format("    use \"pr{:02d}\"\n", i);
-        kdl += "  }\n}\nrouting { default-outbound \"grp\"; }\n";
+        kdl += "  }\n}\nrouting { final \"grp\"; }\n";
 
         auto cfg = config::parse_kdl(kdl);
         require(cfg.has_value(), cfg ? "" : "track1 config caps parse: " + cfg.error());

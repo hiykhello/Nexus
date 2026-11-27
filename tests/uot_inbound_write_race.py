@@ -23,7 +23,7 @@ role "server"
 inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; }}
 outbound "direct" type="direct"
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={upstream.getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         peer_read,peer_write=os.pipe(); gate_read,gate_write=os.pipe(); peer=server=client=None
         try:

@@ -11,9 +11,11 @@ outbounds {
     block "reject"
 }
 routing {
-    rule-set "blocked" path="paired/rules/blocked.kdl" format="kdl"
-    rules {
-        - kind="rule-set" value="blocked" outbound="reject"
+    rulesets {
+        blocked path="paired/rules/blocked.kdl" format="kdl"
     }
-    default-outbound "direct"
+    rules {
+        - rule-set "blocked" to="reject"
+    }
+    final "direct"
 }

@@ -240,7 +240,7 @@ outbound "wg" type="wireguard" {{
     local-address "fd09::2/128"
     mtu 1420
 }}
-routing {{ default-outbound "wg"; }}
+routing {{ final "wg"; }}
 '''
         (root / "nx.kdl").write_text(nx_cfg)
         key = root / "ss.key"
@@ -258,7 +258,7 @@ inbound "hop" type="shadowsocks" {{
     key-file "{key}"
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         layered = root / "layered.kdl"
         lower = f'''outbound "hop" type="shadowsocks" {{

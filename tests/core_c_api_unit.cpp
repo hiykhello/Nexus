@@ -51,7 +51,7 @@ namespace {
             out << "schema-version 1\nrole \"client\"\n"
                 << "inbounds { inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=" << port << "; authentication \"none\"; }; }\n"
                 << "outbounds { outbound \"direct\" type=\"direct\"; }\n"
-                << "routing { default-outbound \"direct\"; }\n";
+                << "routing { final \"direct\"; }\n";
         }
         auto prev = std::signal(SIGINT, custom_sigint_handler);
 
@@ -164,7 +164,7 @@ int main() {
 
     assert(nexus_core_build_features() != nullptr);
     char err_buf[256]{};
-    const char* ok_kdl = "schema-version 1\nrole \"client\"\ninbounds { inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }; }\noutbounds { outbound \"direct\" type=\"direct\"; }\nrouting { default-outbound \"direct\"; }\n";
+    const char* ok_kdl = "schema-version 1\nrole \"client\"\ninbounds { inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }; }\noutbounds { outbound \"direct\" type=\"direct\"; }\nrouting { final \"direct\"; }\n";
     assert(nexus_core_check_config_text(ok_kdl, err_buf, sizeof(err_buf)) == 0);
     assert(nexus_core_check_config_text("bad {", err_buf, sizeof(err_buf)) != 0);
 

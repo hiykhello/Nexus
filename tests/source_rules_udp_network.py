@@ -63,7 +63,7 @@ inbounds {{
  shadowsocks "ss" {{ listen host="127.0.0.1" port={ss_port}; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
 }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ rule-set "rules" path="rules.kdl" format="kdl"; rules {{ - kind="rule-set" value="rules" outbound="reject"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "rules" path="rules.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="rules" outbound="reject"; }}; final "direct"; }}
 ''')
         server = subprocess.Popen(['stdbuf','-oL',binary,'run','--config',config],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         ready(server)

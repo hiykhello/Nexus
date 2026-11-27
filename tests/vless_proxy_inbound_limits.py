@@ -39,7 +39,7 @@ inbounds {{ vless "edge" {{
  tls {{ certificate-file "{certder}"; private-key-file "{keyder}"; }}
 }} }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     server = subprocess.Popen([binary, "run", "--config", config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     clients = []

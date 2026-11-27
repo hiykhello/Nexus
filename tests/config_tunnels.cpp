@@ -23,11 +23,11 @@ outbounds {
     outbound "reject" type="block"
 }
 routing {
-    rule-set "blocked" path="rules/blocked.kdl" format="kdl"
+    rulesets { "blocked" path="rules/blocked.kdl" format="kdl"; }
     rules {
         - kind="rule-set" value="blocked" outbound="reject"
     }
-    default-outbound "direct"
+    final "direct"
 }
 )";
     auto add_inbound = [&](std::string const& base, std::string_view extra) {
@@ -45,7 +45,7 @@ outbounds {
     outbound "lower" type="shadowsocks" { server host="127.0.0.1" port=8388; method "2022-blake3-aes-128-gcm"; key-file "/tmp/key"; }
     outbound "edge" type="hysteria2" { server host="127.0.0.1" port=443; authentication { password-file "/tmp/pass"; }; tls { server-name "localhost"; ca-file "/tmp/ca"; verify #true; }; detour "lower"; }
 }
-routing { default-outbound "edge"; }
+routing { final "edge"; }
 )";
     auto unsupported_detour = config::parse_kdl(hy2);
     if (unsupported_detour || unsupported_detour.error().find("Shadowsocks datagram transport") == std::string::npos) {
@@ -196,7 +196,7 @@ routing { default-outbound "edge"; }
     }
 )";
     auto vless_config = add_outbound(complete, vless_node);
-    vless_config = replace(vless_config, "default-outbound \"direct\"", "default-outbound \"edge\"");
+    vless_config = replace(vless_config, "final \"direct\"", "final \"edge\"");
     auto vless = config::parse_kdl(vless_config);
     auto combined = add_outbound(vless_config, "    outbound \"ss\" type=\"shadowsocks\" { server host=\"127.0.0.1\" port=8388; method \"2022-blake3-aes-256-gcm\"; key-file \"/secret\"; }\n");
     combined = replace(combined, "outbound=\"reject\"", "outbound=\"ss\"");
@@ -279,7 +279,7 @@ routing { default-outbound "edge"; }
     if (!route_direct || route_direct->rule_action != config::RouteAction::direct ||
         route_direct->default_action != config::RouteAction::vless) return 1;
     auto route_vless = config::parse_kdl(replace(replace(vless_config, "outbound=\"reject\"", "outbound=\"edge\""),
-        "default-outbound \"edge\"", "default-outbound \"direct\""));
+        "final \"edge\"", "final \"direct\""));
     if (!route_vless || route_vless->rule_action != config::RouteAction::vless ||
         route_vless->default_action != config::RouteAction::direct) return 1;
     auto second_vless = replace(vless_node, "\"edge\"", "\"edge2\"");
@@ -314,7 +314,7 @@ routing { default-outbound "edge"; }
         {replace(vless_config, "ca-file \"/tmp/ca.pem\"", "ca-file \"ca.pem\""), "relative CA file"},
         {replace(vless_config, "port=443", "port=0"), "zero VLESS server port"},
         {replace(vless_config, "server-name \"edge.example\"", "server-name \"\""), "empty TLS name"},
-        {replace(vless_config, "default-outbound \"edge\"", "default-outbound \"direct\""), "unused VLESS outbound"},
+        {replace(vless_config, "final \"edge\"", "final \"direct\""), "unused VLESS outbound"},
         {replace(vless_config, "outbound \"edge\"", "outbound \"direct\""), "duplicate VLESS name"},
         {replace(vless_config, "server host=", "unsupported #true; server host="), "unknown VLESS node"},
     }) {

@@ -150,13 +150,13 @@ namespace {
             "    openvpn \"ov-tcp\" {{ server \"vpn.test:443\"; transport \"tcp\"; tls {{ server-name \"vpn.test\"; }}; }}\n"
             "    openconnect \"oc-pw\" {{ server \"oc.test:443\"; tls {{ server-name \"oc.test\"; }}; authentication {{ username \"a\"; password-file \"{1}\"; group \"eng\"; }}; dpd 40; keepalive 15; }}\n"
             "    openconnect \"oc-ck\" {{ server \"oc.test:8443\"; tls {{ server-name \"oc.test\"; }}; authentication cookie-file=\"{2}\"; detour \"ov-tcp\"; }}\n"
-            "    selector \"grp\" {{ members \"ov-udp\" \"ov-tcp\" \"oc-pw\" \"oc-ck\"; }}\n}}\nrouting {{ default \"grp\"; }}\n", ca_p, pw_p, ck_p);
+            "    selector \"grp\" {{ members \"ov-udp\" \"ov-tcp\" \"oc-pw\" \"oc-ck\"; }}\n}}\nrouting {{ final \"grp\"; }}\n", ca_p, pw_p, ck_p);
         auto cfg = config::parse_kdl(kdl);
         require(cfg.has_value(), cfg ? "" : "vpn kdl parse: " + cfg.error());
         require(cfg->openvpn_outbounds.size() == 2 && cfg->openconnect_outbounds.size() == 2 &&
                 cfg->openvpn_outbounds[0].config.ca_file == ca_p && cfg->openconnect_outbounds[1].config.detour == "ov-tcp", "vpn kdl counts + inherit");
-        require(!config::parse_kdl(std::format("schema-version 1\nrole \"client\"\ninbounds {{ socks5 \"s\" {{ listen \"127.0.0.1:1080\"; authentication \"none\"; }}; }}\noutbounds {{ direct; openvpn \"o\" {{ server \"vpn.test:1194\"; transport \"udp\"; tcp-nodelay #true; tls {{ server-name \"vpn.test\"; ca-file \"{0}\"; }}; }}; }}\nrouting {{ default \"o\"; }}\n", ca_p)).has_value(), "reject tcp option on ovpn udp");
-        require(!config::parse_kdl(std::format("schema-version 1\nrole \"client\"\ninbounds {{ socks5 \"s\" {{ listen \"127.0.0.1:1080\"; authentication \"none\"; }}; }}\noutbounds {{ direct; openconnect \"o\" {{ server \"oc.test:443\"; tls {{ server-name \"oc.test\"; ca-file \"{0}\"; verify #false; }}; authentication cookie-file=\"{1}\"; }}; }}\nrouting {{ default \"o\"; }}\n", ca_p, ck_p)).has_value(), "reject unverified oc tls");
+        require(!config::parse_kdl(std::format("schema-version 1\nrole \"client\"\ninbounds {{ socks5 \"s\" {{ listen \"127.0.0.1:1080\"; authentication \"none\"; }}; }}\noutbounds {{ direct; openvpn \"o\" {{ server \"vpn.test:1194\"; transport \"udp\"; tcp-nodelay #true; tls {{ server-name \"vpn.test\"; ca-file \"{0}\"; }}; }}; }}\nrouting {{ final \"o\"; }}\n", ca_p)).has_value(), "reject tcp option on ovpn udp");
+        require(!config::parse_kdl(std::format("schema-version 1\nrole \"client\"\ninbounds {{ socks5 \"s\" {{ listen \"127.0.0.1:1080\"; authentication \"none\"; }}; }}\noutbounds {{ direct; openconnect \"o\" {{ server \"oc.test:443\"; tls {{ server-name \"oc.test\"; ca-file \"{0}\"; verify #false; }}; authentication cookie-file=\"{1}\"; }}; }}\nrouting {{ final \"o\"; }}\n", ca_p, ck_p)).has_value(), "reject unverified oc tls");
     }
 
     auto make_ovpn_cfg(std::uint16_t port, config::OpenVpnTransport tr, fs::path const& ca, fs::path const& pw) -> config::OpenVpnOutbound {

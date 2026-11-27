@@ -68,7 +68,7 @@ outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={listener.getsockname()[1]}; authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "cover.example"; ca-file "{root/'cert'}"; verify #true; }}
  {transport_kdl() if args.httpupgrade else ''}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         ended = threading.Event(); end_processed = threading.Event(); finished = threading.Event(); errors = []
         def server():

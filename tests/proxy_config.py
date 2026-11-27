@@ -46,9 +46,9 @@ inbound "local" type="socks5" {{
 outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {{
-  rule-set "blocked" path="rules/blocked.{rule_format}" format="{rule_format}"
+  rulesets {{ "blocked" path="rules/blocked.{rule_format}" format="{rule_format}"; }}
   rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}
-  default-outbound "direct"
+  final "direct"
 }}
 '''
 
@@ -127,7 +127,7 @@ def run_invalid(root):
 }
 '''
     text = configuration(port, "kdl").replace('routing {', vless + 'routing {')
-    config.write_text(text.replace('default-outbound "direct"', 'default-outbound "edge"'))
+    config.write_text(text.replace('final "direct"', 'final "edge"'))
     result = subprocess.run([server, "run", "--config", config], cwd="/", capture_output=True, timeout=5)
     expected = b"UUID file:" if crypto else b"VLESS outbound is not yet available"
     assert result.returncode != 0 and expected in result.stderr, result.stderr
@@ -188,7 +188,7 @@ inbounds {{ vless "edge" {{
     tls {{ certificate-file "/tmp/cert.der"; private-key-file "/tmp/key.der"; }}
 }} }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     rejected = subprocess.run([server, "run", "--config", config], capture_output=True, timeout=5)
     assert rejected.returncode != 0 and b"VLESS inbound:" in rejected.stderr, rejected.stderr

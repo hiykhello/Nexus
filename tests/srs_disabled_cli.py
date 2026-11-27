@@ -23,7 +23,7 @@ role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={free_port()}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rule-set "deny" path="{fixture}" format="srs"; {rule}; default-outbound "direct"; }}
+routing {{ rulesets {{ deny path="{fixture}" format="srs"; }}; {rule}; final "direct"; }}
 ''')
         run = subprocess.run([str(binary), 'run', '--config', str(config)], capture_output=True, text=True, timeout=5)
         if run.returncode == 0 or 'SRS rule sets require the srs build feature' not in run.stderr or 'listening' in run.stdout:
@@ -32,8 +32,8 @@ routing {{ rule-set "deny" path="{fixture}" format="srs"; {rule}; default-outbou
 role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={free_port()}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
-dns {{ server "a" type="udp" host="127.0.0.1"; rule-set "deny" path="{fixture}" format="srs";
+routing {{ final "direct"; }}
+dns {{ server "a" type="udp" host="127.0.0.1"; rulesets {{ deny path="{fixture}" format="srs"; }};
  rule rule-set="deny" ip-cidr-match-source=#true action="reject"; }}
 ''')
     run = subprocess.run([str(binary), 'run', '--config', str(config)], capture_output=True, text=True, timeout=5)

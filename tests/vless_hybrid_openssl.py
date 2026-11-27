@@ -55,7 +55,7 @@ role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={upstream_port}; authentication {{ uuid-file "{uuid}"; }}; tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; key-exchange "{exchange}"; }}; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     proxy = subprocess.Popen([nexus, "run", "--config", config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

@@ -34,12 +34,12 @@ with DnsPeer(host="192.0.2.2") as ipv4, DnsPeer(ipv6=True, host="2001:db8:1::2")
     final "v4"
 }}
 routing {{
-    rule-set "dns-targets" path="strict-dns-targets.kdl" format="kdl"
+    rulesets {{ "dns-targets" path="strict-dns-targets.kdl" format="kdl"; }}
     tcp-program sniff-timeout-ms=60 unknown="skip" udp=#true {{
         rule action="hijack-dns" rule-set="dns-targets"
         rule action="reject"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         with process(["stdbuf", "-oL", nexus_bin, "run", "--config", dns]) as nexus:
@@ -71,9 +71,9 @@ def check_kernel_bypass(nexus_bin, root, baseline):
     route-exclude "198.51.100.85/32"
 '''
     text = baseline.replace("strict-route #true", excluded)
-    text = text.replace('routing { default-outbound "direct"; }', '''routing {
+    text = text.replace('routing { final "direct"; }', '''routing {
     tcp-program sniff-timeout-ms=60 unknown="skip" udp=#true { rule action="reject"; }
-    default-outbound "direct"
+    final "direct"
 }
 ''')
     config.write_text(text)

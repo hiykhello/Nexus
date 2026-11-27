@@ -37,7 +37,7 @@ routing {{
    rule action="sniff"
    rule action="route" outbound="direct"
  }}
- default-outbound "direct"
+ final "direct"
 }}
 ''')
     peer = root / "sing-box.json"

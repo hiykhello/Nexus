@@ -101,7 +101,7 @@ inbound "edge" type="{protocol}" {{
     {transport}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     else:
         file.write_text(f'''schema-version 1
@@ -114,7 +114,7 @@ outbound "edge" type="{protocol}" {{
     {tls}
     {transport}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     return file
 

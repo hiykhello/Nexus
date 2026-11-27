@@ -76,7 +76,7 @@ inbound "in" type="socks5" {{ listen host="127.0.0.1" port={front}; authenticati
 {direct}
 {lower_config}
 outbound "edge" type="snell" {{ server host="127.0.0.1" port={gateway}; version 4; psk-file "{psk}"; obfs "http"; reuse #true; {extra} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             payload = bytes(range(251))*100; errors = []; origin_stop = threading.Event()
             with socket.socket() as origin:

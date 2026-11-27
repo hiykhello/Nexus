@@ -52,7 +52,7 @@ inbounds {{ shadowsocks "ss" {{ listen host="127.0.0.1" port={port}; method "202
 outbound "direct" type="direct"
 outbound "reject" type="block"
 {edge}
-routing {{ rule-set "block" path="block.kdl" format="kdl"; rules {{ - kind="rule-set" value="block" outbound="reject"; }}; default-outbound "{'edge' if chain else 'direct'}"; }}
+routing {{ rulesets {{ "block" path="block.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="block" outbound="reject"; }}; final "{'edge' if chain else 'direct'}"; }}
 ''')
     stop=threading.Event(); queries=[]; events=[]; packets=[]; errors=[]
     def serve_dns():

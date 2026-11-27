@@ -217,7 +217,7 @@ namespace {
                 outbound "direct" type="direct"
                 outbound "grp" type="selector" { member "n-out-h3"; member "n-out-h2"; selected "n-out-h3"; }
             }
-            routing { default-outbound "grp"; }
+            routing { final "grp"; }
         )");
         expect(ok_naive.has_value(), ok_naive ? "151B: naive KDL ok" : ("151B: naive KDL failed: " + ok_naive.error()));
         if (ok_naive) {
@@ -277,7 +277,7 @@ namespace {
                 outbound "direct" type="direct"
                 outbound "pool" type="selector" { member "hc-h3"; member "hc-auto"; selected "hc-h3"; }
             }
-            routing { default-outbound "pool"; }
+            routing { final "pool"; }
         )");
         expect(ok_http.has_value(), ok_http ? "151A: modern HTTP KDL ok" : ("151A: modern HTTP KDL failed: " + ok_http.error()));
         if (ok_http) {
@@ -295,7 +295,7 @@ namespace {
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
             inbounds { inbound "h" type="http" { listen host="127.0.0.1" port=8080; authentication "none"; http2 #true; }; }
-            outbounds { outbound "d" type="direct"; }; routing { default-outbound "d"; }
+            outbounds { outbound "d" type="direct"; }; routing { final "d"; }
         )").has_value(), "151A: reject http2 without tls on http inbound");
 
         expect(!config::parse_kdl(R"(
@@ -307,7 +307,7 @@ namespace {
                     http2 #true; connect-udp #true
                 }
             }
-            outbounds { outbound "d" type="direct"; }; routing { default-outbound "d"; }
+            outbounds { outbound "d" type="direct"; }; routing { final "d"; }
         )").has_value(), "151A: reject connect-udp without http3 #true");
 
         expect(!config::parse_kdl(R"(
@@ -320,7 +320,7 @@ namespace {
                 }
                 outbound "direct" type="direct"
             }
-            routing { default-outbound "hc"; }
+            routing { final "hc"; }
         )").has_value(), "151A: reject http-connect udp without h3");
 
         expect(!config::parse_kdl(R"(
@@ -333,7 +333,7 @@ namespace {
                     fallback-status 407
                 }
             }
-            outbounds { outbound "d" type="direct"; }; routing { default-outbound "d"; }
+            outbounds { outbound "d" type="direct"; }; routing { final "d"; }
         )").has_value(), "151B: reject naive fallback-status 407");
 
         expect(!config::parse_kdl(R"(
@@ -347,7 +347,7 @@ namespace {
                 }
                 outbound "direct" type="direct"
             }
-            routing { default-outbound "n"; }
+            routing { final "n"; }
         )").has_value(), "151B: reject naive h3 with tls12 fingerprint");
 
         expect(!config::parse_kdl(R"(
@@ -362,7 +362,7 @@ namespace {
                 }
                 outbound "direct" type="direct"
             }
-            routing { default-outbound "n"; }
+            routing { final "n"; }
         )").has_value(), "151B: reject forbidden Proxy-Authorization extra-header");
     }
 }

@@ -14,7 +14,7 @@ role "client"
 inbound "entry" type="socks5" {{ listen host="127.0.0.1" port={reserve()}; authentication "none"; }}
 outbound "direct" type="direct" {{ {direct} }}
 {outbound}
-routing {{ default-outbound "{route}"; }}
+routing {{ final "{route}"; }}
 ''')
     result = subprocess.run([binary, "run", "--config", config], capture_output=True, text=True, timeout=4)
     assert result.returncode == 1 and error in result.stderr and "listening" not in result.stdout, result

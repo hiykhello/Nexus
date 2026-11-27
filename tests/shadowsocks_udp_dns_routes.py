@@ -83,7 +83,7 @@ role "server"
 workers 2
 inbounds {{ shadowsocks "ss" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }} }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{ {dns} }}
 ''')
                 server = subprocess.Popen(["stdbuf", "-oL", fixture, "run", "--config", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0, env=env)

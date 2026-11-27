@@ -32,7 +32,7 @@ workers {workers}
 dns {{ server "local" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
 inbound "local" type="mixed" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         stop = threading.Event()
         queries = []

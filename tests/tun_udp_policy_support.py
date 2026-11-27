@@ -44,12 +44,12 @@ serve(v6)
         'rule type="ip-cidr" value="198.51.100.85/32"\n'
         'rule type="ip-cidr" value="2001:db8:3::85/128"\n')
     routing = '''routing {
-    rule-set "reject" path="udp-reject.kdl" format="kdl"
+    rulesets { "reject" path="udp-reject.kdl" format="kdl"; }
     tcp-program sniff-timeout-ms=60 unknown="skip" udp=#true {
         rule action="reject" rule-set="reject"
         rule action="route" outbound="direct"
     }
-    default-outbound "direct"
+    final "direct"
 }
 '''
     config = root / "udp-policy.kdl"

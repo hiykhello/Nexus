@@ -63,9 +63,11 @@ inbounds {{
 }}
 outbounds {{ direct; block; }}
 routing {{
-    rule-set "inc" path="{}" format="kdl"
-    rule-set "exc" path="{}" format="kdl"
-    rules udp=#true {{ - default "direct"; }}
+    rulesets {{
+        "inc" path="{}" format="kdl"
+        "exc" path="{}" format="kdl"
+    }}
+    rules udp=#true {{ - final "direct"; }}
 }}
 )kdl", inc_file.string(), exc_file.string());
         write_text(cfg_file, kdl);
@@ -141,7 +143,7 @@ outbounds {
     selector "manual-grp" { member "node-a"; member "node-b"; selected "node-a"; }
     url-test "auto-grp" { member "node-a"; member "node-b"; probe-url "http://127.0.0.1:80/204"; probe-interval-ms 60000; probe-timeout-ms 1000; }
 }
-routing { default-outbound "manual-grp"; }
+routing { final "manual-grp"; }
 )kdl";
         auto parsed = config::parse_kdl(kdl);
         expect(parsed.has_value(), parsed ? "" : parsed.error());
@@ -211,7 +213,7 @@ routing { default-outbound "manual-grp"; }
         constexpr std::string_view kdl = R"kdl(schema-version 1; role "client"
 inbounds { socks5 "in" { listen "127.0.0.1:1080"; authentication "none"; }; }
 outbounds { direct; block; }
-routing { default-outbound "direct"; })kdl";
+routing { final "direct"; })kdl";
         auto parsed = config::parse_kdl(kdl);
         expect(parsed.has_value(), "parse minimal config");
         std::optional<config::Config> running = *parsed;
@@ -243,7 +245,7 @@ routing { default-outbound "direct"; })kdl";
         std::string kdl = std::format(R"kdl(schema-version 1; role "client"
 inbounds {{ socks5 "in" {{ listen "127.0.0.1:1080"; authentication "none"; }}; }}
 outbounds {{ direct; socks5 "up" {{ server "127.0.0.1:1081"; authentication username="u" password-file="{}"; }}; }}
-routing {{ default-outbound "up"; }})kdl", pw_file.string());
+routing {{ final "up"; }})kdl", pw_file.string());
         auto cfg1 = config::parse_kdl(kdl);
         expect(cfg1.has_value(), cfg1 ? "" : cfg1.error());
         auto id1 = config::reload_identities(kdl);
@@ -336,7 +338,7 @@ outbounds {
     socks5 "node-a" { server "127.0.0.1:1081"; }
     url-test "auto-grp" { member "node-a"; probe-url "http://127.0.0.1:80/204"; probe-interval-ms 60000; probe-timeout-ms 1000; }
 }
-routing { default-outbound "auto-grp"; })kdl";
+routing { final "auto-grp"; })kdl";
         auto parsed = config::parse_kdl(kdl);
         expect(parsed && !parsed->direct_network.has_value(), "ordinary config has no direct_network");
         auto health = cli::run_detail::OutboundGroupHealth::create(*parsed);

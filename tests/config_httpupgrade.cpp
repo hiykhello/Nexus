@@ -20,7 +20,7 @@ outbound "edge" type="vless" {{
  {} {}
 }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 )",incoming,inbound_extra,outgoing,outbound_extra));
     }
 }

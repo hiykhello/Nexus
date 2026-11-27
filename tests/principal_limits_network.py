@@ -58,7 +58,7 @@ inbound "local" type="mixed" {{
  user-limits {{ user "alice" connections=1; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     with nexus_process(binary, config), Echo() as origin:
         with socks_auth(front, 0) as client, socket.socket(type=socket.SOCK_DGRAM) as udp:
@@ -104,7 +104,7 @@ inbound "edge" type="anytls" {{
  user-limits {{ user "alice" connections=2 streams={streams}; user "bob" connections=1 streams=1; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         candidate.replace(config)
 
@@ -172,7 +172,7 @@ inbounds {{ shadowsocks "ss" {{
 outbound "direct" type="direct"
 routing {{
  {tcp_program}
- default-outbound "direct"
+ final "direct"
 }}
 ''')
 
@@ -259,7 +259,7 @@ inbound "edge" type="{wire_protocol}" {{
  user-limits {{ user "alice" connections={alice_connections}{alice_limits}; user "bob" connections=1{bob_streams}; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
 
     @contextlib.contextmanager

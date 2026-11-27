@@ -28,7 +28,7 @@ inbound "ss" type="shadowsocks" {{
   key-file "{key}"
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         outbound = {"type": "shadowsocks", "server": "127.0.0.1", "server_port": port,
                     "method": method, "password": password}

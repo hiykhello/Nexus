@@ -50,18 +50,20 @@ role "client"
 workers 2
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{ listen host="127.0.0.1" port={dns_port};
  server "first" type="udp" host="127.0.0.1" port={first.port};
  server "second" type="udp" host="127.0.0.1" port={second.port};
- rule-set "questions" path="questions.srs" format="srs";
- rule-set "source" path="source.srs" format="srs";
+ rulesets {{
+  questions path="questions.srs" format="srs"
+  source path="source.srs" format="srs"
+  questions-kdl path="questions.kdl" format="kdl"
+  questions-beve path="questions.beve" format="beve"
+ }}
  rule rule-set="questions" server="second";
  rule rule-set="questions-kdl" server="second";
  rule rule-set="questions-beve" server="second";
  rule rule-set="source" ip-cidr-match-source=#true server="second";
- rule-set "questions-kdl" path="questions.kdl" format="kdl";
- rule-set "questions-beve" path="questions.beve" format="beve";
  final "first"; strategy "ipv4_only"; disable-cache #true;
 }}
 ''')

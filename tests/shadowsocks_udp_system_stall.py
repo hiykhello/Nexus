@@ -27,7 +27,7 @@ role "server"
 workers 2
 inbounds {{ shadowsocks "ss" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }} }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{ server "system" type="local"; }}
 ''')
     command = ["stdbuf", "-oL", listener, "run", "--config", config]

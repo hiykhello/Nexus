@@ -43,12 +43,12 @@ dns {{
 }}
 outbound "direct" type="direct"
 routing {{
-    rule-set "dns-port" path="target.kdl" format="kdl"
+    rulesets {{ "dns-port" path="target.kdl" format="kdl"; }}
     tcp-program sniff-timeout-ms=200 udp=#true unknown="skip" {{
         rule action="hijack-dns" rule-set="dns-port"
         rule action="route" outbound="direct"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     ip = socket.inet_aton("127.0.0.2")

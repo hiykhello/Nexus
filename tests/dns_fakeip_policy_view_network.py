@@ -63,13 +63,13 @@ dns {{
     server "secondary" type="udp" host="127.0.0.1" port={secondary.port}
     final "fake"
     strategy "ipv4_only"
-    rule-set "switch" path="dns.kdl" format="kdl"
+    rulesets {{ "switch" path="dns.kdl" format="kdl"; }}
     rule rule-set="switch" server="secondary"
     rule domain="slow.test" server="primary"
     rule domain="cache.test" server="primary"
     fake-ip server="fake" ipv4-pool="198.18.0.0/29" ttl-seconds=2 state-directory="{state}" initialize=#true
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 
 

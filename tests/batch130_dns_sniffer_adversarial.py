@@ -233,7 +233,7 @@ routing {{
         rule action="route" outbound="direct" domain-source="sniffed" {{ domain "allowed.example"; }}
         rule action="reject"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
                 with nexus_process(str(binary), str(cfg)):

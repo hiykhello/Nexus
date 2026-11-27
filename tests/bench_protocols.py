@@ -146,7 +146,7 @@ def run_benchmark(nexus: pathlib.Path, payload_mib: int, iterations: int) -> dic
                 f'inbound "hc" type="http" {{ listen host="127.0.0.1" port={http_port}; authentication "none"; }}\n'
                 f'inbound "mx" type="mixed" {{ listen host="127.0.0.1" port={mix_port}; authentication "none"; }}\n'
                 f'outbound "direct" type="direct"\n'
-                f'routing {{ default-outbound "direct"; }}\n',
+                f'routing {{ final "direct"; }}\n',
                 encoding="utf-8",
             )
             proc = subprocess.Popen(

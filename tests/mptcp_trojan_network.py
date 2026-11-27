@@ -36,7 +36,7 @@ role "client"
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct" {{ {direct_options} }}
 outbound "remote" type="trojan" {{ server host="127.0.0.1" port={peer_port}; authentication {{ password-file "{root / 'password'}"; }}; tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}; {node_options} }}
-routing {{ default-outbound "remote"; }}
+routing {{ final "remote"; }}
 ''')
             failures = []
             def serve():

@@ -193,7 +193,7 @@ outbound "edge" type="http-connect" {
 EXTRA_OB
 }
 DNS
-routing { default-outbound "edge"; }
+routing { final "edge"; }
 )kdl";
         auto parse=[&](std::string_view resolver,std::string_view dns,std::string_view extra_ob={}) {
             auto document=skeleton;

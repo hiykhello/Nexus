@@ -153,7 +153,7 @@ workers {workers}
 inbound "socks" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct" {{ {direct} }}
 {node}
-routing {{ default-outbound "{'edge' if node else 'direct'}"; }}
+routing {{ final "{'edge' if node else 'direct'}"; }}
 '''
 
 
@@ -174,7 +174,7 @@ inbounds {{ {protocol} "edge-in" {{ listen host="127.0.0.1" port={port}; {auth}
 {special}
 }} }}
 outbound "direct" type="direct" {{ {fields} }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 
 

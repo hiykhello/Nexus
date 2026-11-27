@@ -24,7 +24,7 @@ def main(binary, fixture):
 role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ rule-set "block" path="block.kdl" format="kdl"; tcp-program sniff-timeout-ms=300 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="block" domain-source="sniffed"; rule action="route" outbound="direct"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "block" path="block.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms=300 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="block" domain-source="sniffed"; rule action="route" outbound="direct"; }}; final "direct"; }}
 ''')
         def header(sock): return b'\x00\x00\x00\x01' + socket.inet_aton('127.0.0.1') + struct.pack('!H', sock.getsockname()[1])
         with nexus_process(binary, str(config)), udp_client(front) as (client, relay):

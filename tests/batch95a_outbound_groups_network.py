@@ -228,7 +228,7 @@ outbound "g" type="url-test" {{
     member "direct"
     {snippet}
 }}
-routing {{ default-outbound "g"; }}
+routing {{ final "g"; }}
 ''')
             res = subprocess.run([binary, "run", "--config", str(cfg)], capture_output=True, text=True, timeout=5)
             assert res.returncode != 0 and "configuration:" in res.stderr, f"expected config error for {idx}: {res.stderr}"
@@ -267,7 +267,7 @@ outbound "auto" type="url-test" {{
     probe-timeout-ms 1200
     tolerance-ms 10
 }}
-routing {{ default-outbound "auto"; }}
+routing {{ final "auto"; }}
 ''')
             with running([binary, "run", "--config", cfg], front, root / "proxy.log"):
                 # 1. Expected-status strict 204 vs 200/403/502/garbage
@@ -339,7 +339,7 @@ outbound "h2tls" type="fallback" {{
     probe-interval-ms 500
     probe-timeout-ms 1200
 }}
-routing {{ default-outbound "h2tls"; }}
+routing {{ final "h2tls"; }}
 ''')
             with running([binary, "run", "--config", cfg], front, root / "h2.log"):
                 eventually(lambda: "state=up" in ctl(binary, control, "group-health", "h2c").stdout and

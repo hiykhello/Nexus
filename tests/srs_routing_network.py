@@ -50,7 +50,7 @@ inbounds {{ mixed "local" {{ listen host="127.0.0.1" port={front}; authenticatio
  shadowsocks "ss" {{ listen host="127.0.0.1" port={ss}; method "2022-blake3-aes-128-gcm"; key-file "{root / 'key'}"; }} }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rule-set "deny" path="rules.srs" format="srs"; rule-set "source" path="source.srs" format="srs"; {rule}; default-outbound "direct"; }}
+routing {{ rulesets {{ deny path="rules.srs" format="srs"; source path="source.srs" format="srs"; }}; {rule}; final "direct"; }}
 dns {{ server "a" type="udp" host="127.0.0.1" port={dns.port}; final "a"; strategy "ipv4_only"; }}
 ''')
         invalid_config = root / 'invalid.kdl'

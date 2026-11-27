@@ -36,7 +36,7 @@ workers {workers}
 shutdown-grace-ms {grace}
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}; }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 """)
             with running([binary,"run","--config",str(path)],port,root/"proxy.log") as proxy:
                 client,_=socks(port,1,("127.0.0.1",origin.port))

@@ -127,7 +127,7 @@ dns {{
 }}
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             env = os.environ.copy()
             env["LD_PRELOAD"] = str(guard)

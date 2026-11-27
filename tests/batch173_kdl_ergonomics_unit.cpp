@@ -54,7 +54,9 @@ dns {
     final "cf"
 }
 routing {
-    rule-set "geo-ads" path="/tmp/ads.srs" format="srs"
+    rulesets {
+        geo-ads path="/tmp/ads.srs" format="srs"
+    }
     tcp-program sniff-timeout-ms=300 unknown="skip" udp=#true {
         rule action="sniff"
         rule action="resolve" route-only=#true
@@ -78,7 +80,7 @@ routing {
             source-port 5000
         }
     }
-    default-outbound "grp"
+    final "grp"
 }
 )kdl";
 
@@ -121,7 +123,9 @@ dns {
     final "cf"
 }
 routing {
-    rule-set "geo-ads" path="/tmp/ads.srs" format="srs"
+    rulesets {
+        geo-ads path="/tmp/ads.srs" format="srs"
+    }
     rules sniff-timeout-ms=300 unknown="skip" udp=#true {
         - sniff
         - resolve route-only=#true
@@ -133,7 +137,7 @@ routing {
         - to="direct" {
             source-port 5000
         }
-        - default "grp"
+        - final "grp"
     }
 }
 )kdl";
@@ -207,7 +211,7 @@ outbounds {
     }
 }
 routing {
-    default "mix"
+    final "mix"
 }
 )kdl";
         auto cfg = config::parse_kdl(expanded_kdl);
@@ -218,7 +222,7 @@ routing {
             cfg->inbounds[2].type == config::Inbound::tuic, "expanded inbound types + fixed-tcp target");
         require(cfg->naive_outbounds.size() == 1 && cfg->ssh_outbounds.size() == 1 &&
             cfg->ssh_outbounds[0].config.port == 2222, "expanded outbound types");
-        require(cfg->default_outbound_name == "mix", "routing default alias");
+        require(cfg->default_outbound_name == "mix", "routing final outbound");
     }
 
     // 3. Negative / malformed shorthand rejection.
@@ -227,17 +231,17 @@ routing {
             return std::string("schema-version 1\nrole \"client\"\ninbounds { socks5 \"s\" { listen \"127.0.0.1:1080\"; authentication \"none\"; }; }\noutbounds { direct; }\n") + std::string(extra);
         };
         std::string const invalid_cases[] = {
-            base("routing { rules { - sniff; }; tcp-program sniff-timeout-ms=100 unknown=\"skip\" {}; default \"direct\"; }\n"),
-            base("routing { rules bad=1 { - sniff; }; default \"direct\"; }\n"),
-            base("routing { rules { - domain \"a.test\" to=\"direct\" outbound=\"direct\"; }; default \"direct\"; }\n"),
-            base("routing { rules { - unknownpred \"a.test\" to=\"direct\"; }; default \"direct\"; }\n"),
-            base("routing { rules { - domain \"a.test\"; }; default \"direct\"; }\n"),
-            base("routing { default \"direct\"; default-outbound \"direct\"; }\n"),
-            base("routing { rule-set \"s\" path=\"/tmp/s.kdl\" format=\"kdl\"; rule kind=\"rule-set\" value=\"s\" outbound=\"direct\"; default \"direct\"; }\n"),
-            "schema-version 1\nrole \"client\"\ninbounds { socks5 \"s\" { listen \"::1:1080\"; authentication \"none\"; }; }\noutbounds { direct; }\nrouting { default \"direct\"; }\n",
-            "schema-version 1\nrole \"client\"\ninbounds { socks5 \"s\" { listen \"127.0.0.1:0\"; authentication \"none\"; }; }\noutbounds { direct; }\nrouting { default \"direct\"; }\n",
-            "schema-version 1\nrole \"client\"\ninbounds { socks5 \"s\" { listen \"[127.0.0.1]:1080\"; authentication \"none\"; }; }\noutbounds { direct; }\nrouting { default \"direct\"; }\n",
-            "schema-version 1\nrole \"client\"\ndns { servers { local \"a\"; }; rules { - domain \"x.test\" to=\"a\" server=\"a\"; }; }\ninbounds { socks5 \"s\" { listen \"127.0.0.1:1080\"; authentication \"none\"; }; }\noutbounds { direct; }\nrouting { default \"direct\"; }\n",
+            base("routing { rules { - sniff; }; tcp-program sniff-timeout-ms=100 unknown=\"skip\" {}; final \"direct\"; }\n"),
+            base("routing { rules bad=1 { - sniff; }; final \"direct\"; }\n"),
+            base("routing { rules { - domain \"a.test\" to=\"direct\" outbound=\"direct\"; }; final \"direct\"; }\n"),
+            base("routing { rules { - unknownpred \"a.test\" to=\"direct\"; }; final \"direct\"; }\n"),
+            base("routing { rules { - domain \"a.test\"; }; final \"direct\"; }\n"),
+            base("routing { final \"direct\"; final \"direct\"; }\n"),
+            base("routing { rulesets { s path=\"/tmp/s.kdl\" format=\"kdl\"; }; rule kind=\"rule-set\" value=\"s\" outbound=\"direct\"; final \"direct\"; }\n"),
+            "schema-version 1\nrole \"client\"\ninbounds { socks5 \"s\" { listen \"::1:1080\"; authentication \"none\"; }; }\noutbounds { direct; }\nrouting { final \"direct\"; }\n",
+            "schema-version 1\nrole \"client\"\ninbounds { socks5 \"s\" { listen \"127.0.0.1:0\"; authentication \"none\"; }; }\noutbounds { direct; }\nrouting { final \"direct\"; }\n",
+            "schema-version 1\nrole \"client\"\ninbounds { socks5 \"s\" { listen \"[127.0.0.1]:1080\"; authentication \"none\"; }; }\noutbounds { direct; }\nrouting { final \"direct\"; }\n",
+            "schema-version 1\nrole \"client\"\ndns { servers { local \"a\"; }; rules { - domain \"x.test\" to=\"a\" server=\"a\"; }; }\ninbounds { socks5 \"s\" { listen \"127.0.0.1:1080\"; authentication \"none\"; }; }\noutbounds { direct; }\nrouting { final \"direct\"; }\n",
         };
         for (std::size_t i = 0; i < std::size(invalid_cases); ++i) {
             require(!config::parse_kdl(invalid_cases[i]).has_value(),

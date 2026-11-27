@@ -88,7 +88,7 @@ def receive(origin, expected, description):
 def configure(root, kinds, fronts, dns, upstreams):
     inbounds, extra, rules = [], [], ['rule action="sniff"',
         'rule action="route" rule-set="hello" domain-source="sniffed" outbound="direct"']
-    files = ['rule-set "hello" path="hello.kdl" format="kdl"']
+    files = ['hello path="hello.kdl" format="kdl"']
     for kind in kinds:
         listen = f'listen host="127.0.0.1" port={fronts[kind]};'
         if kind == 'socks':
@@ -103,7 +103,7 @@ def configure(root, kinds, fronts, dns, upstreams):
         if upstreams:
             tag = f'edge-{kind}'
             (root / f'{tag}.kdl').write_text(f'schema-version 2\nkind "predicate"\nrule type="inbound" value="{kind}"\n')
-            files.append(f'rule-set "{tag}" path="{tag}.kdl" format="kdl"')
+            files.append(f'"{tag}" path="{tag}.kdl" format="kdl"')
             rules.append(f'rule action="route" rule-set="{tag}" outbound="{tag}"')
             extra.append(f'''outbound "{tag}" type="vless" {{
  server host="127.0.0.1" port={upstreams[kind].getsockname()[1]}; connect-timeout-ms 20000
@@ -120,7 +120,7 @@ inbounds {{ {'; '.join(inbounds)}; }}
 outbound "direct" type="direct" {{ connect-timeout-ms 20000; }}
 {chr(10).join(extra)}
 dns {{ servers {{ udp "resolver" host="127.0.0.1" port={dns.getsockname()[1]}; }}; final "resolver"; strategy "ipv4_only"; disable-cache #true; }}
-routing {{ {'; '.join(files)}; tcp-program sniff-timeout-ms=9000 unknown="skip" udp=#true {{ {'; '.join(rules)}; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ {'; '.join(files)}; }}; tcp-program sniff-timeout-ms=9000 unknown="skip" udp=#true {{ {'; '.join(rules)}; }}; final "direct"; }}
 ''')
     return path
 

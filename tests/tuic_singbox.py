@@ -249,7 +249,7 @@ outbound "tuic-out" type="tuic" {{
     authentication {{ uuid-file "{uuid_f}"; password-file "{pass_f}"; }}
     tls {{ server-name "localhost"; ca-file "{cert}"; fingerprint "{fp}"; verify #true; }}
 }}
-routing {{ default-outbound "tuic-out"; }}
+routing {{ final "tuic-out"; }}
 ''')
                 c_proc, c_port = launch_nexus(nexus_bin, nx_cli_cfg, "SOCKS5 listening on ")
                 try:
@@ -290,7 +290,7 @@ inbound "tuic-in" type="tuic" {{
     tls {{ certificate-file "{cert}"; private-key-file "{key}"; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             nx_srv, actual_port = launch_nexus(nexus_bin, nx_srv_cfg, "TUIC listening on ")
             procs.append(nx_srv)

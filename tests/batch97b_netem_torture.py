@@ -171,7 +171,7 @@ workers 2
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct" {{ inet4-bind-address "{CLI_IP}"; }}
 {out_kdl}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             with nexus_process(str(binary), str(cfg)):
                 transfer_tcp(front, SRV_IP, tp, 131072)
@@ -209,7 +209,7 @@ outbound "edge" type="vless" {{
     tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}
     transport "xhttp" {{ protocol "h2"; mode "stream-one"; path "/netem/"; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             with nexus_process(str(binary), str(nx_xr)):
                 transfer_tcp(front, SRV_IP, tp, 131072)
@@ -240,7 +240,7 @@ outbound "direct" type="direct" {{ inet4-bind-address "{CLI_IP}"; }}
 outbound "edge" type="shadowsocks" {{
     server host="{SRV_IP}" port={ss_p}; method "2022-blake3-aes-128-gcm"; key-file "{root / 'psk'}"; udp-over-tcp "v2";
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     sb = launch_singbox(sb_cfg)
     try:
@@ -283,7 +283,7 @@ workers 2
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={f2}; authentication "none"; }}
 outbound "direct" type="direct" {{ inet4-bind-address "{CLI_IP}"; }}
 {out_kdl}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             with nexus_process(str(binary), str(c2)):
                 transfer_tcp(f2, SRV_IP, tp, 196608)
@@ -304,7 +304,7 @@ workers 2
 control http-listen="127.0.0.1:{ctrl}" metrics=#true
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct" {{ inet4-bind-address "{CLI_IP}"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     proc = subprocess.Popen([str(binary), "run", "--config", str(cfg)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

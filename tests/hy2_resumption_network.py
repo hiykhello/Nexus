@@ -61,7 +61,7 @@ def verify(binary, peer_bin, require_resumption):
             for index, (group, host) in enumerate(clients):
                 (root / f"rule-{index}.kdl").write_text(
                     f'schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.{index + 1}/32"\n')
-                rule_sets.append(f'rule-set "rule{index}" path="rule-{index}.kdl" format="kdl"')
+                rule_sets.append(f'        rule{index} path="rule-{index}.kdl" format="kdl"')
                 route_rules.append(f'- kind="rule-set" value="rule{index}" outbound="edge{index}"')
                 outbounds.append(f'''outbound "edge{index}" type="hysteria2" {{
     server host="{host}" port={ports[group]}
@@ -76,11 +76,13 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentic
 outbound "direct" type="direct"
 {"".join(outbounds)}
 routing {{
-    {chr(10).join(rule_sets)}
+    rulesets {{
+{chr(10).join(rule_sets)}
+    }}
     rules {{
         {chr(10).join(route_rules)}
     }}
-    default-outbound "edge0"
+    final "edge0"
 }}
 ''')
             with nexus_process(binary, path):

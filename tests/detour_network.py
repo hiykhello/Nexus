@@ -256,7 +256,7 @@ inbound "in" type="mixed" {{ listen host="127.0.0.1" port={port}; authentication
             if kind == "vision":
                 text += 'flow "xtls-rprx-vision";'
         text += "}\n"
-    return text + f'routing {{ default-outbound "n{len(chain) - 1}"; }}\n'
+    return text + f'routing {{ final "n{len(chain) - 1}"; }}\n'
 
 def protocol(kind):
     return "shadowsocks" if kind.startswith("ss") else "trojan" if kind.startswith("trojan") else "vless"

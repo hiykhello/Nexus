@@ -26,7 +26,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentic
 outbound "direct" type="direct"
 outbound "edge" type="trojan" {{ server host="127.0.0.1" port={listener.getsockname()[1]};
  authentication {{ password-file "{password}"; }}; tls {{ server-name "localhost"; ca-file "{cert}"; fingerprint "tls13-randomized"; record-size-limit 1024; verify #true; }} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     errors=[];records=[];observed_offer=[]
     def serve_checked():

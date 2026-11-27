@@ -10,7 +10,7 @@ namespace config {
     using namespace config::kdl;
     auto parse_memory_watchdog(g::KdlNode const&) -> std::expected<MemoryWatchdogConfig, std::string>;
     auto parse_services_node(g::KdlNode const&, ServicesConfig&) -> std::expected<void, std::string>;
-    auto normalize_groups(g::KdlDocument&) -> std::expected<void, std::string>;
+    auto normalize_groups(g::KdlDocument&, bool) -> std::expected<void, std::string>;
     auto parse_dns(g::KdlNode const&) -> std::expected<DnsRouting, std::string>;
     auto parse_http_clients(g::KdlNode const&) -> std::expected<std::vector<NamedHttpClient>, std::string>;
     auto parse_state_options(g::KdlNode const&) -> std::expected<StateOptions, std::string>;
@@ -218,7 +218,7 @@ namespace config {
             if (p.type == ProxyProviderType::http) {
                 if (p.http_client.empty()) p.http_client = config.default_http_client;
                 if (p.http_client.empty() || !http_names.contains(p.http_client))
-                    return error("http proxy-provider requires http-client or routing default-http-client");
+                    return error("http proxy-provider requires http-client or http-clients default");
             }
             if (!p.filter.include_regex.empty() && p.filter.include_regexes.empty()) {
                 if (!provider::compile_filter_regex(p.filter.include_regex))
@@ -249,9 +249,9 @@ namespace config {
     auto parse_provider_manifest(std::string_view input) -> std::expected<Config, std::string> {
         auto doc = kdl::read_document(input, max_config_bytes);
         if (!doc) return std::unexpected(std::move(doc.error()));
-        if (auto norm = normalize_groups(*doc); !norm) return std::unexpected(std::move(norm.error()));
+        if (auto norm = normalize_groups(*doc, true); !norm) return std::unexpected(std::move(norm.error()));
         Config out;
-        std::optional<std::string> direct, block;
+        std::optional<std::string> direct, block, default_resolver;
         auto parse_manifest_outbound = [&](Node const& ob) -> std::expected<void, std::string> {
             auto t = text_property(ob, "type");
             auto n = argument(ob);
@@ -355,8 +355,13 @@ namespace config {
                     if (child.name == "default-http-client") {
                         auto v = scalar(child);
                         if (!out.default_http_client.empty() || !v || !valid_name(*v))
-                            return error("invalid routing default-http-client");
+                            return error("invalid http-clients default");
                         out.default_http_client = *v;
+                    } else if (child.name == "default-domain-resolver") {
+                        auto v = scalar(child);
+                        if (default_resolver || !v || !valid_name(*v))
+                            return error("invalid dns default resolver");
+                        default_resolver = *v;
                     }
                 }
             }
@@ -380,6 +385,8 @@ namespace config {
         if (auto ok = validate_proxy_providers(out); !ok) return std::unexpected(ok.error());
         for (auto& client : out.http_clients) {
             if (!out.dns) return error("HTTP client requires a DNS block");
+            if (client.resolver.empty() && default_resolver) client.resolver = *default_resolver;
+            if (client.resolver.empty()) return error("HTTP client requires domain-resolver");
             auto r = std::ranges::find(out.dns->servers, client.resolver, &DnsServer::name);
             if (r == out.dns->servers.end()) return error("HTTP client domain-resolver not found");
             client.resolver_index = static_cast<std::size_t>(r - out.dns->servers.begin());

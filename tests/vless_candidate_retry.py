@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-candidate-") as directory:
             reservation.bind(("127.0.0.1",0)); port=reservation.getsockname()[1]
         config=root/"config.kdl"
         block_outbound='outbound "reject" type="block"' if blocked else ''
-        block_route=f'rule-set "blocked" path="{block_rules}" format="kdl";' if blocked else ''
+        block_route=f'blocked path="{block_rules}" format="kdl";' if blocked else ''
         block_rule='- kind="rule-set" value="blocked" outbound="reject";' if blocked else ''
         config.write_text(f'''schema-version 1
 role "client"
@@ -64,7 +64,7 @@ outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={closed}; authentication {{ uuid-file "{uuid}"; }}; tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}
  {transport_kdl() if args.httpupgrade else ''}
 }}
-routing {{ rule-set "first" path="{rules}" format="kdl"; {block_route} rules {{ - kind="rule-set" value="first" outbound="edge"; {block_rule} }}; default-outbound "direct"; }}
+routing {{ rulesets {{ first path="{rules}" format="kdl"; {block_route} }}; rules {{ - kind="rule-set" value="first" outbound="edge"; {block_rule} }}; final "direct"; }}
 ''')
         errors=[]
         def dns_peer():

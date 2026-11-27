@@ -112,7 +112,7 @@ outbound "edge" type="shadowsocks" {{
  server host="127.0.0.1" port={box_edge}; method "{method}";
  identity-key-file "{identity}"; key-file "{alice}"; udp-over-tcp "v2";
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
 
     nexus_server = root / "nexus-server.kdl"
@@ -127,8 +127,8 @@ inbounds {{
 }}
 outbounds {{ direct "direct"; block "blocked"; }}
 routing {{
-  rule-set "blocked" format="kdl" path="blocked.kdl";
-  rules {{ - kind="rule-set" value="blocked" outbound="blocked"; }}; default-outbound "direct";
+  rulesets {{ "blocked" format="kdl" path="blocked.kdl"; }}
+  rules {{ - kind="rule-set" value="blocked" outbound="blocked"; }}; final "direct";
 }}
 ''')
     box_client = root / "box-client.json"
@@ -214,7 +214,7 @@ outbound "direct" type="direct"
 outbound "edge" type="shadowsocks" {{
  server host="127.0.0.1" port={box_edge}; method "{method}"; key-file "{key_file}"; udp-over-tcp "v2";
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     nexus_server = root / "nexus-server.kdl"
     nexus_server.write_text(f'''schema-version 1
@@ -222,7 +222,7 @@ role "server"
 workers 2
 inbounds {{ shadowsocks "edge" {{ listen host="127.0.0.1" port={nexus_edge}; method "{method}"; key-file "{key_file}"; }} }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     box_client = root / "box-client.json"
 

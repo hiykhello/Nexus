@@ -386,7 +386,7 @@ inbounds {
     }
 }
 outbounds { outbound "direct" type="direct" }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )kdl";
         auto parsed = config::parse_kdl(valid_kdl);
         require(parsed.has_value(), parsed ? "" : parsed.error());
@@ -411,7 +411,7 @@ services {
 }
 inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none" } }
 outbounds { outbound "direct" type="direct" }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )kdl";
         auto parsed_ali = config::parse_kdl(alidns_kdl);
         require(parsed_ali && parsed_ali->services.acme && parsed_ali->services.acme->dns01_provider == "alidns" &&
@@ -422,7 +422,7 @@ routing { default-outbound "direct" }
 schema-version 1; role "server"
 inbounds { inbound "v" type="vless" { listen host="127.0.0.1" port=18443; authentication { user "u1" uuid-file="/tmp/u1.uuid" }; tls { certificate-provider "acme" } } }
 outbounds { outbound "direct" type="direct" }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )kdl";
         require(!config::parse_kdl(missing_acme).has_value(), "reject certificate-provider without services.acme");
 
@@ -431,7 +431,7 @@ schema-version 1; role "server"
 services { acme directory-url="https://acme.example/dir" email="a@b.c" state-dir="/tmp/acme" { domain "a.example" } }
 inbounds { inbound "v" type="vless" { listen host="127.0.0.1" port=18443; authentication { user "u1" uuid-file="/tmp/u1.uuid" }; tls { certificate-provider "acme"; cert-hot-reload #true } } }
 outbounds { outbound "direct" type="direct" }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )kdl";
         require(!config::parse_kdl(conflict).has_value(), "reject provider + cert-hot-reload conflict");
 
@@ -440,7 +440,7 @@ schema-version 1; role "server"
 services { acme directory-url="https://acme.example/dir" email="a@b.c" challenge="dns-01" state-dir="/tmp/acme" { domain "a.example"; dns01-provider "cloudflare" } }
 inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none" } }
 outbounds { outbound "direct" type="direct" }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )kdl";
         require(!config::parse_kdl(bad_cf).has_value(), "reject cloudflare without api-token-file");
 
@@ -449,7 +449,7 @@ schema-version 1; role "server"
 services { acme directory-url="https://acme.example/dir" email="a@b.c" state-dir="/tmp/acme" { domain "a.example"; eab-kid "kid-only" } }
 inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none" } }
 outbounds { outbound "direct" type="direct" }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )kdl";
         require(!config::parse_kdl(bad_eab).has_value(), "reject eab-kid without eab-hmac-file");
 
@@ -458,10 +458,10 @@ routing { default-outbound "direct" }
         constexpr std::array<std::string_view, 2> supported_quic_kdl{{
             R"kdl(schema-version 1; role "server"; services { acme directory-url="https://acme.example/dir" email="a@b.c" state-dir="/tmp/acme" { domain "a.example" } }
 inbounds { inbound "h" type="hysteria2" { listen host="127.0.0.1" port=8443; authentication { user "u" password-file="/tmp/p" }; tls { certificate-provider "acme" } } }
-outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
+outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
             R"kdl(schema-version 1; role "server"
 inbounds { inbound "t" type="tuic" { listen host="127.0.0.1" port=8444; authentication { user "u" uuid-file="/tmp/u" password-file="/tmp/p" }; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; cert-hot-reload #true } } }
-outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
+outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
         }};
         for (auto doc : supported_quic_kdl)
             require(config::parse_kdl(doc).has_value(), "accept QUIC inbound cert-provider / cert-hot-reload");
@@ -469,16 +469,16 @@ outbounds { outbound "direct" type="direct" }; routing { default-outbound "direc
         constexpr std::array<std::string_view, 4> unsupported_quic_kdl{{
             R"kdl(schema-version 1; role "server"
 inbounds { inbound "h" type="hysteria2" { listen host="127.0.0.1" port=8443; authentication { user "u" password-file="/tmp/p" }; tls { certificate-provider "acme" } } }
-outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
+outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
             R"kdl(schema-version 1; role "server"
 inbounds { inbound "m" type="masque" { listen host="127.0.0.1" port=8445; authority "m.test"; bearer-file "/tmp/b"; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; alpn "h3" } } }
-outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
+outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
             R"kdl(schema-version 1; role "server"
 inbounds { inbound "n" type="naive" { listen host="127.0.0.1" port=8446; protocol "h3"; authentication { user "u" password-file="/tmp/p" }; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; ech-key-file "/tmp/e" } } }
-outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
+outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
             R"kdl(schema-version 1; role "server"
 inbounds { inbound "h3" type="http" { listen host="127.0.0.1" port=8447; authentication "none"; http3 #true; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; ech-key-file "/tmp/e" } } }
-outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
+outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
         }};
         for (auto doc : unsupported_quic_kdl)
             require(!config::parse_kdl(doc).has_value(), "reject unsupported QUIC/H3 TLS field");

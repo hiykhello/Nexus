@@ -33,7 +33,7 @@ inbounds {{ shadowsocks "node" {{
     listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{key}";
 }}; }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     with running([binary, "run", "--config", str(config)], port, root / "ss.log"):
         yield f'''shadowsocks "uot" {{
@@ -60,7 +60,7 @@ inbounds {{
     }}
 }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     with running([binary, "run", "--config", str(config)], port, root / "vless.log"):
         yield f'''vless "xudp" {{
@@ -107,10 +107,12 @@ dns {{
     fake-ip server="protected" ipv4-pool="198.18.0.0/29" ipv6-pool="fd15:4231::/96" ttl-seconds=2 state-directory="{state}" initialize=#true
 }}
 routing {{
-    rule-set "trojan" path="trojan.kdl" format="kdl"
-    rule-set "uot" path="uot.kdl" format="kdl"
+    rulesets {{
+        "trojan" path="trojan.kdl" format="kdl"
+        "uot" path="uot.kdl" format="kdl"
+    }}
     {route}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     return config

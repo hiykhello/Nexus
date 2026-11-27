@@ -48,7 +48,7 @@ outbound "edge" type="masque" {{
     authentication {{ bearer-file "{token}"; }}
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             with nexus_process(binary, config), udp_client(front) as (client, relay):
                 destinations = ((1, "127.0.0.1", 53), (1, "127.0.0.1", 54), (4, "::1", 53))
@@ -90,7 +90,7 @@ inbound "edge" type="vless" {{
     tls {{ certificate-file "{root / 'cert'}"; private-key-file "{root / 'key'}"; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         config = root / "config.kdl"
         config.write_text(f'''schema-version 1
@@ -108,7 +108,7 @@ outbound "edge" type="vless" {{
     authentication {{ uuid-file "{uuid}"; }}
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with process([*route, sys.executable, Path(__file__).resolve(), "--echo"]) as peer:
             assert line(peer) == b"ready\n"

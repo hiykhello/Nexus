@@ -215,7 +215,7 @@ inbound "mixed" type="mixed" {{
     authentication "none"
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             with nexus_process(str(binary), str(cfg)):
                 # 1. 1-byte fragmented SOCKS5 handshake + 128 KiB echo

@@ -3,7 +3,7 @@
 ## 可运行的实验与低内存配置
 
 - [low-memory-client.kdl](low-memory-client.kdl)：面向 50 MiB 移动端扩展与 128 MiB OpenWrt 路由器的低内存客户端基线（`workers 1`、`tcp-splice-pipes 4`、有界 DNS/规则集缓存与本机控制面），已通过 `nexus check --config docs/configuration/examples/low-memory-client.kdl` 三产物实机校验。
-- [ergonomic-client.kdl](ergonomic-client.kdl)：展示简洁人类可读 KDL 语法（`direct`/`block` 自动命名、`host:port` 短写、`members` 列表、`rules` 有序直连/分流/劫持规则与 DNS 规则简写）。
+- [ergonomic-client.kdl](ergonomic-client.kdl)：展示规范 KDL 2.0 语法（`outbounds` 拨号默认项、`direct`/`block` 自动命名、`host:port` 短写、单用户 `vless` 直写 `uuid-file`、`members` 列表、`dns { default; final; rules }`、`routing { find-process; rules; final }` 与 `- ip-is-private to="direct"` 简写）。
 
 [socks5.kdl](socks5.kdl) 可由 Linux 实验代理使用：`nexus run --config docs/configuration/examples/socks5.kdl`。它监听 `127.0.0.1:1080`，对示例规则命中执行 block，其余 direct；IPv4 映射 IPv6 目标同时检查两种地址族的 IP 规则；规则文件相对配置文件所在目录解析。[mixed.kdl](mixed.kdl) 将入站类型改为 `mixed`，同一端口支持 SOCKS5、HTTP/1.1 CONNECT 及有限的单次 HTTP 正向代理（支持 Content-Length 和 chunked 请求体）。入站和出站分别放在 `inbounds` 和 `outbounds` 块，DNS 服务器放在 `dns { servers { ... } }` 中；分组内用协议类型作节点名，`dns` 和 `routing` 的规则写在 `rules` 块内，并以 `-` 开始每条规则。旧的顶层 `inbound`/`outbound` 和 `dns` 下直接 `server` 暂兼容，同类配置不得混用新旧写法。当前支持最多 16 个入站（名称和监听地址/端口组合不能重复；IPv4 与 IPv6 回环可共用端口）、一个 direct 出站、可选 block 出站和最多 16 个具名 VLESS、SS-2022 和 Trojan 隧道出站（合计），以及最多 256 组 KDL/BEVE 规则集和 256 条有序引用规则；`role` 为 `client` 或 `server`，当前只作校验，不改变行为。配置和单个规则文件各限 1 MiB，规则文件合计限 8 MiB，展开后的谓词合计限 16384 条；未知节点、属性及未支持的组合均拒绝，加载成功后才监听。当前不支持重载或 HTTP 连接复用；SOCKS5 UDP ASSOCIATE 的受限能力见 [SOCKS5 说明](../../architecture/protocols/socks5-mixed.md)，Mixed 仅支持无认证。SOCKS5/Mixed 监听地址可选 IPv4 回环 `127.0.0.1` 或 IPv6 回环 `::1`。SS-2022 入站支持下述有限 UDP 路径。
 
@@ -112,7 +112,7 @@ inbounds { vless "edge" {
     tls { certificate-file "/etc/nexus/server.pem"; private-key-file "/etc/nexus/server-key.pem"; }
 } }
 outbounds { direct "direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 ```
 
 配置还须包含 `schema-version 1` 和 `role "server"`。证书文件可为单个 DER 叶证书，或以叶证书开头、按发送顺序排列的 PEM 证书链（最多 16 个证书）；编码后的证书列表总长最多 1 MiB，每张证书的编码额外占 5 字节。私钥为未加密 DER 或 PEM，格式可分别选择。服务端检查叶证书与私钥匹配，但不校验证书链的签名、顺序、名称或有效期；配置者须提供正确的证书链。私钥及 UUID 文件须由当前用户拥有、权限不授予组或其他用户，且最终组件不能是符号链接。服务端支持 X25519 和 X25519MLKEM768 及其 HelloRetryRequest；当前不支持 cookie、ALPN、PSK 或 UDP。
@@ -133,7 +133,7 @@ outbounds {
         key-file "/etc/nexus/ss2022.key"
     }
 }
-routing { default-outbound "edge"; }
+routing { final "edge"; }
 ```
 
 方法也支持 `2022-blake3-aes-256-gcm`。密钥文件须分别包含 16 或 32 字节 PSK 的标准带填充 Base64，可带一个末尾换行；须为当前用户拥有的私有常规文件，最终路径组件不能是符号链接。节点域名默认使用系统解析；可在出站中添加 `bootstrap-resolver "boot"`，引用 `dns` 配置中的命名解析器，失败时不回退系统解析。此选项要求节点为域名。代理目标域名先经目标 DNS 解析，逐个地址匹配路由，选中的数字地址发给 SS 节点；域名阻断可在解析前生效。当前仅 TCP 出站；独立对端测试覆盖短数据、8 条并发连接的双向 2 MiB 传输和活动会话停止。特定内核背压、异常注入及更多取消时序仍需验证。
@@ -153,7 +153,7 @@ inbounds {
     }
 }
 outbounds { direct "direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 ```
 
 也支持 `2022-blake3-aes-256-gcm`，密钥文件格式和权限要求与出站相同。入站只监听回环地址，支持单用户 TCP 和 UDP。TCP 按现有路由策略处理目标，也可将默认路由指向 SS-2022 出站；四种 AES 入站和出站组合已通过独立对端链路测试。UDP 支持 direct 和 block，选中其他出站时拒绝，不会降级为 direct；SS-2022 UDP 出站尚未实现。相同密钥的监听器和 worker 在同一进程内共享各自协议的重放状态，但进程重启后记录丢失，不同进程之间也不共享；不要让多个进程使用同一密钥并依赖完整的重放保护。独立对端互通测试覆盖两种算法、TCP 1/2 worker、8 路双向 2 MiB、IP 阻断、活动会话停止及 UDP 并发回环。直接 SS-2022 客户端先半关闭发送方向后，目标仍可回送响应；部分外部 SOCKS 到 SS-2022 路径会提前返回 EOF。特定内核背压和更多取消时序仍需按场景验证。

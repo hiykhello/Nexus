@@ -37,7 +37,7 @@ inbound "edge" type="hysteria2" {{ listen host="127.0.0.1" port={port};
  {quic}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         wrapper = root / 'server'
         wrapper.write_text(f'''#!/bin/sh
@@ -59,7 +59,7 @@ outbound "edge" type="hysteria2" {{ server host="127.0.0.1" port={port};
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
  {quic}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with socket.socket() as origin, contextlib.ExitStack() as stack:
             origin.bind(('127.0.0.1', 0)); origin.listen(2); origin.settimeout(10)

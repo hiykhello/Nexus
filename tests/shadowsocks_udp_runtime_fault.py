@@ -23,7 +23,7 @@ role "server"
 workers 2
 inbounds {{ shadowsocks "ss" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }} }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     marker = root / "bad-clock"
     env = os.environ.copy()

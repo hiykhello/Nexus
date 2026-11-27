@@ -68,7 +68,7 @@ dns {{ server "test" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; st
 inbound "edge" type="vless" {{ listen host="127.0.0.1" port={port}; authentication {{ user "test" uuid-file="{root/'uuid'}"; }}; tls {{ certificate-file "{root/'cert'}"; private-key-file "{root/'key'}"; }}; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rule-set "blocked" path="{root/'block.kdl'}" format="kdl"; rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ blocked path="{root/'block.kdl'}" format="kdl"; }}; rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}; final "direct"; }}
 ''')
     server = subprocess.Popen([require_nexus(), 'run', '--config', root/'config.kdl'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

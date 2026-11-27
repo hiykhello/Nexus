@@ -115,7 +115,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentic
 outbound "edge" type="{kind}" {{ server host="127.0.0.1" port={observer.port};
  authentication {{ password-file "{root / 'password'}"; }}
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; {fingerprint} verify #true; }}; {extra} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(str(binary), str(config)):
             with socks(front, 1, ('127.0.0.1', origin.port))[0] as client:
@@ -152,7 +152,7 @@ outbound "direct" type="direct"
 outbound "edge" type="{kind}" {{ server host="127.0.0.1" port={observer.port};
  authentication {{ password-file "{root / 'password'}"; }}
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; fingerprint "tls13-randomized"; verify #true; }}; {extra} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(str(binary), str(config)):
             with connect(front) as client:
@@ -187,7 +187,7 @@ outbound "direct" type="direct"
 outbound "edge" type="{kind}" {{ server host="127.0.0.1" port={observer.port};
  authentication {{ password-file "{root / 'password'}"; }}
  tls {{ server-name "wrong.example"; ca-file "{root / 'cert'}"; fingerprint "tls13-randomized"; verify #true; }} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(str(binary), str(config)):
             with connect(front) as client:

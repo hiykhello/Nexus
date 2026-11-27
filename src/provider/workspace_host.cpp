@@ -346,6 +346,8 @@ namespace provider::ws_detail {
 
     namespace {
         auto outbound_tag_and_type(glaze::KdlNode const& n) -> std::pair<std::string, std::string> {
+            if (n.name == "auto-detect-interface" || n.name == "interface" || n.name == "mark" ||
+                n.name == "network-type" || n.name == "network-strategy") return {};
             std::string tag, type;
             if (!n.arguments.empty()) if (auto* s = std::get_if<std::string>(&n.arguments[0].data)) tag = *s;
             if (n.name == "outbound") {
@@ -411,7 +413,7 @@ namespace provider::ws_detail {
             if (!tmpl.proxy_detour.empty()) {
                 for (auto& ob : c_obs->children) {
                     auto [tag, type] = outbound_tag_and_type(ob);
-                    if (tag == tmpl.proxy_detour || template_tags.contains(tag)) continue;
+                    if (tag.empty() || tag == tmpl.proxy_detour || template_tags.contains(tag)) continue;
                     if (type == "direct" || type == "block" || type == "selector" || type == "url-test" ||
                         type == "fallback" || type == "load-balance" || is_vless_xhttp_node(ob, type)) continue;
                     if (!std::ranges::any_of(ob.children, [](auto const& c) { return c.name == "detour"; })) {

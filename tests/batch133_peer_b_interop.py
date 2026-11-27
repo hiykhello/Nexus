@@ -124,7 +124,7 @@ def run_suite(nexus_bin: Path, xray_bin: Path):
                 f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="trojan" {{ server host="127.0.0.1" port={p_edge}; authentication {{ password-file "{root/'pwd'}"; }}; tls {{ server-name "localhost"; ca-file "{c['cert']}"; verify #true; }}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                 xr_server({"listen": "127.0.0.1", "port": p_edge, "protocol": "trojan",
                            "settings": {"clients": [{"password": "interop-secret-132"}]},
                            "streamSettings": {"network": "raw", "security": "tls", "tlsSettings": tls_srv}}),
@@ -134,7 +134,7 @@ routing {{ default-outbound "edge"; }}''',
             run_case(
                 "Xray->Nexus Trojan", nexus_bin, xray_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "tr" type="trojan" {{ listen host="127.0.0.1" port={p_edge}; authentication {{ user "u" password-file="{root/'pwd'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 xr_client(p_front, {"protocol": "trojan", "settings": {"servers": [{"address": "127.0.0.1", "port": p_edge, "password": "interop-secret-132"}]},
                                     "streamSettings": {"network": "raw", "security": "tls", "tlsSettings": tls_cli}}),
                 False, p_front, p_front, do_udp=True,
@@ -149,7 +149,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                     f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={p_edge}; method "{method}"; key-file "{root/psk_name}"; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                     xr_server({"listen": "127.0.0.1", "port": p_edge, "protocol": "shadowsocks",
                                "settings": {"method": method, "password": psk_val, "network": "tcp,udp"}}),
                     True, p_front, p_edge, do_udp=False,
@@ -158,7 +158,7 @@ routing {{ default-outbound "edge"; }}''',
                 run_case(
                     f"Xray->Nexus SS2022-{method[-11:-4]}", nexus_bin, xray_bin, root, tport, uport,
                     f'''schema-version 1\nrole "server"\ninbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={p_edge}; method "{method}"; key-file "{root/psk_name}"; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                     xr_client(p_front, {"protocol": "shadowsocks", "settings": {"servers": [{"address": "127.0.0.1", "port": p_edge, "method": method, "password": psk_val}]}}),
                     False, p_front, p_front, do_udp=True,
                 )
@@ -170,7 +170,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                 f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={p_edge}; flow "xtls-rprx-vision"; authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "localhost"; ca-file "{c['cert']}"; verify #true; }}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                 xr_server({"listen": "127.0.0.1", "port": p_edge, "protocol": "vless",
                            "settings": {"decryption": "none", "clients": [{"id": UUID, "flow": "xtls-rprx-vision"}]},
                            "streamSettings": {"network": "raw", "security": "tls", "tlsSettings": tls_srv}}),
@@ -180,7 +180,7 @@ routing {{ default-outbound "edge"; }}''',
             run_case(
                 "Xray->Nexus VLESS+Vision", nexus_bin, xray_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "vl" type="vless" {{ listen host="127.0.0.1" port={p_edge}; flow "xtls-rprx-vision"; authentication {{ user "u" uuid-file="{root/'uuid'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 xr_client(p_front, {"protocol": "vless", "settings": {"vnext": [{"address": "127.0.0.1", "port": p_edge, "users": [{"id": UUID, "encryption": "none", "flow": "xtls-rprx-vision"}]}]},
                                     "streamSettings": {"network": "raw", "security": "tls", "tlsSettings": tls_cli}}),
                 False, p_front, p_front, do_udp=True,
@@ -193,7 +193,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                 f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={p_edge}; flow "xtls-rprx-vision"; authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "localhost"; fingerprint "chrome"; key-exchange "x25519-mlkem768"; reality {{ public-key "{c['pub'].hex()}"; short-id "{SHORT}"; }}; }}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                 xr_server({"listen": "127.0.0.1", "port": p_edge, "protocol": "vless",
                            "settings": {"decryption": "none", "clients": [{"id": UUID, "flow": "xtls-rprx-vision"}]},
                            "streamSettings": {"network": "raw", "security": "reality",
@@ -205,7 +205,7 @@ routing {{ default-outbound "edge"; }}''',
             run_case(
                 "Xray->Nexus VLESS+REALITY+Vision", nexus_bin, xray_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "vl" type="vless" {{ listen host="127.0.0.1" port={p_edge}; flow "xtls-rprx-vision"; authentication {{ user "u" uuid-file="{root/'uuid'}"; }}; tls {{ reality {{ private-key-file "{root/'rkey'}"; server-name "localhost"; short-id "{SHORT}"; max-time-difference 15; fallback host="127.0.0.1" port={cover_port}; }}; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 xr_client(p_front, {"protocol": "vless", "settings": {"vnext": [{"address": "127.0.0.1", "port": p_edge, "users": [{"id": UUID, "encryption": "none", "flow": "xtls-rprx-vision"}]}]},
                                     "streamSettings": {"network": "raw", "security": "reality",
                                                        "realitySettings": {"serverName": "localhost", "fingerprint": "chrome",
@@ -230,7 +230,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                     f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={p_edge}; authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "localhost"; ca-file "{c['cert']}"; verify #true; }}; {nx_tr}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                     xr_server({"listen": "127.0.0.1", "port": p_edge, "protocol": "vless",
                                "settings": {"decryption": "none", "clients": [{"id": UUID}]},
                                "streamSettings": {**xr_stream, "security": "tls", "tlsSettings": srv_tls}}),
@@ -240,7 +240,7 @@ routing {{ default-outbound "edge"; }}''',
                 run_case(
                     f"Xray->Nexus VLESS+{net_name}", nexus_bin, xray_bin, root, tport, uport,
                     f'''schema-version 1\nrole "server"\ninbound "vl" type="vless" {{ listen host="127.0.0.1" port={p_edge}; authentication {{ user "u" uuid-file="{root/'uuid'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; {nx_tr}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                     xr_client(p_front, {"protocol": "vless", "settings": {"vnext": [{"address": "127.0.0.1", "port": p_edge, "users": [{"id": UUID, "encryption": "none"}]}]},
                                         "streamSettings": {**xr_stream, "security": "tls", "tlsSettings": cli_tls}}),
                     False, p_front, p_front, do_udp=True,
@@ -268,7 +268,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                     f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={p_edge}; authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "localhost"; ca-file "{c['cert']}"; verify #true; }}; {nx_tr}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                     xr_server({"listen": "127.0.0.1", "port": p_edge, "protocol": "vless",
                                "settings": {"decryption": "none", "clients": [{"id": UUID}]},
                                "streamSettings": {**xr_tr, "tlsSettings": {**tls_srv, "alpn": [alpn]}}}),
@@ -281,7 +281,7 @@ routing {{ default-outbound "edge"; }}''',
                 run_case(
                     f"Xray->Nexus XHTTP-{proto}-{mode}", nexus_bin, xray_bin, root, tport, uport,
                     f'''schema-version 1\nrole "server"\ninbound "vl" type="vless" {{ listen host="127.0.0.1" port={p_edge}; authentication {{ user "u" uuid-file="{root/'uuid'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; {nx_tr}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                     xr_client(p_front, {"protocol": "vless", "settings": {"vnext": [{"address": "127.0.0.1", "port": p_edge, "users": [{"id": UUID, "encryption": "none"}]}]},
                                         "streamSettings": {**xr_tr, "tlsSettings": {**tls_cli, "alpn": [alpn]}}}),
                     False, p_front, p_front, do_udp=False,

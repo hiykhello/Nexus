@@ -26,7 +26,7 @@ workers 2
 inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; }}
 outbound "direct" type="direct"
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={downstream.getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     server = subprocess.Popen([server_binary, "run", "--config", root / "server.kdl"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=dict(os.environ, NEXUS_TEST_UOT_QUEUE_TRACE="1"))
     client = peer = None

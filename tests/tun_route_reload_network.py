@@ -39,9 +39,9 @@ inbounds {
 outbound "direct" type="direct"
 outbound "block" type="block"
 routing {
-  rule-set "policy" path="route.kdl" format="kdl"
+  rulesets { "policy" path="route.kdl" format="kdl"; }
   rules { - kind="rule-set" value="policy" outbound="block"; }
-  default-outbound "direct"
+  final "direct"
 }
 ''')
     address = "198.51.100.10"

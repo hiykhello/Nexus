@@ -35,7 +35,7 @@ inbound "socks" type="socks5" {{ listen host="127.0.0.1" port={front}; authentic
 outbound "direct" type="direct"
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={remote};
  method "2022-blake3-aes-128-gcm"; key-file "{keyfile}"; tcp-fast-open #true; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with box('sing-box', root, server, remote), Origin(expected=1) as origin:
             with nexus_process(binary, config):

@@ -27,7 +27,7 @@ inbound "host-tun" type="tun" {{
     mtu 1400
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     return path
 

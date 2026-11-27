@@ -124,7 +124,7 @@ routing {{
         rule action="route" outbound="edge" {{ port 18083; }}
         rule action="route" outbound="direct"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     return conf,control

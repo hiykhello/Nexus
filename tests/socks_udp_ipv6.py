@@ -30,7 +30,7 @@ role "client"
 workers {workers}
 inbound "local" type="{inbound}" {{ listen host="::1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         process = subprocess.Popen([binary, 'run', '--config', str(config)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:

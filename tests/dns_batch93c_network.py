@@ -66,7 +66,7 @@ outbound "edge" type="http-connect" {{
     server host="HOST" port={peer.server_address[1]}
     domain-resolver "RESOLVER"
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 '''
         dns = f'''
 dns {{
@@ -158,7 +158,7 @@ def compression(binary, root):
 role "client"
 {listener(front)}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
     listen host="127.0.0.1" port={port}
     server "wire" type="tcp" host="127.0.0.1" port={peer.port}
@@ -238,7 +238,7 @@ role "client"
 {listener(front)}
 outbound "direct" type="direct"
 routing {{ {program}
-    default-outbound "direct"
+    final "direct"
 }}
 dns {{
     server "private" type="local"

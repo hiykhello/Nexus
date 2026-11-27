@@ -97,6 +97,8 @@ namespace config {
         for (auto& e : config.openconnect_outbounds) if (auto ok = fill(e.config.ca_file, "OpenConnect"); !ok) return ok;
         for (auto& e : config.tcp_proxy_outbounds)
             if (e.config.tls) if (auto ok = fill(e.config.tls->ca_file, "HTTP CONNECT"); !ok) return ok;
+        for (auto& e : config.http_clients)
+            if (auto ok = fill(e.ca_file, "HTTP client"); !ok) return ok;
         return {};
     }
 

@@ -180,7 +180,7 @@ dns {{
     final "protected"
     strategy "ipv4_only"
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
 
 def dns_roundtrip(port, network, query, success=True):
@@ -316,14 +316,14 @@ if __name__=="__main__":
                     assert ("origin.test",1) in dot.queries and ("udp.test",1) in dot.queries,dot.queries
                 intercepted=reserve()
                 (root/"dns.kdl").write_text(f'schema-version 2\nkind "predicate"\nrule type="port" value="{intercepted}"\n')
-                content=config.read_text().replace('routing { default-outbound "direct"; }', """
+                content=config.read_text().replace('routing { final "direct"; }', """
     routing {
-      rule-set "dns" path="dns.kdl" format="kdl"
+      rulesets { "dns" path="dns.kdl" format="kdl"; }
       tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {
         rule action="hijack-dns" rule-set="dns"
         rule action="route" outbound="direct"
       }
-      default-outbound "direct"
+      final "direct"
     }""")
                 config.write_text(content)
                 with running([binary,"run","--config",str(config)],front,root/"hijack.log"):

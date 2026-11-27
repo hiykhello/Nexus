@@ -94,7 +94,7 @@ role "client"
 control socket="{control}"
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}; }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         with running([binary, "run", "--config", str(config)], front, root / "proxy.log"):
             generation = status(binary, control, 0, ("0", "0"))

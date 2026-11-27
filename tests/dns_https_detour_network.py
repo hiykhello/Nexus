@@ -53,7 +53,7 @@ inbounds {{
   }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         origin_dir = root / "doh"
         origin_dir.mkdir()
@@ -91,7 +91,7 @@ dns {{
   strategy "ipv4_only"
   disable-cache #true
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
             config.write_text(source)
             with Origin(expected=2) as origin, nexus_process(binary, config):

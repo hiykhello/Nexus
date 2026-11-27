@@ -72,7 +72,7 @@ def check(binary, root, peer, alternate, transport, check_expiry):
 role "client"
 inbound "main" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
    listen host="127.0.0.1" port={dns_port}
    message-cache-directory "{directory}"
@@ -131,7 +131,7 @@ def check_views(binary, root, first, second):
 role "client"
 inbound "main" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
    listen host="127.0.0.1" port={dns_port}
    message-cache-directory "{directory}"

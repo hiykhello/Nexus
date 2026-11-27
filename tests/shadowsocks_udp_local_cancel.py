@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-ss-udp-local-') as directory, soc
         (path/'resolv').write_text('nameserver 127.0.0.2\noptions timeout:5 attempts:1\nsearch .\n')
         with socket.socket() as reserve: reserve.bind(('127.0.0.1',0)); port=reserve.getsockname()[1]
         cfg='dns { server "local" type="local"; }' if explicit else ''
-        (path/'config').write_text(f'''schema-version 1\nrole "server"\nworkers 1\n{cfg}\ninbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{path/'key'}"; }}\noutbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}\n''')
+        (path/'config').write_text(f'''schema-version 1\nrole "server"\nworkers 1\n{cfg}\ninbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{path/'key'}"; }}\noutbound "direct" type="direct"\nrouting {{ final "direct"; }}\n''')
         env=os.environ.copy(); env['LD_PRELOAD']=str(path/'guard.so')
         proc=subprocess.Popen([require_nexus(),'run','--config',path/'config'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:

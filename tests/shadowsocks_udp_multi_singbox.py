@@ -73,7 +73,7 @@ inbounds {{
  shadowsocks "b" {{ listen host="127.0.0.1" port={ports[1]}; method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
 }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
                 server = subprocess.Popen(["stdbuf", "-oL", fixture, "run", "--config", path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
                                           env=env, pass_fds=(write_fd,) if observer else ())

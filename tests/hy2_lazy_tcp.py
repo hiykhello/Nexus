@@ -41,7 +41,7 @@ outbound "edge" type="hysteria2" {{
     connect-timeout-ms 2000
     quic {{ {option} }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(str(binary), str(config)), socket.create_connection(("127.0.0.1", front), timeout=5) as client:
             client.sendall(b"\x05\x01\x00")

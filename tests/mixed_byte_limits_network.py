@@ -29,7 +29,7 @@ inbound "local" type="mixed" {{
 outbound "direct" type="direct" {{ tcp-fast-open #true; }}
 routing {{
  {program}
- default-outbound "direct"
+ final "direct"
 }}
 ''')
     return path

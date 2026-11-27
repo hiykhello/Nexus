@@ -30,9 +30,11 @@ dns {
     cache-flush-interval-ms 5000
     message-cache-directory "/tmp/nexus-b147-dns-cache"
     servers { server "up" type="udp" host="127.0.0.1" port=5300; }
-    rule-set "inline-block" {
-        domain-suffix "ads.example"
-        domain "tracker.example"
+    rulesets {
+        inline-block {
+            domain-suffix "ads.example"
+            domain "tracker.example"
+        }
     }
     rules {
         - rule-set="inline-block" query-type="HTTPS" action="predefined" predefined-rcode="NOERROR"
@@ -42,7 +44,7 @@ dns {
     final "up"
 }
 routing {
-    default-outbound "direct"
+    final "direct"
 }
 )kdl";
         auto parsed = config::parse_kdl(cfg);
@@ -81,13 +83,13 @@ dns {
     final "up"
 }
 routing {
-    rule-set "vip" {
-        domain "vip.example"
+    rulesets {
+        vip { domain "vip.example"; }
     }
     tcp-program sniff-timeout-ms=500 unknown="skip" {
         rule action="route" rule-set="vip" domain-source="reverse" outbound="block"
     }
-    default-outbound "direct"
+    final "direct"
 }
 )kdl";
         check(!config::parse_kdl(missing_rev).has_value(), "reverse domain-source must fail without reverse-mapping #true");
@@ -112,17 +114,15 @@ dns {
     final "up"
 }
 routing {
-    rule-set "vip" {
-        domain "vip.example"
-    }
-    rule-set "geoip-like" {
-        ip-cidr "10.0.0.0/8"
+    rulesets {
+        vip { domain "vip.example"; }
+        geoip-like { ip-cidr "10.0.0.0/8"; }
     }
     tcp-program sniff-timeout-ms=500 unknown="skip" {
         rule action="route" rule-set="geoip-like" outbound="block"
         rule action="route" rule-set="vip" domain-source="reverse" outbound="block"
     }
-    default-outbound "direct"
+    final "direct"
 }
 )kdl";
         auto parsed = config::parse_kdl(with_rev);
@@ -195,6 +195,7 @@ dns {
     final "up"
 }
 http-clients {
+    default "direct-http"
     direct-http {
         outbound "direct"
         domain-resolver "up"
@@ -207,14 +208,15 @@ http-clients {
     }
 }
 routing {
-    default-http-client "direct-http"
-    rule-set "r1" url="https://rules.example/a.srs" format="srs" update-interval-ms=60000
-    rule-set "r2" url="https://rules.example/b.kdl" format="kdl" http-client="alt-http"
+    rulesets {
+        r1 url="https://rules.example/a.srs" format="srs" update-interval-ms=60000
+        r2 url="https://rules.example/b.kdl" format="kdl" http-client="alt-http"
+    }
     rules {
         - kind="rule-set" value="r1" outbound="block"
         - kind="rule-set" value="r2" outbound="direct"
     }
-    default-outbound "direct"
+    final "direct"
 }
 )kdl";
         auto parsed = config::parse_kdl(cfg);
@@ -244,11 +246,13 @@ outbounds {
     outbound "block" type="block"
 }
 routing {
-    rule-set "local" path="rel.kdl" format="kdl"
+    rulesets {
+        local path="rel.kdl" format="kdl"
+    }
     rules {
         - kind="rule-set" value="local" outbound="block"
     }
-    default-outbound "direct"
+    final "direct"
 }
 )kdl";
             std::ofstream(cfgd / "10-net.kdl.bak") << "THIS IS INVALID KDL AND MUST BE IGNORED {{{{";
@@ -292,7 +296,7 @@ inbounds {
     tun "old-tun" { inet4-address "198.18.0.1/30"; mtu 1400; }
 }
 outbounds { direct; block; }
-routing { default "direct"; }
+routing { final "direct"; }
 )kdl");
         auto ov1 = write("ov1.kdl", R"kdl(workers 4
 log { level "warn"; }
@@ -353,7 +357,7 @@ inbounds { inbound "proxy-only" type="socks5" { listen host="127.0.0.1" port=108
         std::filesystem::create_directories(dir);
         write("cfgdir/00-host.kdl", "schema-version 1\nrole \"client\"\nworkers 1\n");
         write("cfgdir/10-in.kdl", "inbounds { inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }; }\n");
-        write("cfgdir/20-out.kdl", "outbounds { outbound \"direct\" type=\"direct\"; }\nrouting { default-outbound \"direct\"; }\n");
+        write("cfgdir/20-out.kdl", "outbounds { outbound \"direct\" type=\"direct\"; }\nrouting { final \"direct\"; }\n");
         auto m5 = cli::read_config_source(dir.string(), true, ov3.string());
         check(m5.has_value(), m5 ? "" : "config-dir + host-override failed: " + m5.error());
         auto c5 = config::parse_kdl(*m5);
@@ -385,7 +389,7 @@ shutdown-grace-ms 1000
 tcp-splice-pipes 4
 inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )kdl");
         auto ov7 = write("ov7.kdl", "sessions-per-listener 256\nshutdown-grace-ms 2500\ntcp-splice-pipes 8\n");
         auto m7 = cli::read_config_source(base7.string(), false, ov7.string());

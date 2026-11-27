@@ -252,7 +252,7 @@ outbound "ss" type="shadowsocks" {{
     key-file "{ss_key_f}"
     detour "stls"
 }}
-routing {{ default-outbound "ss"; }}
+routing {{ final "ss"; }}
 ''')
                 start = len(stls_relay.sources)
                 c_proc, c_port = launch_nexus(nexus_bin, nx_cli_cfg, "SOCKS5 listening on ", trace)
@@ -299,7 +299,7 @@ inbound "ss-in" type="shadowsocks" {{
     key-file "{ss_key_f}"
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             nx_srv, actual_stls_port = launch_nexus(nexus_bin, nx_srv_cfg, "ShadowTLS listening on ")
             procs.append(nx_srv)

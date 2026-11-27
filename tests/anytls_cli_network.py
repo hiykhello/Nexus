@@ -63,7 +63,7 @@ outbound "edge" type="anytls" {{ {connection(root, remote)}
  {detour}
 }}
 {lower_config}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     return path
 
@@ -87,7 +87,7 @@ dns {{
  rule domain="listener.test" inbound="ain" action="reject"
  final "dns"
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     return path
 
@@ -115,9 +115,9 @@ def pool_references(binary, root):
             source = config.read_text().replace("workers 1", f'workers 1\ncontrol socket="{control}"')
             source = source.replace("idle-timeout-ms 30000; check-interval-ms 30000;",
                                     "idle-timeout-ms 200; check-interval-ms 50;")
-            source = source.replace('routing { default-outbound "edge"; }', '''
+            source = source.replace('routing { final "edge"; }', '''
 outbound "selected" type="selector" { member "direct"; member "edge"; selected "direct"; }
-routing { default-outbound "selected"; }''')
+routing { final "selected"; }''')
             config.write_text(source)
 
             def select(member):

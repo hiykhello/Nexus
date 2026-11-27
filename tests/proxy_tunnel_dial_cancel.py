@@ -60,7 +60,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentica
 outbound "direct" type="direct"
 dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
 {outbound}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:
@@ -180,7 +180,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentica
 outbound "direct" type="direct"
 dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
 {outbound}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         clients=[]; upstreams=[]
@@ -266,7 +266,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentica
 outbound "direct" type="direct"
 dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
 {outbound}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         clients=[]
@@ -334,7 +334,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentica
 outbound "direct" type="direct"
 dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
 {outbound}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:

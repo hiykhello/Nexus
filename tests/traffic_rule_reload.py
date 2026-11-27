@@ -40,10 +40,12 @@ outbound "direct" type="direct"
 outbound "deny" type="block"
 dns {{ server "dns" type="udp" host="127.0.0.1" port={dns}; final "dns"; strategy "ipv4_only"; }}
 routing {{
-  rule-set "primary" path="primary.kdl" format="kdl"
-  rule-set "secondary" path="secondary.beve" format="beve"
+  rulesets {{
+      "primary" path="primary.kdl" format="kdl"
+      "secondary" path="secondary.beve" format="beve"
+  }}
   {restrictions}
-  default-outbound "direct"
+  final "direct"
 }}
 {http_client}
 ''')

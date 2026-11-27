@@ -66,14 +66,16 @@ inbounds { socks5 "in" { listen "127.0.0.1:1080"; authentication "none"; }; }
 outbounds { direct; block; }
 dns {
     servers { local "sys"; }
-    rule-set "dns-local" path="local-a.kdl" format="kdl"
+    rulesets { dns-local path="local-a.kdl" format="kdl"; }
     rules { - rule-set="dns-local" to="sys"; }
     final "sys"
 }
 routing {
-    rule-set "r-local" path="local-b.txt" format="domain-list"
-    rule-set "r-inline" { domain "inline.test"; }
-    rules udp=#true { - rule-set "r-local" to="block"; - rule-set "r-inline" to="direct"; - default "direct"; }
+    rulesets {
+        r-local path="local-b.txt" format="domain-list"
+        r-inline { domain "inline.test"; }
+    }
+    rules udp=#true { - rule-set "r-local" to="block"; - rule-set "r-inline" to="direct"; - final "direct"; }
 })kdl";
         auto parsed = config::parse_kdl(kdl);
         require(parsed.has_value(), parsed ? "" : parsed.error());
@@ -130,7 +132,7 @@ dns {
     }
     final "intl"
 }
-routing { default-outbound "direct"; })kdl";
+routing { final "direct"; })kdl";
         auto parsed = config::parse_kdl(kdl);
         require(parsed.has_value(), parsed ? "" : "logical DNS parse: " + parsed.error());
         require(parsed->dns && parsed->dns->rules.size() == 4, "4 inline logical DNS rules parsed");
@@ -190,7 +192,7 @@ routing { default-outbound "direct"; })kdl";
         for (unsigned i = 0; i < rules::max_rule_depth + 4; ++i) deep += "and {\n";
         deep += "domain \"deep.test\"\n";
         for (unsigned i = 0; i < rules::max_rule_depth + 4; ++i) deep += "}\n";
-        deep += "}; }; final \"s\"; }\nrouting { default-outbound \"direct\"; }\n";
+        deep += "}; }; final \"s\"; }\nrouting { final \"direct\"; }\n";
         auto too_deep = config::parse_kdl(deep);
         require(!too_deep.has_value(), "excessive logical DNS nesting depth rejected");
 
@@ -199,7 +201,7 @@ routing { default-outbound "direct"; })kdl";
 inbounds { socks5 "in" { listen "127.0.0.1:1080"; authentication "none"; }; }
 outbounds { direct; }
 dns { servers { local "s"; }; rules { - mode="logical" logic="xor" to="s" { domain "x.test"; }; }; final "s"; }
-routing { default-outbound "direct"; })kdl";
+routing { final "direct"; })kdl";
         require(!config::parse_kdl(bad_logic).has_value(), "invalid logic=\"xor\" rejected");
         std::println("  [PASS] top-level inline logical (and/or/not) DNS rules + depth guard");
     }
@@ -225,7 +227,7 @@ routing {
         - network "icmp" action="bypass"
         - domain "explicit-bypass.test" action="bypass" to="proxy"
         - ip-cidr "203.0.113.0/24" action="reject"
-        - default "proxy"
+        - final "proxy"
     }
 }
 )kdl";
@@ -261,7 +263,7 @@ routing {
         auto ref_kdl = config::parse_kdl(R"kdl(schema-version 1; role "client"
 inbounds { socks5 "in" { listen "127.0.0.1:1080"; authentication "none"; }; }
 outbounds { direct; block; socks5 "proxy" { server "127.0.0.1:1081"; }; }
-routing { rules { - domain "b.test" action="bypass" to="proxy"; - default "direct"; }; })kdl");
+routing { rules { - domain "b.test" action="bypass" to="proxy"; - final "direct"; }; })kdl");
         require(ref_kdl.has_value(), "parse bypass tunnel_references config");
         auto ref_files = cli::load_route_files(*ref_kdl, "/tmp/test.kdl", true);
         auto ref_snap = cli::project_routes(*ref_kdl, *ref_files).compile(*ref_kdl, "in");
@@ -323,7 +325,7 @@ routing { rules { - domain "b.test" action="bypass" to="proxy"; - default "direc
             auto tk = config::parse_kdl(R"kdl(schema-version 1; role "client"
 inbounds { socks5 "in" { listen "127.0.0.1:1080"; authentication "none"; }; }
 outbounds { direct; block; }
-routing { rules udp=#true { - action="reject" { network "icmp"; source-ip-cidr "10.0.0.99/32"; }; - network "icmp" action="bypass"; - default "direct"; }; })kdl");
+routing { rules udp=#true { - action="reject" { network "icmp"; source-ip-cidr "10.0.0.99/32"; }; - network "icmp" action="bypass"; - final "direct"; }; })kdl");
             require(tk.has_value(), "parse TUN ICMP config");
             auto tf = cli::load_route_files(*tk, "/tmp/test.kdl", true);
             auto ts = cli::project_routes(*tk, *tf).compile(*tk, "in");
@@ -370,7 +372,7 @@ outbounds {
     block
     socks5 "proxy-a" { server "127.0.0.1:1081"; }
 }
-routing { default-outbound "proxy-a"; }
+routing { final "proxy-a"; }
 )kdl";
         auto cfg = config::parse_kdl(kdl);
         require(cfg.has_value(), "parse mode config");

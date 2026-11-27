@@ -78,13 +78,15 @@ outbounds {
 }
 
 routing {
-    rule-set "blocked" path="rules/blocked.kdl" format="kdl"
-    rule-set "private" path="rules/private.kdl" format="kdl"
-    rules {
-        - kind="rule-set" value="blocked" outbound="reject"
-        - kind="rule-set" value="private" outbound="direct"
+    rulesets {
+        blocked path="rules/blocked.kdl" format="kdl"
+        private path="rules/private.kdl" format="kdl"
     }
-    default-outbound "preferred"
+    rules {
+        - rule-set "blocked" to="reject"
+        - rule-set "private" to="direct"
+    }
+    final "preferred"
 }
 
 // Create this private directory as the user running Nexus before enabling control.

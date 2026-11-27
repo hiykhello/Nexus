@@ -18,5 +18,5 @@ outbounds {
     direct "direct"
 }
 routing {
-    default-outbound "direct"
+    final "direct"
 }

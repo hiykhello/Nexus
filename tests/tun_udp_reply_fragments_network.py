@@ -99,7 +99,7 @@ inbound "tun" type="tun" {{
     {enabled}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
                 with nexus_process(binary, config):
                     for family, flag, remote, local, prefix in TARGETS:

@@ -40,7 +40,7 @@ outbound "upstream" type="socks5" {{
     authentication username="test" password-file="{secret}"
     udp #true
 }}
-routing {{ default-outbound "upstream"; }}
+routing {{ final "upstream"; }}
 ''')
     peer=launch_singbox(upstream,remote)
     try:
@@ -137,7 +137,7 @@ outbound "upstream" type="socks5" {{
     connect-timeout-ms 1500
     udp #true
 }}
-routing {{ default-outbound "upstream"; }}
+routing {{ final "upstream"; }}
 ''')
                 with stall_primary_connects(namespaces["primary"], remote), nexus_process(cli, config):
                     with udp_client(front) as (client, relay):

@@ -208,7 +208,7 @@ outbounds {{
     probe-timeout-ms 900
   }}
 }}
-routing {{ default-outbound "sample"; }}
+routing {{ final "sample"; }}
 ''')
         with running([binary, "run", "--config", str(config)], front, root / "proxy.log"):
             def check_sample(state):

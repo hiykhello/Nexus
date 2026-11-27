@@ -85,7 +85,7 @@ role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={listener.getsockname()[1]};{flow} authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "cover.example"; ca-file "{root/'cert'}"; verify #true; }} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         finished = threading.Event(); old_closed=threading.Event(); new_tcp=threading.Event(); barriers = queue.Queue(); errors = []
         def handshake(context):

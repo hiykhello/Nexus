@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-question-deadline-") as directory
 role "server"
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct" {{ connect-timeout-ms 350; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
  server "first" type="udp" host="127.0.0.1" port={first.port};
  server "second" type="udp" host="{'upstream.test' if named else '127.0.0.1'}" port={second.port} {'domain-resolver="bootstrap"' if named else ''};

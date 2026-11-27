@@ -266,9 +266,9 @@ namespace {
                 "inbounds {{ inbound \"s\" type=\"socks5\" {{ listen \"127.0.0.1:1080\"; authentication \"none\"; }} }}\n"
                 "outbounds {{ direct; }}\n"
                 "routing {{\n"
-                "  rule-set \"rs\" url=\"https://127.0.0.1:{}{}\" format=\"{}\" http-client=\"{}\" update-interval-ms={}{}\n"
+                "  rulesets {{ rs url=\"https://127.0.0.1:{}{}\" format=\"{}\" http-client=\"{}\" update-interval-ms={}{}; }}\n"
                 "  rules sniff-timeout-ms=300 unknown=\"skip\" {{ - rule-set=\"rs\" to=\"direct\"; }}\n"
-                "  default \"direct\"\n}}\n",
+                "  final \"direct\"\n}}\n",
                 cache_dir.string(), cert.string(), c1_tag, cert.string(), srv.port, path, fmt, hc, interval_ms, sha_prop);
         };
         auto cold_start = [&](cli::run_detail::RemoteRulesetManager& mgr, std::string const& kdl, cli::RuleFileInput& in) {
@@ -366,7 +366,7 @@ namespace {
                 "}}\n"
                 "proxy-providers {{ http \"p\" {{ url \"https://127.0.0.1:{}{}\"; http-client \"{}\"; format \"{}\"; update-interval-ms {}; cache-dir \"{}\"; }} }}\n"
                 "inbounds {{ inbound \"s\" type=\"socks5\" {{ listen \"127.0.0.1:1080\"; authentication \"none\"; }} }}\n"
-                "outbounds {{ direct; selector \"auto\" {{ use \"p\"; }}; }}\nrouting {{ default \"auto\"; }}\n",
+                "outbounds {{ direct; selector \"auto\" {{ use \"p\"; }}; }}\nrouting {{ final \"auto\"; }}\n",
                 cert.string(), cache_dir.string(), cert.string(), c1_tag, cert.string(), srv.port, path, hc, fmt, interval_ms, cache_dir.string());
         };
         std::string const url_a = std::format("https://127.0.0.1:{}/sub-a", srv.port);

@@ -19,13 +19,13 @@ inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={front}; authenticati
 outbounds {{ direct "direct"; }}
 dns {{ servers {{ udp "resolver" host="127.0.0.1" port={dns.port}; }}; final "resolver"; strategy "prefer_ipv6"; disable-cache #true; }}
 routing {{
-    rule-set "loopback" path="loopback.kdl" format="kdl"
+    rulesets {{ "loopback" path="loopback.kdl" format="kdl"; }}
     tcp-program sniff-timeout-ms=100 unknown="pause" udp=#true {{
         rule action="resolve"
         rule action="route" rule-set="loopback" outbound="direct"
         rule action="reject"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         dns.drop.add(('pending.example',1))

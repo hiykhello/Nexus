@@ -31,7 +31,7 @@ dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; st
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="shadowsocks" {{ server host="edge.test" port=443; bootstrap-resolver "boot"; connect-timeout-ms 800; method "2022-blake3-aes-128-gcm"; key-file "{key}"; udp-over-tcp "v2"; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:

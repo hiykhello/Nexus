@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-udp-inbounds-") as directory:
     config = root / "server.kdl"
     entries = [f'shadowsocks "s{i}" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}' for i, port in enumerate(ports)]
     def write_config(items):
-        config.write_text('schema-version 1\nrole "server"\nworkers 1\ninbounds {\n' + '\n'.join(items) + '\n}\noutbounds { direct "direct"; block "reject"; }\nrouting { default-outbound "direct"; }\n')
+        config.write_text('schema-version 1\nrole "server"\nworkers 1\ninbounds {\n' + '\n'.join(items) + '\n}\noutbounds { direct "direct"; block "reject"; }\nrouting { final "direct"; }\n')
     write_config(entries + [f'shadowsocks "overflow" {{ listen host="127.0.0.1" port=65535; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}'])
     if subprocess.run([nexus, "run", "--config", config], capture_output=True, timeout=10).returncode == 0:
         raise RuntimeError("17 inbounds accepted")

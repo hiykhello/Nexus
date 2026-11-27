@@ -35,7 +35,7 @@ outbound "direct" type="direct"
             if kind.endswith("vision"):
                 text += 'flow "xtls-rprx-vision";'
         text += "}\n"
-    return text + f'routing {{ default-outbound "n{len(chain) - 1}"; }}\n'
+    return text + f'routing {{ final "n{len(chain) - 1}"; }}\n'
 
 
 def main():

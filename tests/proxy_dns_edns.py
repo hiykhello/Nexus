@@ -163,7 +163,7 @@ workers {workers}
 dns {{ servers {{ server "upstream" type="{'tcp' if tcp else 'udp'}" host="127.0.0.1" port={dns_tcp.getsockname()[1]}; }}; strategy "ipv4_only"; edns #true; }}
 inbounds {{ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}; }}
 outbounds {{ outbound "direct" type="direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             env = os.environ.copy()
             env["LD_PRELOAD"] = str(guard)

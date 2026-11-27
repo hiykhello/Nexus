@@ -66,10 +66,12 @@ role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
 routing {{
- rule-set "a" path="a.kdl" format="kdl"
- rule-set "b" path="b.kdl" format="kdl"
+ rulesets {{
+     "a" path="a.kdl" format="kdl"
+     "b" path="b.kdl" format="kdl"
+ }}
  tcp-program sniff-timeout-ms=1000 unknown="skip" udp=#true {{ {'; '.join(rules)}; }}
- default-outbound "direct"
+ final "direct"
 }}
 ''')
     return path
@@ -173,14 +175,14 @@ role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
 dns {{ servers {{ udp "resolver" host="127.0.0.1" port={dns.socket.getsockname()[1]}; }}; final "resolver"; strategy "ipv4_only"; disable-cache #true; }}
-routing {{ rule-set "a" path="a.kdl" format="kdl"; tcp-program sniff-timeout-ms=1000 unknown="skip" udp=#true {{
+routing {{ rulesets {{ "a" path="a.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms=1000 unknown="skip" udp=#true {{
  rule action="resolve"
  rule action="reject" rule-set="a" domain-source="sniffed"
  rule action="sniff"
  rule action="resolve"
  rule action="sniff"
  {terminal}
-}}; default-outbound "direct"; }}
+}}; final "direct"; }}
 ''')
             before = dns.count
             with nexus_process(binary, str(config)), udp_client(front) as (client, relay):

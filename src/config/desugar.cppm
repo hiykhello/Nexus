@@ -64,26 +64,36 @@ export namespace config::desugar_detail {
         return {};
     }
 
-    inline auto desugar_dns_rule(Node& rule) -> std::expected<void, std::string> {
-        auto it_to = std::ranges::find_if(rule.properties,
-            [](auto const& kv) { return kv.first == "to"; });
-        if (it_to != rule.properties.end()) {
-            if (property(rule, "server"))
-                return error("DNS rule cannot specify both to and server");
-            it_to->first = "server";
+    inline auto is_implicit_true_predicate(std::string_view kw) noexcept -> bool {
+        return kw == "ip-is-private" || kw == "source-ip-is-private" ||
+               kw == "ip-is-cgnat" || kw == "source-ip-is-cgnat" ||
+               kw == "ip-accept-any" || kw == "source-ip-accept-any";
+    }
+
+    inline auto desugar_route_predicate_children(Node& node) -> std::expected<void, std::string> {
+        for (auto& c : node.children) {
+            if (c.name == "action" || c.name == "rule") continue;
+            if (c.tag) return error("tagged predicate node in routing rule");
+            if (c.name == "and" || c.name == "or" || c.name == "not" ||
+                c.name == "all" || c.name == "any") {
+                if (auto ok = desugar_route_predicate_children(c); !ok) return ok;
+                continue;
+            }
+            if (is_implicit_true_predicate(c.name) && c.arguments.empty() &&
+                c.properties.empty() && c.children.empty()) {
+                c.arguments.push_back(Value{true, {}});
+                continue;
+            }
+            if (c.name != "dscp" && c.properties.empty() && c.children.empty() && c.arguments.size() > 1) {
+                for (auto const& arg : c.arguments)
+                    if (arg.tag) return error("tagged predicate argument");
+                Node any{.name = "or"};
+                any.children.reserve(c.arguments.size());
+                for (auto& arg : c.arguments)
+                    any.children.push_back(Node{.name = c.name, .arguments = {std::move(arg)}});
+                c = std::move(any);
+            }
         }
-        if (rule.arguments.empty()) return {};
-        if (rule.tag || !rule.children.empty() || rule.arguments.size() != 2)
-            return error("invalid DNS rule shorthand");
-        auto key = string(rule.arguments[0]);
-        auto val = string(rule.arguments[1]);
-        if (!key || !val ||
-            (*key != "domain" && *key != "domain-suffix" && *key != "domain-keyword" &&
-             *key != "domain-wildcard" && *key != "domain-regex" && *key != "rule-set") ||
-            property(rule, *key))
-            return error("invalid DNS rule shorthand field");
-        rule.properties.insert(rule.properties.begin(), {*key, rule.arguments[1]});
-        rule.arguments.clear();
         return {};
     }
 
@@ -175,12 +185,19 @@ export namespace config::desugar_detail {
                 return error("cyclic sub-rule reference: " + *sub_target);
             if (!r.arguments.empty()) {
                 auto kw = string(r.arguments.front());
-                if (!kw || r.arguments.size() < 2 || *kw == "rule" || *kw == "default")
+                if (!kw || *kw == "rule" || *kw == "default" || *kw == "final")
                     return error("invalid guard predicate in sub-rule invocation");
                 for (auto const& arg : r.arguments) if (arg.tag) return error("tagged guard argument");
-                push_multi_arg_predicate(r, *kw, 1);
+                if (r.arguments.size() == 1 && is_implicit_true_predicate(*kw)) {
+                    r.children.push_back(Node{.name = *kw, .arguments = {Value{true, {}}}});
+                } else if (r.arguments.size() >= 2) {
+                    push_multi_arg_predicate(r, *kw, 1);
+                } else {
+                    return error("invalid guard predicate in sub-rule invocation");
+                }
                 r.arguments.clear();
             }
+            if (auto ok = desugar_route_predicate_children(r); !ok) return ok;
             if (invert) {
                 if (auto ok = wrap_negated_predicates(r); !ok) return ok;
             }
@@ -208,10 +225,12 @@ export namespace config::desugar_detail {
             if (!kw) return error("ergonomic routing rule must begin with a string keyword");
             for (std::size_t i = 1; i < r.arguments.size(); ++i)
                 if (r.arguments[i].tag) return error("tagged argument in ergonomic routing rule");
-            if (*kw == "default") {
+            if (*kw == "default")
+                return error("use routing { final \"<outbound>\" }");
+            if (*kw == "final") {
                 if (!allow_default || invert || r.arguments.size() != 2 || !r.properties.empty() || !r.children.empty() ||
                     !string(r.arguments[1]))
-                    return error("default rule requires one outbound name and no options");
+                    return error("final rule requires one outbound name and no options");
                 defaults_out.push_back(Node{.name = "default-outbound", .arguments = {r.arguments[1]}});
                 return {};
             }
@@ -243,6 +262,15 @@ export namespace config::desugar_detail {
                         return error("ergonomic rule-set rule requires to/outbound or action");
                     r.properties.push_back({"action", {std::string("route"), {}}});
                 }
+            } else if (r.arguments.size() == 1 && is_implicit_true_predicate(*kw)) {
+                if (!r.children.empty())
+                    return error("invalid ergonomic " + *kw + " rule");
+                r.children.push_back(Node{.name = *kw, .arguments = {Value{true, {}}}});
+                if (!property(r, "action")) {
+                    if (!property(r, "outbound"))
+                        return error("ergonomic routing rule requires action or to/outbound");
+                    r.properties.push_back({"action", {std::string("route"), {}}});
+                }
             } else {
                 if (r.arguments.size() < 2 || !r.children.empty() || *kw == "rule")
                     return error("unknown ergonomic routing rule or missing predicate value");
@@ -267,6 +295,7 @@ export namespace config::desugar_detail {
             if (!property(r, "action") && property(r, "outbound"))
                 r.properties.push_back({"action", {std::string("route"), {}}});
         }
+        if (auto ok = desugar_route_predicate_children(r); !ok) return ok;
         if (invert) {
             if (auto ok = wrap_negated_predicates(r); !ok) return ok;
         }
@@ -291,50 +320,56 @@ export namespace config::desugar_detail {
                name == "http-client" || name == "sha256" || name == "update-interval-ms";
     }
 
-    inline auto desugar_rule_set_fields(Node& rule_set) -> std::expected<void, std::string> {
-        if (rule_set.children.empty()) return {};
-        std::vector<Node> kept;
-        kept.reserve(rule_set.children.size());
-        for (auto& child : rule_set.children) {
-            if (!is_rule_set_meta_field(child.name)) {
-                kept.push_back(std::move(child));
-                continue;
-            }
-            if (child.tag || !child.properties.empty() || !child.children.empty() ||
-                child.arguments.size() != 1)
-                return error("rule-set field " + child.name + " requires one value");
-            if (property(rule_set, child.name))
-                return error("duplicate rule-set field " + child.name);
-            rule_set.properties.push_back({std::move(child.name), std::move(child.arguments.front())});
+    inline auto canonicalize_rule_set_props(Node& rule_set) -> void {
+        if (rule_set.properties.size() <= 1) return;
+        std::vector<std::pair<std::string, Value>> ordered;
+        ordered.reserve(rule_set.properties.size());
+        for (std::string_view key : {"type", "url", "path", "format", "http-client", "sha256", "update-interval-ms"}) {
+            for (auto& kv : rule_set.properties)
+                if (kv.first == key) ordered.push_back(std::move(kv));
         }
-        rule_set.children = std::move(kept);
+        for (auto& kv : rule_set.properties)
+            if (!kv.first.empty() && !is_rule_set_meta_field(kv.first))
+                ordered.push_back(std::move(kv));
+        rule_set.properties = std::move(ordered);
+    }
+
+    inline auto desugar_rule_set_fields(Node& rule_set) -> std::expected<void, std::string> {
+        if (!rule_set.children.empty()) {
+            std::vector<Node> kept;
+            kept.reserve(rule_set.children.size());
+            for (auto& child : rule_set.children) {
+                if (!is_rule_set_meta_field(child.name)) {
+                    kept.push_back(std::move(child));
+                    continue;
+                }
+                if (child.tag || !child.properties.empty() || !child.children.empty() ||
+                    child.arguments.size() != 1)
+                    return error("rule-set field " + child.name + " requires one value");
+                if (property(rule_set, child.name))
+                    return error("duplicate rule-set field " + child.name);
+                rule_set.properties.push_back({std::move(child.name), std::move(child.arguments.front())});
+            }
+            rule_set.children = std::move(kept);
+            if (auto ok = desugar_route_predicate_children(rule_set); !ok) return ok;
+        }
+        canonicalize_rule_set_props(rule_set);
         return {};
     }
 
     inline auto desugar_rulesets_block(Node& block, bool& seen, std::vector<Node>& out)
         -> std::expected<void, std::string> {
         if (seen || block.tag || !block.arguments.empty() || !block.properties.empty())
-            return error("invalid or duplicate " + block.name + " block");
+            return error("invalid or duplicate rulesets block");
         seen = true;
         for (auto& item : block.children) {
-            if (item.tag)
-                return error("tagged rule-set node in " + block.name);
-            if (item.arguments.empty()) {
-                if (item.name == "-")
-                    return error("rule-set entry - requires a name argument in " + block.name);
-                item.arguments.push_back({std::move(item.name), {}});
-                item.name = "rule-set";
-            } else if (item.arguments.size() == 1 &&
-                       (item.name == "remote" || item.name == "local" || item.name == "inline")) {
-                if (property(item, "type"))
-                    return error("typed rule-set in " + block.name + " cannot also specify type");
-                item.properties.push_back({"type", {std::move(item.name), {}}});
-                item.name = "rule-set";
-            } else if (item.name == "-" && item.arguments.size() == 1) {
-                item.name = "rule-set";
-            } else {
-                return error("invalid rule-set entry in " + block.name);
-            }
+            if (item.tag) return error("tagged rule-set node in rulesets");
+            if (item.name == "-")
+                return error("rulesets uses named nodes <name> instead of - entries");
+            if (!item.arguments.empty())
+                return error("rulesets entries must be named nodes with no positional arguments");
+            item.arguments.push_back({std::move(item.name), {}});
+            item.name = "rule-set";
             if (auto ok = desugar_rule_set_fields(item); !ok) return ok;
             out.push_back(std::move(item));
         }
@@ -361,20 +396,29 @@ export namespace config::desugar_detail {
         out_children.reserve(routing.children.size());
         for (auto& child : routing.children) {
             if (child.name == "sub-rule") continue;
-            if (child.name == "default") {
+            if (child.name == "final") {
                 auto v = (child.properties.empty() && child.children.empty()) ? argument(child) : nullptr;
-                if (!v || !valid_name(*v)) return error("default requires one outbound name");
+                if (!v || !valid_name(*v)) return error("final requires one outbound name");
                 child.name = "default-outbound";
                 out_children.push_back(std::move(child));
                 continue;
             }
-            if (child.name == "rulesets" || child.name == "rule-sets") {
+            if (child.name == "default-outbound" || child.name == "default")
+                return error("use routing { final \"<outbound>\" }");
+            if (child.name == "rule-set")
+                return error("use routing { rulesets { <name> ... } }");
+            if (child.name == "rule-sets")
+                return error("use rulesets { ... }");
+            if (child.name == "default-http-client")
+                return error("use http-clients { default \"<name>\" }");
+            if (child.name == "default-domain-resolver")
+                return error("use dns { default \"<server>\" }");
+            if (child.name == "auto-detect-interface" || child.name == "default-interface" ||
+                child.name == "default-mark" || child.name == "default-network-type" ||
+                child.name == "default-network-strategy")
+                return error("move outbound dial defaults into outbounds { ... }");
+            if (child.name == "rulesets") {
                 if (auto ok = desugar_rulesets_block(child, rulesets_seen, out_children); !ok) return ok;
-                continue;
-            }
-            if (child.name == "rule-set") {
-                if (auto ok = desugar_rule_set_fields(child); !ok) return ok;
-                out_children.push_back(std::move(child));
                 continue;
             }
             if (child.name != "rules") {

@@ -57,7 +57,7 @@ inbound "edge" type="masque" {{
  allow cidr="{'::1/128' if ipv6 else '127.0.0.0/8'}" first-port=1 last-port=65535
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
                 server = subprocess.Popen([binary, 'run', '--config', config], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 client = None

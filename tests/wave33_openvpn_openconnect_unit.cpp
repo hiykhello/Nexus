@@ -464,7 +464,7 @@ namespace {
             "  outbound \"oc-dtls\" type=\"openconnect\" {\n    server host=\"gw.example\" port=443\n"
             "    dtls #true\n    dtls-fallback #false\n    authentication cookie-file=\"/etc/nexus/oc.ck\"\n"
             "    tls { server-name \"gw.example\"; ca-file \"/etc/nexus/ca.pem\"; }\n  }\n"
-            "  outbound \"sel\" type=\"selector\" { members \"ov-crypt\" \"ov-auth\" \"oc-dtls\"; }\n}\nrouting { default \"sel\"; }\n");
+            "  outbound \"sel\" type=\"selector\" { members \"ov-crypt\" \"ov-auth\" \"oc-dtls\"; }\n}\nrouting { final \"sel\"; }\n");
         require(cfg.has_value(), "OpenVPN tls-auth/tls-crypt + OpenConnect DTLS KDL parse");
         require(cfg->openvpn_outbounds.size() == 2 &&
                 cfg->openvpn_outbounds[0].config.tls_auth_mode == config::OpenVpnTlsAuthMode::tls_crypt &&
@@ -478,13 +478,13 @@ namespace {
             "schema-version 1\nrole \"client\"\n"
             "inbounds { inbound \"in\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }; }\n"
             "outbounds { outbound \"direct\" type=\"direct\"; outbound \"oc\" type=\"openconnect\" { server host=\"gw.example\" port=443; tls { server-name \"gw.example\"; ca-file \"/etc/nexus/ca.pem\"; client-cert-file \"/etc/nexus/cli.crt\"; client-key-file \"/etc/nexus/cli.key\"; }; }; }\n"
-            "routing { default \"oc\"; }\n").has_value(), "P1-B reject outbound mTLS client-cert fail-closed");
+            "routing { final \"oc\"; }\n").has_value(), "P1-B reject outbound mTLS client-cert fail-closed");
         // P2-B3: fail closed on OpenConnect detour + dtls #true + dtls-fallback #false.
         require(!config::parse_kdl(
             "schema-version 1\nrole \"client\"\n"
             "inbounds { inbound \"in\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }; }\n"
             "outbounds { outbound \"direct\" type=\"direct\"; outbound \"oc\" type=\"openconnect\" { server host=\"gw.example\" port=443; dtls #true; dtls-fallback #false; detour \"direct\"; authentication cookie-file=\"/etc/nexus/oc.ck\"; tls { server-name \"gw.example\"; ca-file \"/etc/nexus/ca.pem\"; }; }; }\n"
-            "routing { default \"oc\"; }\n").has_value(), "P2-B3 reject OpenConnect detour with strict DTLS");
+            "routing { final \"oc\"; }\n").has_value(), "P2-B3 reject OpenConnect detour with strict DTLS");
     }
 }
 

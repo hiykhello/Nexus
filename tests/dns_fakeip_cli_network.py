@@ -70,15 +70,15 @@ dns {{
     fake-ip server="protected" ipv4-pool="198.18.0.0/29" ipv6-pool="fd15:4231::/96" ttl-seconds=2 state-directory="{state}"
 }}
 """
-    legacy = 'routing { default-outbound "direct"; }\n'
+    legacy = 'routing { final "direct"; }\n'
     ordered = """routing {
-  rule-set "denied" path="target.kdl" format="kdl"
+  rulesets { "denied" path="target.kdl" format="kdl"; }
   tcp-program sniff-timeout-ms=100 unknown="pause" udp=#true {
     rule action="resolve"
     rule action="reject" rule-set="denied" domain-source="fakeip"
     rule action="route" outbound="direct"
   }
-  default-outbound "direct"
+  final "direct"
 }
 """
     config.write_text(text.replace('ttl-seconds=2', 'ttl-seconds=2 initialize=#true') + legacy)

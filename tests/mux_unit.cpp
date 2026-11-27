@@ -420,7 +420,7 @@ outbounds {
     snell "snell-out" { server host="snell.example.test" port=6160; version 5; psk-file "/tmp/snell.psk"; multiplex { protocol "smux-v2"; max-connections 1; }; }
     selector "grp" { members "vless-out" "ss-out" "trojan-out" "snell-out"; }
 }
-routing { default "grp"; }
+routing { final "grp"; }
 )kdl";
         auto cfg = config::parse_kdl(valid_kdl);
         require(cfg.has_value(), cfg ? "" : "valid multiplex KDL: " + cfg.error());
@@ -449,7 +449,7 @@ role "client"
 inbounds { socks5 "s" { listen "127.0.0.1:1080"; authentication "none"; }; }
 outbounds { direct; vless "v" { server "edge.test:443"; authentication { uuid-file "/tmp/u"; }; tls { server-name "edge.test"; ca-file "/tmp/c"; verify #true; }; multiplex { )kdl")
                 + std::string(body) + R"kdl( }; }; }
-routing { default "v"; })kdl";
+routing { final "v"; })kdl";
         };
         auto min_only = config::parse_kdl(wrap_out(R"(min-streams 32;)"));
         require(min_only.has_value() && min_only->vless_outbounds.size() == 1 &&
@@ -471,7 +471,7 @@ routing { default "v"; })kdl";
 role "server"
 inbounds { trojan "t" { listen "127.0.0.1:443"; authentication { user "u" password-file="/tmp/p"; }; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; }; multiplex { protocol "smux"; }; }; }
 outbounds { direct; }
-routing { default "direct"; })kdl";
+routing { final "direct"; })kdl";
         require(!config::parse_kdl(bad_in).has_value(), "invalid inbound mux protocol field rejected");
     }
 }

@@ -28,7 +28,7 @@ def main(binary, fixture, protocol=False):
 role "server"
 inbound "trojan" type="trojan" {{ listen host="127.0.0.1" port={port}; authentication {{ user "bob" password-file="{root/'password'}"; }}; tls {{ certificate-file "{root/'cert'}"; private-key-file "{root/'key'}"; }}; }}
 outbound "direct" type="direct"
-routing {{ rule-set "blocked" path="rule.kdl" format="kdl"; tcp-program sniff-timeout-ms=300 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="route" outbound="direct"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "blocked" path="rule.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms=300 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="route" outbound="direct"; }}; final "direct"; }}
 ''')
         def frame(sock,payload):
             return b'\x01'+socket.inet_aton('127.0.0.1')+struct.pack('!HH',sock.getsockname()[1],len(payload))+b'\r\n'+payload

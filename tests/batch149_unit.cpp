@@ -60,7 +60,7 @@ namespace {
                 outbound "s4a" type="socks4a" { server host="127.0.0.1" port=1082; userid "bob"; }
                 outbound "sel" type="selector" { member "s4"; member "s4a"; selected "s4"; }
             }
-            routing { default-outbound "sel"; }
+            routing { final "sel"; }
         )");
         expect(ok_kdl.has_value() && ok_kdl->tcp_proxy_outbounds.size() == 2 &&
                ok_kdl->tcp_proxy_outbounds[0].config.protocol == config::TcpProxyProtocol::socks4 &&
@@ -76,7 +76,7 @@ namespace {
                 outbound "direct" type="direct"
                 outbound "s4" type="socks4" { server host="127.0.0.1" port=1081; authentication { username "a"; password-file "/tmp/p"; }; }
             }
-            routing { default-outbound "s4"; }
+            routing { final "s4"; }
         )");
         expect(!bad_kdl.has_value(), "149A: reject password authentication on socks4");
     }
@@ -93,7 +93,7 @@ namespace {
                 }
             }
             outbounds { outbound "direct" type="direct"; }
-            routing { default-outbound "direct"; }
+            routing { final "direct"; }
         )");
         expect(ok.has_value() && ok->inbounds.size() == 1 &&
                ok->inbounds[0].type == config::Inbound::fixed_udp &&
@@ -106,7 +106,7 @@ namespace {
             role "client"
             inbounds { inbound "fudp" type="fixed-udp" { listen host="127.0.0.1" port=15353; idle-timeout-ms 500; }; }
             outbounds { outbound "direct" type="direct"; }
-            routing { default-outbound "direct"; }
+            routing { final "direct"; }
         )");
         expect(!bad.has_value(), "149B: reject missing target and low idle-timeout-ms");
     }
@@ -184,7 +184,7 @@ namespace {
                     selected "tr-hu"
                 }
             }
-            routing { default-outbound "sel"; }
+            routing { final "sel"; }
         )");
         expect(ok.has_value(), ok ? "149C: kdl ok" : "149C: kdl failed: " + ok.error());
         if (ok) {
@@ -255,7 +255,7 @@ namespace {
                     rule action="route-options" udp-adaptive-timeout=#true { network "udp"; }
                     rule action="route" outbound="direct" udp-timeout-ms=12000 { network "udp"; port 5353; }
                 }
-                default-outbound "direct"
+                final "direct"
             }
         )");
         expect(ok.has_value(), ok ? "149D: kdl ok" : "149D: kdl failed: " + ok.error());

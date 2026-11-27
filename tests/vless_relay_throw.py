@@ -31,7 +31,7 @@ role "server"
 workers 2
 inbounds {{ vless "edge" {{ listen host="127.0.0.1" port={port}; authentication {{ user "u" uuid-file="{uuid}"; }}; tls {{ certificate-file "{certder}"; private-key-file "{keyder}"; }}; }} }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             env=os.environ.copy(); env["NEXUS_TEST_VLESS_RELAY_THROW"]=str(point)
             server=subprocess.Popen([binary,"run","--config",config],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)

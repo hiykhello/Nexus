@@ -142,7 +142,7 @@ inbound "edge" type="hysteria2" {{ listen host="{host}" port={port};
  quic {{ send-bps 40000; receive-bps 300000; ignore-client-bandwidth #true; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
                     selected_rate = min(40000, second_rate if args.case == 'first-wrong' else args.first_rate)
                     context = traced_nexus(binary, config, args.gdb_log.resolve(), selected_rate) if args.gdb_log else nexus_process(str(binary), str(config))

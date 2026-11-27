@@ -64,7 +64,7 @@ outbound "edge" type="hysteria2" {{ server host="127.0.0.1" port={peer_port}; {d
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
 {lower_config}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         peer_log = (root / 'box.log').open('w+b')
         box = subprocess.Popen(['sing-box', 'run', '-c', str(config)], stdout=peer_log, stderr=subprocess.STDOUT)

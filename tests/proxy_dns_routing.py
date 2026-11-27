@@ -120,7 +120,7 @@ dns {{
 }}
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}; socks5 "other" {{ listen host="127.0.0.1" port={extra_port}; authentication "none"; }}; }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         env = os.environ.copy()
         env["LD_PRELOAD"] = str(guard)

@@ -72,7 +72,7 @@ outbound "remote" type="tuic" {{
     authentication {{ uuid-file "{uid}"; password-file "{password}"; }}
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "remote"; }}
+routing {{ final "remote"; }}
 ''')
 
         for host in TARGETS:

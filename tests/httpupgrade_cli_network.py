@@ -60,7 +60,7 @@ outbound "edge" type="vless" {{ {outbound(root, remote, **options)}
 }}
 {lower_config}
 dns {{ server "remote" type="udp" host="127.0.0.1" port={dns.port}; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     return path
 
@@ -84,7 +84,7 @@ dns {{
  rule domain="network.test" network="udp" action="reject"
  final "remote"
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     return path
 

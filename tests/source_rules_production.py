@@ -27,7 +27,7 @@ role "server"
 inbound "in" type="{inbound}" {{ listen host="127.0.0.1" port={port}; {settings} }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rule-set "rules" path="rules.kdl" format="kdl"; rules {{ - kind="rule-set" value="rules" outbound="reject"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "rules" path="rules.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="rules" outbound="reject"; }}; final "direct"; }}
 ''')
         proc=subprocess.Popen(['stdbuf','-oL',binary,'run','--config',config],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         try:

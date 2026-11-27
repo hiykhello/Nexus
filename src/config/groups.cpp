@@ -4,17 +4,20 @@ import std;
 import glaze;
 import config.kdl_common;
 import config.desugar;
+import config.desugar_blocks;
 
 namespace config {
     using namespace config::kdl;
 
-    auto normalize_groups(g::KdlDocument& document) -> std::expected<void, std::string> {
+    auto normalize_groups(g::KdlDocument& document, bool allow_synthetic_routing) -> std::expected<void, std::string> {
         auto typed = [](Node& group, std::string_view canonical, std::initializer_list<std::string_view> allowed)
             -> std::expected<void, std::string> {
             for (auto& child : group.children) {
                 if (child.name == canonical) continue;
                 if (std::ranges::find(allowed, child.name) == allowed.end() || property(child, "type"))
                     return error("unsupported type in " + group.name);
+                if (group.name == "inbounds" && child.arguments.empty() && !child.tag && !property(child, "name"))
+                    child.arguments.push_back({child.name, {}});
                 if (group.name == "outbounds" && (child.name == "direct" || child.name == "block") &&
                     child.arguments.empty() && child.properties.empty() && !child.tag)
                     child.arguments.push_back({child.name, {}});
@@ -23,51 +26,51 @@ namespace config {
             }
             return {};
         };
+        std::vector<Node> hoisted;
+        std::unordered_set<std::string_view> hoisted_keys;
+        Node* routing_node = nullptr;
+        bool routing_seen = false;
+        bool http_clients_seen = false;
         for (auto& node : document) {
             if (node.name == "inbounds" || node.name == "outbounds") {
+                if (node.name == "outbounds") {
+                    if (auto ok = desugar_detail::extract_outbound_defaults(node, hoisted, hoisted_keys); !ok)
+                        return ok;
+                }
                 auto result = node.name == "inbounds" ?
                     typed(node, "inbound", {"socks5", "mixed", "http", "fixed-tcp", "fixed-udp", "vless", "shadowsocks", "trojan", "anytls", "hysteria2", "snell", "masque", "redirect", "tproxy", "tun", "naive", "shadowtls", "tuic"}) :
                     typed(node, "outbound", {"direct", "block", "vless", "shadowsocks", "trojan", "anytls", "hysteria2", "snell", "socks5", "socks4", "socks4a", "http-connect", "selector", "fallback", "url-test", "load-balance", "naive", "shadowtls", "tuic", "masque", "wireguard", "ssh", "openvpn", "openconnect", "tailscale"});
                 if (!result) return result;
                 if (auto ok = desugar_detail::desugar_endpoints(node); !ok) return ok;
-                if (node.name == "outbounds")
-                    for (auto& child : node.children)
+                if (node.name == "outbounds") {
+                    for (auto& child : node.children) {
                         if (auto ok = desugar_detail::desugar_group_members(child); !ok) return ok;
-            } else if (node.name == "routing") {
-                if (auto ok = desugar_detail::desugar_routing(node); !ok) return ok;
-            } else if (node.name == "dns") {
-                bool rules_seen = false;
-                bool rulesets_seen = false;
-                std::vector<Node> children;
-                for (auto& child : node.children) {
-                    if (child.name == "servers") {
-                        if (auto result = typed(child, "server", {"local", "hosts", "udp", "tcp", "tls", "https", "quic", "https3", "dhcp", "mdns"}); !result) return result;
-                        children.push_back(std::move(child));
-                    } else if (child.name == "rulesets" || child.name == "rule-sets") {
-                        if (auto ok = desugar_detail::desugar_rulesets_block(child, rulesets_seen, children); !ok) return ok;
-                    } else if (child.name == "rule-set") {
-                        if (auto ok = desugar_detail::desugar_rule_set_fields(child); !ok) return ok;
-                        children.push_back(std::move(child));
-                    } else if (child.name == "rules") {
-                        if (rules_seen || child.tag || !child.arguments.empty() || !child.properties.empty())
-                            return error("invalid or duplicate rules block");
-                        rules_seen = true;
-                        for (auto& rule : child.children) {
-                            if (rule.name != "-") return error("rules accepts only - nodes");
-                            if (auto ok = desugar_detail::desugar_dns_rule(rule); !ok) return ok;
-                            rule.name = "rule";
-                            children.push_back(std::move(rule));
-                        }
-                    } else if (child.name == "rule") {
-                        return error("bare DNS rule is removed; use dns { rules { - ... } }");
-                    } else {
-                        children.push_back(std::move(child));
+                        if (auto ok = desugar_detail::desugar_vless_outbound_auth(child); !ok) return ok;
                     }
                 }
-                node.children = std::move(children);
+            } else if (node.name == "http-clients") {
+                if (std::exchange(http_clients_seen, true)) return error("duplicate http-clients block");
+                if (auto ok = desugar_detail::desugar_http_clients(node, hoisted, hoisted_keys); !ok) return ok;
+            } else if (node.name == "routing") {
+                if (std::exchange(routing_seen, true)) return error("only one routing node is supported");
+                if (auto ok = desugar_detail::desugar_routing(node); !ok) return ok;
+                routing_node = &node;
+            } else if (node.name == "dns") {
+                if (auto ok = desugar_detail::desugar_dns_block(node, hoisted, hoisted_keys); !ok) return ok;
+            }
+        }
+        if (!hoisted.empty()) {
+            if (routing_node) {
+                for (auto& item : hoisted) routing_node->children.push_back(std::move(item));
+            } else if (allow_synthetic_routing) {
+                document.push_back(Node{.name = "routing", .children = std::move(hoisted)});
             }
         }
         return {};
+    }
+
+    auto normalize_groups(g::KdlDocument& document) -> std::expected<void, std::string> {
+        return normalize_groups(document, false);
     }
 
     auto parse_probe_status_item(g::KdlValue const& value) -> std::expected<OutboundStatusRange, std::string> {

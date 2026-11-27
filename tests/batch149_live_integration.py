@@ -155,7 +155,7 @@ role "client"
 inbound "open" type="socks5" {{ listen host="127.0.0.1" port={p_open}; authentication "none"; }}
 inbound "locked" type="socks5" {{ listen host="127.0.0.1" port={p_auth}; authentication "password" username="u1" password-file="{pw}"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     cfg_cli.write_text(f'''schema-version 1
 role "client"
@@ -169,7 +169,7 @@ routing {{
         rule action="route" outbound="up4" {{ inbound "in4"; }}
         rule action="route" outbound="up4a" {{ inbound "in4a"; }}
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     ps, pc = start_nexus(cfg_srv), start_nexus(cfg_cli)
@@ -208,7 +208,7 @@ routing {{
         rule action="route-options" udp-adaptive-timeout=#true {{ network "udp"; }}
         rule action="route" outbound="direct" {{ network "udp"; }}
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     proc = start_nexus(cfg)
@@ -246,7 +246,7 @@ inbound "in" type="{proto}" {{
     {tblock}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             cli_kdl.write_text(f'''schema-version 1
 role "client"
@@ -258,7 +258,7 @@ outbound "up" type="{proto}" {{
     tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}
     {tblock}
 }}
-routing {{ default-outbound "up"; }}
+routing {{ final "up"; }}
 ''')
             ps, pc = start_nexus(srv_kdl), start_nexus(cli_kdl)
             try:
@@ -289,14 +289,14 @@ def test_149_4_snell_v5(tmp: pathlib.Path, echo_port: int) -> None:
 role "server"
 inbound "sn" type="snell" {{ listen host="127.0.0.1" port={p_srv}; version 5; psk-file "{psk}"; replay-window-seconds 60; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     cli_kdl.write_text(f'''schema-version 1
 role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={p_cli}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "up" type="snell" {{ server host="127.0.0.1" port={p_srv}; version 5; psk-file "{psk}"; }}
-routing {{ default-outbound "up"; }}
+routing {{ final "up"; }}
 ''')
     ps, pc = start_nexus(srv_kdl), start_nexus(cli_kdl)
     try:
@@ -358,7 +358,7 @@ inbound "hy" type="hysteria2" {{
     tls {{ certificate-file "{cert}"; private-key-file "{key}"; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     cli_kdl.write_text(f'''schema-version 1
 role "client"
@@ -370,7 +370,7 @@ outbound "up" type="hysteria2" {{
     tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}
     quic {{ ports "{hop_ports[0]}-{hop_ports[-1]}"; hop-interval-ms 600; }}
 }}
-routing {{ default-outbound "up"; }}
+routing {{ final "up"; }}
 ''')
     ps, pc = start_nexus(srv_kdl), start_nexus(cli_kdl)
     try:
@@ -411,7 +411,7 @@ role "client"
 control http-listen="127.0.0.1:{p_http}" bearer-token-file="{tok_file}" dashboard-root="{dash}" metrics=#true
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={p_socks}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     proc = start_nexus(cfg)
     try:
@@ -451,7 +451,7 @@ routing {
         rule action="route-options" udp-adaptive-timeout=#true { network "udp"; }
         rule action="route" outbound="proxy" { domain-suffix "example.com"; }
     }
-    default-outbound "direct"
+    final "direct"
 }
 ''')
     def run_ex(*args: str) -> subprocess.CompletedProcess[str]:

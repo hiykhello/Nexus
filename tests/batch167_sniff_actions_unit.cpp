@@ -95,7 +95,7 @@ routing {
             ip-is-cgnat #true
         }
     }
-    default-outbound "direct"
+    final "direct"
 }
 )kdl";
         auto cfg = config::parse_kdl(kdl);

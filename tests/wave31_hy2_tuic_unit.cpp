@@ -56,7 +56,7 @@ inbounds {{
     }}
 }}
 outbounds {{ outbound "direct" type="direct" }}
-routing {{ default "direct" }}
+routing {{ final "direct" }}
 )", tmp.pass, tmp.cert, tmp.key, masq_block);
         };
         auto c1 = config::parse_kdl(make_hy2_in(R"(masquerade { type "string"; status 418; content "teapot"; header "X-Fake" "nginx"; header "Server" "decoy"; })"));
@@ -93,7 +93,7 @@ outbounds {{
         quic {{ {} }}
     }}
 }}
-routing {{ default "hy2-out" }}
+routing {{ final "hy2-out" }}
 )", tmp.pass, tmp.cert, quic_block);
         };
         auto ho1 = config::parse_kdl(make_hy2_out(R"(ports "10000-10020"; hop-interval-ms 1000; hop-interval-max-ms 5000)"));
@@ -122,7 +122,7 @@ outbounds {{
         zero-rtt-handshake #true
     }}
 }}
-routing {{ default "tuic-out" }}
+routing {{ final "tuic-out" }}
 )", tmp.uuid, tmp.pass, tmp.cert, tmp.key, tmp.uuid, tmp.pass, tmp.cert));
         if (!tuic_cfg) { std::cerr << "tuic_cfg err: " << tuic_cfg.error() << "\n"; return 21; }
         if (tuic_cfg->inbounds.empty() || !tuic_cfg->inbounds[0].tuic || !tuic_cfg->inbounds[0].tuic->zero_rtt_handshake) return 21;

@@ -32,7 +32,7 @@ outbound "edge" type="hysteria2" {{ server host="127.0.0.1" port=443; detour "lo
  authentication {{ password-file "{root / 'password'}"; }}
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             with nexus_process(str(binary), str(config)):
                 client = socket.create_connection(('127.0.0.1', front), timeout=3);client.settimeout(3)

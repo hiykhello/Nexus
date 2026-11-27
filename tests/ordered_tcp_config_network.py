@@ -55,13 +55,13 @@ inbounds {{
 }}
 outbounds {{ direct "direct" {direct_options}; }}
 routing {{
-    rule-set "blocked" path="blocked.kdl" format="kdl"
+    rulesets {{ "blocked" path="blocked.kdl" format="kdl"; }}
     tcp-program sniff-timeout-ms=100 unknown="skip" {{
         rule action="sniff"
         rule action="reject" rule-set="blocked" domain-source="sniffed"
         rule action="route" outbound="direct"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         proc = subprocess.Popen([sys.argv[1], "run", "--config", str(root / "config.kdl")], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

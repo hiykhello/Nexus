@@ -149,17 +149,19 @@ namespace {
             auto cfg_path = tmp.path / std::format("ss_{}.kdl", label);
             auto routing_block = two_rules_allow_first
                 ? std::string(
-                    "  rule-set \"allow\" path=\"route.nxmm\" format=\"nxmm\"\n"
-                    "  rule-set \"deny\" path=\"net.nxmm\" format=\"nxmm\"\n"
+                    "  rulesets {\n"
+                    "    allow path=\"route.nxmm\" format=\"nxmm\"\n"
+                    "    deny path=\"net.nxmm\" format=\"nxmm\"\n"
+                    "  }\n"
                     "  rules {\n"
                     "    - kind=\"rule-set\" value=\"allow\" outbound=\"direct\"\n"
                     "    - kind=\"rule-set\" value=\"deny\" outbound=\"block\"\n"
                     "  }\n"
-                    "  default-outbound \"direct\"\n")
+                    "  final \"direct\"\n")
                 : std::string(
-                    "  rule-set \"nx\" path=\"route.nxmm\" format=\"nxmm\"\n"
+                    "  rulesets { nx path=\"route.nxmm\" format=\"nxmm\"; }\n"
                     "  rules { - kind=\"rule-set\" value=\"nx\" outbound=\"block\"; }\n"
-                    "  default-outbound \"direct\"\n");
+                    "  final \"direct\"\n");
             auto kdl = std::format(
                 "schema-version 1\nrole \"server\"\n"
                 "inbounds {{ shadowsocks \"ss\" {{ listen host=\"127.0.0.1\" port={}; method \"2022-blake3-aes-128-gcm\"; key-file \"{}\"; }} }}\n"
@@ -255,7 +257,7 @@ namespace {
                 "schema-version 1\nrole \"server\"\n"
                 "inbounds {{ shadowsocks \"ss\" {{ listen host=\"127.0.0.1\" port={}; method \"2022-blake3-aes-128-gcm\"; key-file \"{}\"; }} }}\n"
                 "outbounds {{ direct \"direct\"; block \"block\"; }}\n"
-                "routing {{ rule-set \"nx\" path=\"route.nxmm\" format=\"nxmm\"; rules {{ - kind=\"rule-set\" value=\"nx\" outbound=\"block\"; }}; default-outbound \"direct\"; }}\n",
+                "routing {{ rulesets {{ nx path=\"route.nxmm\" format=\"nxmm\"; }}; rules {{ - kind=\"rule-set\" value=\"nx\" outbound=\"block\"; }}; final \"direct\"; }}\n",
                 ss_port, key_path.string());
             auto cfg = config::parse_kdl(kdl);
             check(cfg.has_value(), cfg ? "R6 P2-1 raw fallback parse_kdl" : ("R6 P2-1 raw fallback parse_kdl: " + cfg.error()));

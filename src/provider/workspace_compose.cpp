@@ -317,6 +317,7 @@ namespace provider {
             emit_host_header(ctx, full);
             if (auto ok = emit_host_inbounds(ctx, full); !ok) return fail(ok.error());
             full << "outbounds {\n";
+            if (active_rp->auto_detect_interface) full << "  auto-detect-interface #true\n";
             emit_direct_and_block(ctx, full);
             for (auto const& ob : ctx.emitted_outbound_kdl) full << ob;
             full << "  outbound \"proxy\" type=\"selector\" {\n";

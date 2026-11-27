@@ -105,7 +105,7 @@ dns {{ server "bootstrap" type="local"; final "bootstrap"; }}
 http-clients {{
   updates {{ outbound "direct"; domain-resolver "bootstrap"; ca-file "{cert}"; timeout-ms 950; }}
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
 
         def fetch(address, expect):

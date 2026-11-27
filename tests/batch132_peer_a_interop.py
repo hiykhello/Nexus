@@ -232,7 +232,7 @@ def run_suite(nexus_bin: Path, mihomo_bin: Path):
                 f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="trojan" {{ server host="127.0.0.1" port={p_edge}; authentication {{ password-file "{root/'pwd'}"; }}; tls {{ server-name "localhost"; ca-file "{c['cert']}"; verify #true; }}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                 mh_server_cfg({"name": "tr-in", "type": "trojan", "listen": "127.0.0.1", "port": p_edge,
                                "users": [{"username": "u", "password": "interop-secret-132"}],
                                "certificate": str(c["cert"]), "private-key": str(c["key"])}),
@@ -242,7 +242,7 @@ routing {{ default-outbound "edge"; }}''',
             run_case(
                 "Mihomo->Nexus Trojan", nexus_bin, mihomo_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "tr" type="trojan" {{ listen host="127.0.0.1" port={p_edge}; authentication {{ user "u" password-file="{root/'pwd'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 mh_client_cfg(p_front, {"name": "nx", "type": "trojan", "server": "127.0.0.1", "port": p_edge,
                                         "password": "interop-secret-132", "sni": "localhost", "udp": True, "skip-cert-verify": True}),
                 False, p_front, p_front, do_udp=True,
@@ -257,7 +257,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                     f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={p_edge}; method "{method}"; key-file "{root/psk_name}"; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                     mh_server_cfg({"name": "ss-in", "type": "shadowsocks", "listen": "127.0.0.1", "port": p_edge,
                                    "cipher": method, "password": psk_val, "udp": True}),
                     True, p_front, p_edge, do_udp=False,
@@ -266,7 +266,7 @@ routing {{ default-outbound "edge"; }}''',
                 run_case(
                     f"Mihomo->Nexus SS2022-{method[-11:-4]}", nexus_bin, mihomo_bin, root, tport, uport,
                     f'''schema-version 1\nrole "server"\ninbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={p_edge}; method "{method}"; key-file "{root/psk_name}"; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                     mh_client_cfg(p_front, {"name": "nx", "type": "ss", "server": "127.0.0.1", "port": p_edge,
                                             "cipher": method, "password": psk_val, "udp": True}),
                     False, p_front, p_front, do_udp=True,
@@ -279,7 +279,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                 f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={p_edge}; flow "xtls-rprx-vision"; authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "localhost"; ca-file "{c['cert']}"; verify #true; }}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                 mh_server_cfg({"name": "vl-in", "type": "vless", "listen": "127.0.0.1", "port": p_edge,
                                "users": [{"username": "u", "uuid": UUID, "flow": "xtls-rprx-vision"}],
                                "certificate": str(c["cert"]), "private-key": str(c["key"])}),
@@ -289,7 +289,7 @@ routing {{ default-outbound "edge"; }}''',
             run_case(
                 "Mihomo->Nexus VLESS+Vision", nexus_bin, mihomo_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "vl" type="vless" {{ listen host="127.0.0.1" port={p_edge}; flow "xtls-rprx-vision"; authentication {{ user "u" uuid-file="{root/'uuid'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 mh_client_cfg(p_front, {"name": "nx", "type": "vless", "server": "127.0.0.1", "port": p_edge,
                                         "uuid": UUID, "flow": "xtls-rprx-vision", "tls": True, "servername": "localhost",
                                         "udp": True, "skip-cert-verify": True}),
@@ -303,7 +303,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                 f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={p_edge}; flow "xtls-rprx-vision"; authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "localhost"; fingerprint "chrome"; reality {{ public-key "{c['pub'].hex()}"; short-id "{SHORT}"; }}; }}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                 mh_server_cfg({"name": "vl-r", "type": "vless", "listen": "127.0.0.1", "port": p_edge,
                                "users": [{"username": "u", "uuid": UUID, "flow": "xtls-rprx-vision"}],
                                "reality-config": {"dest": f"127.0.0.1:{cover_port}", "private-key": b64url(c["seed"]),
@@ -314,7 +314,7 @@ routing {{ default-outbound "edge"; }}''',
             run_case(
                 "Mihomo->Nexus VLESS+REALITY+Vision", nexus_bin, mihomo_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "vl" type="vless" {{ listen host="127.0.0.1" port={p_edge}; flow "xtls-rprx-vision"; authentication {{ user "u" uuid-file="{root/'uuid'}"; }}; tls {{ reality {{ private-key-file "{root/'rkey'}"; server-name "localhost"; short-id "{SHORT}"; max-time-difference 15; fallback host="127.0.0.1" port={cover_port}; }}; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 mh_client_cfg(p_front, {"name": "nx", "type": "vless", "server": "127.0.0.1", "port": p_edge,
                                         "uuid": UUID, "flow": "xtls-rprx-vision", "tls": True, "servername": "localhost",
                                         "client-fingerprint": "chrome", "udp": True,
@@ -327,7 +327,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
             run_case(
                 "Mihomo->Nexus VLESS+WS", nexus_bin, mihomo_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "vl" type="vless" {{ listen host="127.0.0.1" port={p_edge}; authentication {{ user "u" uuid-file="{root/'uuid'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; transport "websocket" {{ host "localhost"; path "/ws"; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 mh_client_cfg(p_front, {"name": "nx", "type": "vless", "server": "127.0.0.1", "port": p_edge,
                                         "uuid": UUID, "tls": True, "servername": "localhost", "network": "ws",
                                         "ws-opts": {"path": "/ws", "headers": {"Host": "localhost"}},
@@ -338,7 +338,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
             run_case(
                 "Mihomo->Nexus VLESS+gRPC", nexus_bin, mihomo_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "vl" type="vless" {{ listen host="127.0.0.1" port={p_edge}; authentication {{ user "u" uuid-file="{root/'uuid'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; transport "grpc" {{ service-name "nexus.Grpc"; authority "localhost"; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 mh_client_cfg(p_front, {"name": "nx", "type": "vless", "server": "127.0.0.1", "port": p_edge,
                                         "uuid": UUID, "tls": True, "servername": "localhost", "network": "grpc",
                                         "grpc-opts": {"grpc-service-name": "nexus.Grpc"},
@@ -353,7 +353,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                 f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="hysteria2" {{ server host="127.0.0.1" port={p_edge}; authentication {{ password-file "{root/'pwd'}"; }}; tls {{ server-name "localhost"; ca-file "{c['cert']}"; verify #true; }}; quic {{ salamander-password-file "{root/'obfs'}"; lazy-tcp-response #true; }}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                 mh_server_cfg({"name": "hy2-in", "type": "hysteria2", "listen": "127.0.0.1", "port": p_edge,
                                "users": {"u": "interop-secret-132"}, "obfs": "salamander", "obfs-password": "salamander-obfs-132",
                                "certificate": str(c["cert"]), "private-key": str(c["key"])}),
@@ -363,7 +363,7 @@ routing {{ default-outbound "edge"; }}''',
             run_case(
                 "Mihomo->Nexus Hysteria2+Salamander", nexus_bin, mihomo_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "hy2" type="hysteria2" {{ listen host="127.0.0.1" port={p_edge}; authentication {{ user "u" password-file="{root/'pwd'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; quic {{ salamander-password-file "{root/'obfs'}"; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 mh_client_cfg(p_front, {"name": "nx", "type": "hysteria2", "server": "127.0.0.1", "port": p_edge,
                                         "password": "interop-secret-132", "obfs": "salamander", "obfs-password": "salamander-obfs-132",
                                         "sni": "localhost", "skip-cert-verify": True}),
@@ -377,7 +377,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                 f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="tuic" {{ server host="127.0.0.1" port={p_edge}; congestion-control "bbr"; authentication {{ uuid-file "{root/'uuid'}"; password-file "{root/'pwd'}"; }}; tls {{ server-name "localhost"; ca-file "{c['cert']}"; verify #true; }}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                 mh_server_cfg({"name": "tuic-in", "type": "tuic", "listen": "127.0.0.1", "port": p_edge,
                                "users": {UUID: "interop-secret-132"}, "congestion-controller": "bbr",
                                "certificate": str(c["cert"]), "private-key": str(c["key"])}),
@@ -387,7 +387,7 @@ routing {{ default-outbound "edge"; }}''',
             run_case(
                 "Mihomo->Nexus TUIC-v5", nexus_bin, mihomo_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "tuic" type="tuic" {{ listen host="127.0.0.1" port={p_edge}; congestion-control "bbr"; authentication {{ user "u" uuid-file="{root/'uuid'}" password-file="{root/'pwd'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 mh_client_cfg(p_front, {"name": "nx", "type": "tuic", "server": "127.0.0.1", "port": p_edge,
                                         "uuid": UUID, "password": "interop-secret-132", "sni": "localhost",
                                         "alpn": ["h3"], "congestion-controller": "bbr", "udp-relay-mode": "native",
@@ -402,7 +402,7 @@ outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
                 f'''schema-version 1\nrole "client"\ninbound "in" type="socks5" {{ listen host="127.0.0.1" port={p_front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="anytls" {{ server host="127.0.0.1" port={p_edge}; authentication {{ password-file "{root/'pwd'}"; }}; tls {{ server-name "localhost"; ca-file "{c['cert']}"; verify #true; }}; }}
-routing {{ default-outbound "edge"; }}''',
+routing {{ final "edge"; }}''',
                 mh_server_cfg({"name": "any-in", "type": "anytls", "listen": "127.0.0.1", "port": p_edge,
                                "users": {"u": "interop-secret-132"},
                                "certificate": str(c["cert"]), "private-key": str(c["key"])}),
@@ -412,7 +412,7 @@ routing {{ default-outbound "edge"; }}''',
             run_case(
                 "Mihomo->Nexus AnyTLS", nexus_bin, mihomo_bin, root, tport, uport,
                 f'''schema-version 1\nrole "server"\ninbound "any" type="anytls" {{ listen host="127.0.0.1" port={p_edge}; authentication {{ user "u" password-file="{root/'pwd'}"; }}; tls {{ certificate-file "{c['cert']}"; private-key-file "{c['key']}"; }}; }}
-outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}''',
+outbound "direct" type="direct"\nrouting {{ final "direct"; }}''',
                 mh_client_cfg(p_front, {"name": "nx", "type": "anytls", "server": "127.0.0.1", "port": p_edge,
                                         "password": "interop-secret-132", "sni": "localhost", "udp": True, "skip-cert-verify": True}),
                 False, p_front, p_front, do_udp=True,

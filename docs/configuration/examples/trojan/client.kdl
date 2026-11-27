@@ -23,5 +23,5 @@ outbounds {
     }
 }
 routing {
-    default-outbound "edge"
+    final "edge"
 }

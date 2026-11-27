@@ -19,7 +19,7 @@ role "client"
 workers 2
 inbound "local" type="mixed" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct" {{ tcp-fast-open #true; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     with nexus_process(binary, config):
         for mode in ('prefetched', 'read-first'):

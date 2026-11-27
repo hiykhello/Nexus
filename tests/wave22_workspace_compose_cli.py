@@ -247,7 +247,7 @@ def test_fail_closed_chains_and_sub_chaining(nexus: str, root: Path) -> None:
         make_node("c", "Node-C", server="198.51.100.3"),
         make_node("xhttp-node", "XH", server="198.51.100.4", transport={"type": "xhttp", "path": "/x"}),
         {"id": "ut", "remarks": "UT", "kind": "policy_group", "policy_group": {"strategy": "url-test", "member_ids": ["a"]}},
-        {"id": "fc", "remarks": "FC", "kind": "full_custom_kdl", "full_custom_kdl": 'schema-version 1\nrole "client"\ninbound "i" type="mixed" { listen "127.0.0.1:1080"; authentication "none"; }\noutbound "direct" type="direct"\nrouting { default "direct"; }\n'},
+        {"id": "fc", "remarks": "FC", "kind": "full_custom_kdl", "full_custom_kdl": 'schema-version 1\nrole "client"\ninbounds { inbound "i" type="mixed" { listen "127.0.0.1:1080"; authentication "none"; }; }\noutbounds { outbound "direct" type="direct"; }\nrouting { final "direct"; }\n'},
     ]
     bad_cases = [
         ("missing-hop", [{"id": "bad", "kind": "proxy_chain", "proxy_chain": {"hop_ids": ["a", "ghost"]}}], "not found"),
@@ -301,7 +301,7 @@ def test_linux_strict_route_full_custom_and_template(nexus: str, root: Path) -> 
                 'schema-version 1\nrole "client"\n'
                 'inbounds { mixed "m" { listen "127.0.0.1:1080"; authentication "none"; }\n'
                 '           tun "old-tun" { inet4-address "198.18.0.1/30"; mtu 1400; } }\n'
-                'outbounds { direct; block; }\nrouting { default "direct"; }\n'
+                'outbounds { direct; block; }\nrouting { final "direct"; }\n'
             ),
         }],
     }
@@ -321,7 +321,7 @@ def test_linux_strict_route_full_custom_and_template(nexus: str, root: Path) -> 
             "full_custom_kdl": (
                 'schema-version 1\nrole "client"\n'
                 'inbounds { tun "old-tun" { inet4-address "198.18.0.1/30"; mtu 1400; } }\n'
-                'outbounds { direct; block; }\nrouting { default "direct"; }\n'
+                'outbounds { direct; block; }\nrouting { final "direct"; }\n'
             ),
         }],
     }
@@ -336,7 +336,7 @@ def test_linux_strict_route_full_custom_and_template(nexus: str, root: Path) -> 
         "profiles": [make_node("t1", "Tmpl-Node", server="198.51.100.11")],
         "full_template": {
             "enabled": True,
-            "template_kdl": 'routing {\n  rules { - domain-suffix "tmpl.test" to="direct"; }\n  default "proxy"\n}\n',
+            "template_kdl": 'routing {\n  rules { - domain-suffix "tmpl.test" to="direct"; }\n  final "proxy"\n}\n',
         },
     }
     host_d = {"schema_version": 1, "platform": "desktop-linux", "desktop": {"enable_mixed": True, "mixed_listen": "127.0.0.1:7890"}}
@@ -374,7 +374,7 @@ def test_uri_parser_hy2_mport_and_wg_reserved(nexus: str, root: Path) -> None:
             'schema-version 1\nrole "client"\ncertificate { store "system"; }\n'
             'inbounds { inbound "i" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }\n'
             'outbounds {\noutbound "direct" type="direct"\n' + n["kdl"] + '}\n'
-            f'routing {{ default-outbound "{tag}"; }}\n'
+            f'routing {{ final "{tag}"; }}\n'
         )
         chk = subprocess.run([nexus, "check", str(probe)], capture_output=True, text=True, timeout=15)
         assert chk.returncode == 0, f"URI probe failed for {tag}: {chk.stderr}\n{n['kdl']}"
@@ -401,7 +401,7 @@ def test_review_kernel_regressions(nexus: str, root: Path) -> None:
         "schema_version": 1, "profiles": [make_node("p1", "P1", server="198.51.100.43")],
         "full_template": {"enabled": True, "append_proxies_only": True, "template_kdl": (
             'schema-version 1\nrole "client"\ninbounds { mixed "m" { listen "127.0.0.1:1080"; authentication "none"; } }\n'
-            'outbounds { direct; block; }\nrouting { default "proxy"; }\n')},
+            'outbounds { direct; block; }\nrouting { final "proxy"; }\n')},
     }
     rc, r_t1, _, _ = compose(nexus, root, "p1-t1", t1_ws, host, active="p1", emit_kdl=True)
     assert rc == 0 and r_t1["ok"], r_t1
@@ -409,7 +409,7 @@ def test_review_kernel_regressions(nexus: str, root: Path) -> None:
         "schema_version": 1, "profiles": [make_node("p1", "P1", server="198.51.100.44")],
         "full_template": {"enabled": True, "append_proxies_only": True, "template_kdl": (
             'schema-version 1\nrole "client"\ninbounds { inbound "m" type="mixed" { listen "127.0.0.1:1080"; authentication "none"; }; }\n'
-            'outbounds { outbound "direct" type="direct"; }\nrouting { default "proxy"; }\n')},
+            'outbounds { outbound "direct" type="direct"; }\nrouting { final "proxy"; }\n')},
     }
     rc, r_t2, _, _ = compose(nexus, root, "p1-t2", t2_ws, host, active="p1", emit_kdl=True)
     assert rc == 0 and r_t2["ok"], r_t2
@@ -421,7 +421,7 @@ def test_review_kernel_regressions(nexus: str, root: Path) -> None:
         ],
         "full_template": {"enabled": True, "proxy_detour": "relay-out", "template_kdl": (
             'outbounds { outbound "relay-out" type="socks5" { server host="127.0.0.1" port=1081; }; }\n'
-            'routing { default "proxy"; }\n')},
+            'routing { final "proxy"; }\n')},
     }
     rc, r_t3, _, _ = compose(nexus, root, "p1-t3", t3_ws, host, active="p1", emit_kdl=True)
     assert rc == 0 and r_t3["ok"] and 'detour "relay-out"' in r_t3["kdl"], r_t3
@@ -471,7 +471,7 @@ def test_review_kernel_regressions(nexus: str, root: Path) -> None:
     assert rc == 0 and r_ws["ok"] and 'workers "max-2" max=12\n' in r_ws["kdl"], r_ws
     rc, r_whi, _, _ = compose(nexus, root, "w27-hi", ws_w, dict(host, workers=20), active="w1", emit_kdl=True)
     assert rc == 0 and r_whi["ok"] and "workers 20\n" in r_whi["kdl"], r_whi
-    ws_fcw = {"schema_version": 1, "profiles": [{"id": "fcw", "kind": "full_custom_kdl", "full_custom_kdl": 'schema-version 1\nrole "client"\nworkers 2\ninbounds { inbound "i" type="mixed" { listen "127.0.0.1:1080"; authentication "none"; }; }\noutbounds { outbound "direct" type="direct"; }\nrouting { default "direct"; }\n'}]}
+    ws_fcw = {"schema_version": 1, "profiles": [{"id": "fcw", "kind": "full_custom_kdl", "full_custom_kdl": 'schema-version 1\nrole "client"\nworkers 2\ninbounds { inbound "i" type="mixed" { listen "127.0.0.1:1080"; authentication "none"; }; }\noutbounds { outbound "direct" type="direct"; }\nrouting { final "direct"; }\n'}]}
     rc, r_fcw, _, _ = compose(nexus, root, "w27-fc", ws_fcw, h_spec, active="fcw", emit_kdl=True)
     assert rc == 0 and r_fcw["ok"] and 'workers "max-2" max=12' in r_fcw["kdl"], r_fcw
     for bad in ("max-abc", "max--1", "foo"):

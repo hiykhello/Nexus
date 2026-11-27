@@ -43,7 +43,7 @@ inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={front}; method 
 outbound "direct" type="direct"
 {tunnel}
 dns {{ servers {{ udp "resolver" host="127.0.0.1" port={dns.port}; }}; final "resolver"; strategy "ipv4_only"; disable-cache #true; }}
-routing {{ rule-set "blocked" path="rule.kdl" format="kdl"; tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="resolve"; rule action="route" outbound="{outbound}"; }}; default-outbound "{outbound}"; }}
+routing {{ rulesets {{ "blocked" path="rule.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="resolve"; rule action="route" outbound="{outbound}"; }}; final "{outbound}"; }}
 ''')
                 with nexus_process(binary, str(root / 'config.kdl')), ss_client(root, front, key) as (client, relay):
                     header = b'\x00\x00\x00\x01' + socket.inet_aton('127.0.0.1') + struct.pack('!H', echo.port)

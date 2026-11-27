@@ -137,7 +137,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentica
 outbound "direct" type="direct"
 {dns_config}
 outbound "edge" type="vless" {{ {resolver} server host="{server_host}" port={upstream.getsockname()[1]}; authentication {{ uuid-file "{uuid}"; }}; tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; key-exchange "{exchange}"; }}; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         env=os.environ.copy()
         if len(sys.argv)>3: env["LD_PRELOAD"]=str(pathlib.Path(sys.argv[3]).resolve())

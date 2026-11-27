@@ -28,7 +28,7 @@ role "server"
 workers 2
 inbound "edge" type="vless" {{ listen host="127.0.0.1" port={front}; authentication {{ user "test" uuid-file="{path/'uuid'}"; }}; tls {{ reality {{ private-key-file "{path/'secret'}"; server-name "localhost"; short-id ""; fallback host="localhost" port={cover_port}; }}; }}; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     server=subprocess.Popen([require_nexus(),'run','--config',path/'server.kdl'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     def connect():

@@ -124,11 +124,11 @@ inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authen
 outbounds { outbound "direct" type="direct"; }
 dns {
     servers { server "local" type="udp" host="127.0.0.1" port=5353; }
-    rule-set "dns-local" path="missing_dns_rules.kdl" format="kdl"
+    rulesets { "dns-local" path="missing_dns_rules.kdl" format="kdl"; }
     rules { - rule-set="dns-local" server="local"; }
     final "local"
 }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )kdl");
         std::string a0 = "check", a1 = cfg_path.string();
         char* argv[] = {a0.data(), a1.data(), nullptr};
@@ -150,12 +150,12 @@ inbounds {{ inbound "s" type="socks5" {{ listen host="127.0.0.1" port=1080; auth
 outbounds {{ outbound "direct" type="direct"; }}
 dns {{
     servers {{ server "local" type="udp" host="127.0.0.1" port=5353; }}
-    rule-set "dns-remote" url="https://example.test/dns.kdl" format="kdl" http-client="updates"
+    rulesets {{ "dns-remote" url="https://example.test/dns.kdl" format="kdl" http-client="updates"; }}
     rules {{ - rule-set="dns-remote" server="local"; }}
     final "local"
 }}
 http-clients {{ updates {{ outbound "direct"; domain-resolver "local"; ca-file "{}"; }} }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 )kdl", fake_ca.string()));
         std::string r1 = remote_cfg.string();
         char* rargv[] = {a0.data(), r1.data(), nullptr};
@@ -171,7 +171,7 @@ schema-version 1
 role "client"
 inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )kdl");
         auto prev_wd = cli::working_directory();
         cli::set_working_directory(dir.path);
@@ -195,7 +195,7 @@ routing { default-outbound "direct"; }
             "schema-version 1\nrole \"client\"\n"
             "inbounds {{ inbound \"s\" type=\"socks5\" {{ listen host=\"127.0.0.1\" port={}; authentication \"none\"; }}; }}\n"
             "outbounds {{ outbound \"direct\" type=\"direct\"; }}\n"
-            "routing {{ default-outbound \"direct\"; }}\n", port));
+            "routing {{ final \"direct\"; }}\n", port));
         auto prev_wd = cli::working_directory();
         cli::restore_working_directory(std::nullopt);
         require(!cli::working_directory().has_value(), "baseline working_directory empty");
@@ -262,7 +262,7 @@ role "client"
 workers 1
 inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )kdl");
         write_text(ov, "workers 2\n");
 

@@ -93,9 +93,9 @@ outbounds {{
     selector "primary" {{ member "local"; member "edge"; selected "local"; }}
 }}
 routing {{
-    rule-set "target" path="target.kdl" format="kdl"
+    rulesets {{ "target" path="target.kdl" format="kdl"; }}
     {rule}
-    default-outbound "local"
+    final "local"
 }}
 """
     config.write_text(source)

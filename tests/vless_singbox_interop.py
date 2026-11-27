@@ -134,7 +134,7 @@ outbound "edge" type="vless" {{
   authentication {{ uuid-file "{directory / 'user.uuid'}"; }}
   tls {{ server-name "server.example"; ca-file "{directory / 'root.pem'}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         process=subprocess.Popen([NEXUS,"run","--config",config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:
@@ -244,7 +244,7 @@ outbound "edge" type="vless" {{
   authentication {{ uuid-file "{directory / 'user.uuid'}"; }}
   tls {{ server-name "server.example"; ca-file "{directory / 'root.pem'}"; verify #true; }}
 }}
-routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; default-outbound "edge"; }}
+routing {{ rulesets {{ "deny" path="deny.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; final "edge"; }}
 ''')
     process = subprocess.Popen([NEXUS, "run", "--config", config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

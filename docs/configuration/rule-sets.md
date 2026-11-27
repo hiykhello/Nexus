@@ -65,13 +65,13 @@ v2 支持 `domain-regex` 和 `process-path-regex`。模式在配置加载时编�
 
 ## SRS 二进制规则集导入
 
-以 `--features srs` 构建时，可在现有路由规则中使用 `rule-set "name" path="rules.srs" format="srs"`；传统路由和 `tcp-program` 共用同一解码器，SS UDP 路由使用相同规则。未启用功能时使用该格式会报错。`nexus rule convert srs kdl <input> <new-output>` 和 `nexus rule convert srs beve <input> <new-output>` 可离线转换；当前不提供 SRS 写出。
+以 `--features srs` 构建时，可在 `routing` 内通过 `rulesets { <name> path="rules.srs" format="srs" }`（或子节点形式 `<name> { path "rules.srs"; format "srs" }`）声明并在 `rules` / `tcp-program` 中引用；传统路由和 `tcp-program` 共用同一解码器，SS UDP 路由使用相同规则。未启用功能时使用该格式会报错。`nexus rule convert srs kdl <input> <new-output>` 和 `nexus rule convert srs beve <input> <new-output>` 可离线转换；当前不提供 SRS 写出。
 
 支持的 SRS 条件为精确域名、域名后缀、关键词、Nexus 有界语法支持的域名正则、源/目标 IP 集合、源/目标端口及端口范围、TCP/UDP 网络、DNS 查询类型、精确进程名、绝对可执行文件路径、只消费 ASCII 字符的有界进程路径正则，以及逻辑 and/or/invert。一个默认规则的目标域名和目标 IP 条件之间为 OR。源地址、源端口、目标端口、查询类型、进程名、精确进程路径、进程路径正则各自组内 OR，各组和网络条件之间为 AND。规则集顶层为 OR。零端口、零查询类型、大写域名或关键词、超出有界语法的正则、网络环境等未支持条件会使整个文件被拒绝。SRS 进程路径正则拒绝裸点、否定字符类和非 ASCII 模式字符，以保留 Go 的 rune 匹配语义。SRS 版本 1–5 的容器头、单一 zlib 流、校验和及规范变长整数均会被检查。压缩输入和解压输出均限 1 MiB，规则数和深度沿用 Nexus 上限。
 
 在引用 SRS 的 `rule` 上设置 `ip-cidr-match-source=#true`，可令 SRS 中的目标 IP CIDR 匹配来源地址。它与 SRS 的源 IP 条件同组 OR，域名条件仍在目标地址组；同一个文件的不同引用可以选择不同设置。该选项适用于传统规则及 `tcp-program` 的规则，连同相应 UDP 路由生效。
 
-DNS 问题规则可在 `dns` 内声明 `rule-set "name" path="rules.srs" format="srs"`，并在 `rule` 上以 `rule-set="name"` 引用；KDL 和 BEVE 规则集也可使用同一接口。条件与同条 DNS 规则的其他条件同时生效，规则集内部顶层规则为 OR。来源选项同样可用于 SRS 引用。DNS 问题上下文支持域名、查询类型、业务网络、来源、入站和认证用户条件及其逻辑组合。DNS 允许的非主机名问题名称不会被当作可匹配的流量域名，相关条件保持 unknown。
+DNS 问题规则可在 `dns` 内通过 `rulesets { <name> path="rules.srs" format="srs" }`（或子节点形式 `<name> { path "rules.srs"; format "srs" }`）声明，并在 `rules` 中以 `rule-set "<name>"` 或 `rule-set="<name>"` 引用；KDL 和 BEVE 规则集也可使用同一接口。条件与同条 DNS 规则的其他条件同时生效，规则集内部顶层规则为 OR。来源选项同样可用于 SRS 引用。DNS 问题上下文支持域名、查询类型、业务网络、来源、入站和认证用户条件及其逻辑组合。DNS 允许的非主机名问题名称不会被当作可匹配的流量域名，相关条件保持 unknown。
 
 启用 DNS 响应功能后，规则可指定 `match-response=#true`，使规则集中的目标 CIDR、`ip-is-private` 和 `ip-version` 按最近一次 `evaluate` 的答复地址匹配。地址来自成功答复的 answer 中 A、AAAA 和 HTTPS 记录的 IPv4/IPv6 地址提示；没有答复时为 unknown，答复没有地址时为已知空集。域名和目标 CIDR 在同一 SRS 默认规则内仍是 OR；再次 `evaluate` 会使用新答复。畸形提示或资源超限会使查询失败。目标端口等无法从 DNS 答复取得的条件仍在启动前拒绝。SS 原生 UDP 的响应执行需要 `dns-response-ss`。
 

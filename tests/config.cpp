@@ -22,11 +22,13 @@ outbounds {
     outbound "reject" type="block"
 }
 routing {
-    rule-set "blocked" path="rules/blocked.kdl" format="kdl"
+    rulesets {
+        blocked path="rules/blocked.kdl" format="kdl"
+    }
     rules {
         - kind="rule-set" value="blocked" outbound="reject"
     }
-    default-outbound "direct"
+    final "direct"
 }
 )";
     auto add_inbound = [&](std::string const& base, std::string_view extra) {
@@ -57,7 +59,7 @@ routing {
 role "client"
 inbounds { snell "in" { listen host="127.0.0.1" port=10080; version 5; psk-file "/tmp/psk"; replay-window-seconds 60; } }
 outbounds { direct "direct"; snell "edge" { server host="127.0.0.1" port=1234; version 4; psk-file "/tmp/psk"; } }
-routing { default-outbound "edge"; }
+routing { final "edge"; }
 )";
     auto snell_groups = config::parse_kdl(grouped_snell);
     if (!snell_groups) { std::cerr << "grouped Snell: " << snell_groups.error() << '\n'; return 1; }
@@ -99,7 +101,7 @@ routing { default-outbound "edge"; }
         if (config::parse_kdl(replace(complete, "127.0.0.1", host))) return 1;
 
     auto ss = add_outbound(complete, "    outbound \"ss\" type=\"shadowsocks\" { server host=\"127.0.0.1\" port=8388; method \"2022-blake3-aes-128-gcm\"; key-file \"/secret\"; }\n");
-    ss = replace(ss, "default-outbound \"direct\"", "default-outbound \"ss\"");
+    ss = replace(ss, "final \"direct\"", "final \"ss\"");
     auto parsed_ss = config::parse_kdl(ss);
     if (!parsed_ss || parsed_ss->shadowsocks_outbounds.size() != 1 || parsed_ss->default_outbound != 2 ||
         parsed_ss->shadowsocks_outbounds[0].config.key_file != "/secret" ||
@@ -118,7 +120,7 @@ routing { default-outbound "edge"; }
     for (auto bad : {replace(ss, "key-file \"/secret\"", "key-file \"relative\""),
                      replace(ss, "2022-blake3-aes-128-gcm", "aes-128-gcm"),
                      replace(ss, "outbound \"ss\"", "outbound \"direct\""),
-                     replace(ss, "default-outbound \"ss\"", "default-outbound \"direct\"")})
+                     replace(ss, "final \"ss\"", "final \"direct\"")})
         if (config::parse_kdl(bad)) return 1;
     auto ss_uot = replace(ss, "key-file \"/secret\"", "key-file \"/secret\"; udp-over-tcp \"v2\"");
     auto parsed_uot = config::parse_kdl(ss_uot);
@@ -330,7 +332,7 @@ routing { default-outbound "edge"; }
 role "server"
 inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=65535; authentication "none"; }; }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )");
     if (!minimal || minimal->port != 65535 || minimal->block_rules) { std::cerr << "direct-only rejected\n"; return 1; }
 
@@ -345,13 +347,13 @@ routing { default-outbound "direct"; }
 role "client"
 inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
 outbounds { outbound "direct" type="direct"; outbound "g" type="url-test" { member "direct"; probe-mode "http"; probe-url "https://127.0.0.1:443/h"; probe-ca-file "/tmp/ca.pem"; probe-server-name "h.example"; }; }
-routing { default-outbound "g"; })")) return 1;
+routing { final "g"; })")) return 1;
     if (!config::parse_kdl(R"(schema-version 1
 role "client"
 inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
 outbounds { outbound "direct" type="direct"; outbound "lb" type="load-balance" { member "direct"; }; }
-routing { default-outbound "lb"; })")) return 1;
-    auto ordered = replace(replace(complete, "routing {", "routing {\n    rule-set \"other\" path=\"other.beve\" format=\"beve\""),
+routing { final "lb"; })")) return 1;
+    auto ordered = replace(replace(complete, "rulesets {", "rulesets {\n        other path=\"other.beve\" format=\"beve\""),
         "rules {", "rules {\n        - kind=\"rule-set\" value=\"other\" outbound=\"direct\"");
     auto ordered_config = config::parse_kdl(ordered);
     if (!ordered_config || ordered_config->routes.size() != 2 ||
@@ -383,14 +385,14 @@ routing { default-outbound "lb"; })")) return 1;
         {replace(complete, "authentication \"none\"", "authentication \"none\"; authentication \"none\""), "duplicate authentication"},
         {replace(complete, "type=\"direct\"", "type=\"vless\""), "unsupported outbound"},
         {replace(complete, "outbound \"reject\"", "outbound \"direct\""), "duplicate names"},
-        {replace(complete, "default-outbound \"direct\"", "default-outbound \"reject\""), "unsupported default"},
+        {replace(complete, "final \"direct\"", "final \"reject\""), "unsupported default"},
         {replace(complete, "value=\"blocked\"", "value=\"missing\""), "missing rule set"},
         {replace(complete, "outbound=\"reject\"", "outbound=\"missing\""), "unknown rule action"},
         {replace(complete, "format=\"kdl\"", "format=\"yaml\""), "unsupported format"},
         {replace(complete, "path=\"rules/blocked.kdl\"", "path=\"\""), "empty path"},
         {replace(complete, "path=\"rules/blocked.kdl\"", "path=\"rules\\u{0}x\""), "NUL path"},
-        {replace(complete, "routing {", "routing {\n    rule-set \"blocked\" path=\"other.kdl\" format=\"kdl\""), "duplicate rule-set"},
-        {replace(complete, "routing {", "routing {\n    rule-set \"unused\" path=\"other.kdl\" format=\"kdl\""), "unreferenced rule-set"},
+        {replace(complete, "rulesets {", "rulesets {\n        blocked path=\"other.kdl\" format=\"kdl\""), "duplicate rule-set"},
+        {replace(complete, "rulesets {", "rulesets {\n        unused path=\"other.kdl\" format=\"kdl\""), "unreferenced rule-set"},
         {replace(complete, "routing {", "routing {\n    sniff #true"), "unknown routing node"},
         {replace(complete, "rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\"reject\"\n    }", "rule kind=\"rule-set\" value=\"blocked\" outbound=\"reject\""), "legacy bare routing rule"},
         {complete + "dns {}\n", "unsupported top-level node"},

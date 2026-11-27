@@ -72,7 +72,7 @@ namespace config {
                 remember(node.arguments.front());
             for (auto const& [key, value] : node.properties)
                 if (path_field(key) || (is_ruleset && key == "path")) remember(value);
-            bool child_rulesets = node.name == "rulesets" || node.name == "rule-sets";
+            bool child_rulesets = node.name == "rulesets";
             for (auto const& child : node.children) collect_paths(child, paths, child_rulesets, is_ruleset);
         }
     }

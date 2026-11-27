@@ -43,7 +43,7 @@ outbound "edge" type="vless" {{
  {dial}
  transport "grpc" {{ service-name "{SERVICE}"; response-policy "sing-box-lite"; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             with nexus_process(binary, config):
                 clients = []

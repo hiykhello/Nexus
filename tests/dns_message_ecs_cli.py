@@ -20,7 +20,7 @@ role "client"
 dns {{ listen host="127.0.0.1" port={listen}; server "a" type="udp" host="127.0.0.1" port={upstream.getsockname()[1]}; rule domain="synthetic.test" action="predefined" {{ record section="answer" name="@" type=1 address="192.0.2.1" ttl=60; }} }}
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={proxy}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 stopping=threading.Event();received=[];failures=[]
 def serve():

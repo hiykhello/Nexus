@@ -37,8 +37,10 @@ inbounds {{
 outbound "direct" type="direct"
 dns {{ servers {{ udp "resolver" host="127.0.0.1" port={dns.port}; }}; final "resolver"; strategy "ipv4_only"; disable-cache #true; }}
 routing {{
-  rule-set "block" path="block.kdl" format="kdl"
-  rule-set "slow" path="slow.kdl" format="kdl"
+  rulesets {{
+      "block" path="block.kdl" format="kdl"
+      "slow" path="slow.kdl" format="kdl"
+  }}
   tcp-program sniff-timeout-ms=100 unknown="pause" udp=#true {{
     rule action="reject" rule-set="block"
     rule action="route-options" rule-set="slow" connect-timeout-ms=120
@@ -46,7 +48,7 @@ routing {{
     rule action="resolve"
     rule action="route" outbound="direct"
   }}
-  default-outbound "direct"
+  final "direct"
 }}
 ''')
         (root / 'one').mkdir(); (root / 'two').mkdir()

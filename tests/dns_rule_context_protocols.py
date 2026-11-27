@@ -113,7 +113,7 @@ dns {{
  rule domain="split.test" inbound="ss" network="udp" query-type=28 server="second"
  final "first"
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         with nexus_process(binary, config, len(inbounds)):
             for label, tag, user, outbound in clients:

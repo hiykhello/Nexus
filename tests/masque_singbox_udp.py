@@ -49,7 +49,7 @@ inbound "edge" type="masque" {{
  allow cidr="{'::1/128' if ipv6 else '127.0.0.0/8'}" first-port=1 last-port=65535
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
                 box_cfg=root/'singbox.json';box_cfg.write_text(json.dumps({'log':{'level':'warn'},'inbounds':[{'type':'socks','listen':'127.0.0.1','listen_port':front}], 'outbounds':[{'type':'http','tag':'edge','server':host,'server_port':edge_port,'version':3,'disable_version_fallback':True,'headers':{'Proxy-Authorization':'Bearer approved'},'tls':{'enabled':True,'server_name':'localhost','certificate_path':str(cert)}}], 'route':{'final':'edge'}}))
                 nexus=subprocess.Popen([binary,'run','--config',cfg],stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)

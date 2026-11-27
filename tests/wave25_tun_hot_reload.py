@@ -182,7 +182,7 @@ outbound "block" type="block"
 routing {{
   rules udp=#true {{
     {rule_line}
-    - default "direct"
+    - final "direct"
   }}
 }}
 ''')
@@ -309,7 +309,7 @@ dns {{
 routing {{
   rules udp=#true {{
     - action="hijack-dns" {{ ip-cidr "{dns_vip}/32"; port 53; }}
-    - default "direct"
+    - final "direct"
   }}
 }}
 ''')
@@ -368,7 +368,7 @@ inbounds {
   inbound "tun-in" type="tun" { interface-name "nx-v"; inet4-address "198.51.100.1/32"; auto-route #true; strict-route #true; }
 }
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 ''')
     assert good.returncode == 0, good.stderr
 
@@ -379,7 +379,7 @@ inbounds {
   inbound "tun-in" type="tun" { interface-name "nx-v"; inet4-address "198.51.100.1/32"; auto-route #true; strict-route #true; }
 }
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 ''')
     assert bad_any.returncode != 0 and "loopback mixed, socks5 or http" in bad_any.stderr, bad_any.stderr
 
@@ -390,7 +390,7 @@ inbounds {
   inbound "tun-b" type="tun" { interface-name "nx-b"; inet4-address "198.51.100.2/32"; }
 }
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 ''')
     assert bad_two_tun.returncode != 0 and "loopback mixed, socks5 or http" in bad_two_tun.stderr, bad_two_tun.stderr
 
@@ -429,7 +429,7 @@ dns {{
   final "up"
 }}
 '''
-        cfg.write_text(base_cfg + 'routing { default-outbound "direct"; }\n')
+        cfg.write_text(base_cfg + 'routing { final "direct"; }\n')
         echo_script = Path(__file__).with_name("tailscale_endpoint_network.py")
         with process([*prefix, sys.executable, str(echo_script), "--echo"], stdin=subprocess.PIPE) as target:
             assert line(target) == b"ready\n"
@@ -455,7 +455,7 @@ dns {{
                     assert exact(s, 10) == b"via-socks5"
                 http_connect_echo(mixed_port, "192.0.2.2", 18080, b"via-http-connect")
                 # 3. Changing strict-route DNS hijack via reload must fail cleanly without tearing down TUN
-                cfg.write_text(base_cfg + 'routing { rules udp=#true { - port 53 action="hijack-dns"; - default "direct"; }; }\n')
+                cfg.write_text(base_cfg + 'routing { rules udp=#true { - port 53 action="hijack-dns"; - final "direct"; }; }\n')
                 assert not http_post_reload(ctl_port), "strict-route DNS hijack change must be rejected on hot reload"
     print("PASS test 3: Linux strict-route + loopback mixed coexistence & hijack guard verified")
 

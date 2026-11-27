@@ -112,9 +112,9 @@ inbound "mixed" type="mixed" {{
 outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {{
-    rule-set "dyn" path="{rules}" format="kdl"
+    rulesets {{ "dyn" path="{rules}" format="kdl"; }}
     rules {{ - kind="rule-set" value="dyn" outbound="reject"; }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
             proc = subprocess.Popen([str(binary), "run", "--config", str(cfg)],

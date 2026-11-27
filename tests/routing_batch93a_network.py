@@ -37,7 +37,7 @@ routing {{
   tcp-program sniff-timeout-ms=1000 unknown="skip" {{
     {program}
   }}
-  default-outbound "direct"
+  final "direct"
 }}
 '''
 
@@ -131,8 +131,10 @@ def logical(binary, root):
     conf.write_text(config(front,'''rule action="route" outbound="direct" {
     all { rule-set "alias"; not { port 443; }; }
 }
-rule action="reject"''',sets='''rule-set "corp" path="corp.kdl" format="kdl"
-rule-set "alias" path="alias.kdl" format="kdl"'''))
+rule action="reject"''',sets='''rulesets {
+    corp path="corp.kdl" format="kdl"
+    alias path="alias.kdl" format="kdl"
+  }'''))
     with Origin(idle_timeout=15) as origin, nexus_process(binary,conf) as process:
         with socket.create_connection(("127.0.0.1",front),timeout=4) as active:
             active.sendall(b"\5\1\0")

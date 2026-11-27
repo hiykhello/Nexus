@@ -34,7 +34,7 @@ inbound "edge" type="hysteria2" {{ listen host="{host}" port={port};
  quic {{ salamander-password-file "{root / 'obfs'}"; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             payload = bytes(range(256)) * 512; errors = []
             with socket.socket() as origin:

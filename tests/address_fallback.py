@@ -76,9 +76,9 @@ inbound "local" type="mixed" {{ listen host="127.0.0.1" port={port}; authenticat
 outbound "direct" type="direct"
 outbound "reject" type="block"
 {extra}routing {{
- rule-set "blocked" path="rules.kdl" format="kdl"
+ rulesets {{ "blocked" path="rules.kdl" format="kdl"; }}
  rules {{ - kind="rule-set" value="blocked" outbound="{action}"; }}
- default-outbound "direct"
+ final "direct"
 }}
 ''')
         proc = subprocess.Popen([server, 'run', '--config', config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,

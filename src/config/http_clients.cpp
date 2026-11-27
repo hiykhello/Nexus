@@ -107,8 +107,8 @@ namespace config {
                 else if (field.name == "protocol" && *value == "auto") client.protocol = HttpProtocol::automatic;
                 else return error("invalid HTTP client field: " + field.name);
             }
-            if (client.outbound.empty() || client.resolver.empty() || client.ca_file.empty())
-                return error("HTTP client requires outbound, domain-resolver and ca-file");
+            if (client.outbound.empty())
+                return error("HTTP client requires outbound");
             if (client.protocol != HttpProtocol::http3 && (!client.ech_config_file.empty() || client.max_udp_payload))
                 return error("HTTP client UDP payload and ECH require protocol h3");
             if (client.disable_path_mtu_discovery && client.protocol != HttpProtocol::http3)

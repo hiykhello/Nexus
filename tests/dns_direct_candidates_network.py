@@ -75,7 +75,7 @@ dns {{
     final "secure"
     disable-cache #true
 }}
-routing {{ default-outbound "egress"; }}
+routing {{ final "egress"; }}
 ''')
 
             def verify(which):

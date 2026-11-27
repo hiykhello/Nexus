@@ -20,7 +20,7 @@ role "server"
 workers 2
 shutdown-grace-ms 2000
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 '''
     for index, port in enumerate(ports):
         source += f'''inbound "edge-{index}" type="shadowsocks" {{

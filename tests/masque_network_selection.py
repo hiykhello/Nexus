@@ -71,7 +71,7 @@ outbound "edge" type="masque" {{
     authentication {{ bearer-file "{token}"; }}
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
 
         def observe(name, host):

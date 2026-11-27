@@ -301,13 +301,15 @@ outbound "bad-https" type="http-connect" {{
     tls {{ server-name "localhost"; verify #true; certificate-sha256 "0000000000000000000000000000000000000000000000000000000000000000"; }}
 }}
 routing {{
-    rule-set "rs-rst" {{ port {reject_rst_port}; }}
-    rule-set "rs-drop" {{ port {reject_drop_port}; }}
-    rule-set "rs-frag" {{ port {frag_tls.port}; }}
-    rule-set "rs-pref" {{ port {echo_prefix.port}; }}
-    rule-set "rs-good-pin" {{ port {echo_pin.port}; }}
-    rule-set "rs-bad-pin" {{ port {bad_pin_port}; }}
-    default-outbound "direct"
+    rulesets {{
+        rs-rst {{ port {reject_rst_port}; }}
+        rs-drop {{ port {reject_drop_port}; }}
+        rs-frag {{ port {frag_tls.port}; }}
+        rs-pref {{ port {echo_prefix.port}; }}
+        rs-good-pin {{ port {echo_pin.port}; }}
+        rs-bad-pin {{ port {bad_pin_port}; }}
+    }}
+    final "direct"
     tcp-program sniff-timeout-ms=1000 unknown="skip" {{
         rule rule-set="rs-rst" action="reject" method="default" no-drop=#true
         rule rule-set="rs-drop" action="reject" method="drop"

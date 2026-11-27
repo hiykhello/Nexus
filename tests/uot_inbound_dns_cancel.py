@@ -25,7 +25,7 @@ dns {{ server "dns" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; str
 inbounds {{ shadowsocks "ss" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; }} }}
 outbound "direct" type="direct"
 {edge}
-routing {{ default-outbound "{'edge' if bootstrap else 'direct'}"; }}
+routing {{ final "{'edge' if bootstrap else 'direct'}"; }}
 ''')
     server=client=None
     try:

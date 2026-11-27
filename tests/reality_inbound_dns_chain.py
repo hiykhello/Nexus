@@ -59,7 +59,7 @@ workers 2
 dns {{ server "leaf" type="udp" host="leaf.test" port={leaf.getsockname()[1]} domain-resolver="middle"; server "middle" type="udp" host="middle.test" port={middle.getsockname()[1]} domain-resolver="root"; server "root" type="udp" host="127.0.0.1" port={root.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
 inbound "edge" type="vless" {{ listen host="127.0.0.1" port={front}; authentication {{ user "test" uuid-file="{path/'uuid'}"; }}; tls {{ reality {{ private-key-file "{path/'secret'}"; server-name "localhost"; short-id ""; fallback host="cover.test" port={cover.getsockname()[1]}; fallback-resolver "leaf"; }}; }}; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         env = os.environ.copy(); env['LD_PRELOAD'] = str(guard)
         server = subprocess.Popen([require_nexus(), 'run', '--config', path/'server.kdl'], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, env=env)

@@ -61,7 +61,7 @@ dns {{
     final "h"
 }}
 routing {{
-    default-outbound "proxy"
+    final "proxy"
 }}
 )kdl", hosts_path.string());
 

@@ -42,7 +42,7 @@ dns {{
   server "business" type="local"
   final "business"
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 """)
     command=[binary,"run","--config",str(config)]
     with bind_port(dns_port,socket.SOCK_DGRAM):

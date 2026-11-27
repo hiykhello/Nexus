@@ -22,7 +22,7 @@ role "client"
 dns {{ listen host="127.0.0.1" port={listen}; server "a" type="udp" host="127.0.0.1" port={upstream.getsockname()[1]}; rule domain="bypass.test" action="route" server="a" disable-cache=#true; }}
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={proxy}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 requests = []; stopping = threading.Event(); failures = []
 def server():

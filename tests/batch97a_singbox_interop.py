@@ -71,7 +71,7 @@ role "server"
 workers 2
 inbound "socks" type="socks5" {{ listen host="127.0.0.1" port={nx_socks}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         sb_cfg = root / "sb_socks_cli.json"
         sb_cfg.write_text(json.dumps({
@@ -107,7 +107,7 @@ workers 2
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={nx_cli_p}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "sb" type="socks5" {{ server host="127.0.0.1" port={sb_srv_p}; udp #true; }}
-routing {{ default-outbound "sb"; }}
+routing {{ final "sb"; }}
 ''')
         sb = launch_singbox(sb_srv, sb_srv_p)
         try:
@@ -158,7 +158,7 @@ role "server"
 workers 2
 inbound "http" type="http" {{ listen host="127.0.0.1" port={nx_http}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         sb_cfg = root / "sb_http_cli.json"
         sb_cfg.write_text(json.dumps({
@@ -196,7 +196,7 @@ workers 2
 inbound "local" type="http" {{ listen host="127.0.0.1" port={nx_cli_p}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "sb" type="http-connect" {{ server host="127.0.0.1" port={sb_srv_p}; }}
-routing {{ default-outbound "sb"; }}
+routing {{ final "sb"; }}
 ''')
         sb = launch_singbox(sb_srv, sb_srv_p)
         try:
@@ -263,7 +263,7 @@ routing {{
         rule action="route" outbound="direct" domain-source="sniffed" {{ domain "allowed.example"; }}
         rule action="reject"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         sb_mid = root / "sb_mid.json"
@@ -287,7 +287,7 @@ outbound "mid" type="shadowsocks" {{
     method "2022-blake3-aes-128-gcm"
     key-file "{root / 'psk'}"
 }}
-routing {{ default-outbound "mid"; }}
+routing {{ final "mid"; }}
 ''')
         cctx = ssl.create_default_context(cafile=str(cert))
         with nexus_process(str(binary), str(nx2_cfg)):

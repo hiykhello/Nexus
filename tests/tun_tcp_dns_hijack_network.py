@@ -71,13 +71,13 @@ dns {{
     final "upstream"
 }}
 routing {{
-    rule-set "target" path="target.kdl" format="kdl"
+    rulesets {{ "target" path="target.kdl" format="kdl"; }}
     tcp-program sniff-timeout-ms=150 unknown="skip" {{
         rule action="sniff" rule-set="target"
         rule action="hijack-dns" rule-set="target"
         rule action="reject"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         if "--explain" in sys.argv:

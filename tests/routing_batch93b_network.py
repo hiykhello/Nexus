@@ -69,11 +69,12 @@ def policy(root, source=None, ordered=False):
         'schema-version 2\nkind "predicate"\nall { ' + '; '.join(predicates) + '; }\n')
     (root / "deny.kdl").write_text(
         'schema-version 2\nkind "predicate"\nany { network "tcp"; network "udp"; }\n')
-    declaration = '''
-    rule-set "allow" path="allow.kdl" format="kdl"
+    declaration = '''    rulesets {
+        allow path="allow.kdl" format="kdl"
 '''
     if not ordered:
-        declaration+='    rule-set "deny" path="deny.kdl" format="kdl"\n'
+        declaration += '        deny path="deny.kdl" format="kdl"\n'
+    declaration += '    }\n'
     actions = '''
     tcp-program sniff-timeout-ms=50 unknown="skip" udp=#true {
         rule action="route" rule-set="allow" outbound="direct"
@@ -89,7 +90,7 @@ def policy(root, source=None, ordered=False):
 outbound "direct" type="direct"
 outbound "block" type="block"
 routing {{{declaration}{actions}
-    default-outbound "direct"
+    final "direct"
 }}
 '''
 
@@ -321,12 +322,12 @@ log {{ privacy "verbose"; }}
 inbound "app" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}
 outbound "direct" type="direct"
 routing {{
-    rule-set "metadata" path="{file}" format="{codec}"
+    rulesets {{ "metadata" path="{file}" format="{codec}"; }}
     tcp-program sniff-timeout-ms=50 unknown="skip" {{
         rule action="route" rule-set="metadata" outbound="direct"
         rule action="reject"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         command = [binary, "rule", "explain", config, "app", "tcp", "192.0.2.2:443"]
@@ -358,7 +359,7 @@ routing {{
         rule action="reject" {{ not {{ gateway-mac "02:00:00:00:00:21"; }}; }}
         rule action="route" outbound="direct"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     with Echo() as echo, nexus_process(binary, config):
@@ -374,7 +375,7 @@ inbound "tun" type="tun" {
     OPTIONS
 }
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 '''
     command = [binary, "rule", "explain", config, "tun", "tcp", "192.0.2.2:443"]
     config.write_text(template.replace("OPTIONS", 'include-routing-mark 0 mask=0xff'))

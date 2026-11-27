@@ -34,7 +34,7 @@ workers 2
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
  shadowsocks "ss" {{ listen host="127.0.0.1" port={ss_port}; method "2022-blake3-aes-128-gcm"; key-file "{key_file}"; }} }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{ listen host="127.0.0.1" port={dns_port};
  server "slow" type="udp" host="127.0.0.1" port={slow.port};
  server "fast" type="udp" host="127.0.0.1" port={fast.port};

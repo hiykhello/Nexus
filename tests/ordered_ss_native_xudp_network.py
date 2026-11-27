@@ -45,7 +45,7 @@ inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={front}; method 
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={upstream}; authentication {{ uuid-file "{root / 'uuid'}"; }}; tls {{ server-name "cover.example"; ca-file "{root / 'cert'}"; verify #true; }} }}
 dns {{ servers {{ udp "resolver" host="127.0.0.1" port={dns.port}; }}; final "resolver"; strategy "ipv4_only"; disable-cache #true; }}
-routing {{ tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="resolve"; rule action="route" outbound="edge"; }}; default-outbound "edge"; }}
+routing {{ tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="resolve"; rule action="route" outbound="edge"; }}; final "edge"; }}
 ''')
             with nexus_process(binary, str(root / 'config.kdl')):
                 # Each client uses a distinct sing-box config path.

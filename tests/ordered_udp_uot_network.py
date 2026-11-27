@@ -39,7 +39,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={listen}; authenti
 outbound "direct" type="direct"
 outbound "first" type="shadowsocks" {{ server host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
 outbound "second" type="shadowsocks" {{ server host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
-routing {{ rule-set "second-ip" path="ip.kdl" format="kdl"; tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="route" rule-set="second-ip" outbound="second"; rule action="route" outbound="first"; }}; default-outbound "first"; }}
+routing {{ rulesets {{ "second-ip" path="ip.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="route" rule-set="second-ip" outbound="second"; rule action="route" outbound="first"; }}; final "first"; }}
 ''')
     subprocess.run(["sing-box","check","-c",root/"box.json"],check=True,capture_output=True)
     box=subprocess.Popen(["sing-box","run","-c",root/"box.json"],stderr=subprocess.PIPE)

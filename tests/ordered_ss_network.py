@@ -23,7 +23,7 @@ def main(binary):
 role "server"
 inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; }}
 outbound "direct" type="direct" {direct_options}
-routing {{ rule-set "blocked" path="rule.kdl" format="kdl"; tcp-program sniff-timeout-ms=100 unknown="skip" {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="route" outbound="direct"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "blocked" path="rule.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms=100 unknown="skip" {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="route" outbound="direct"; }}; final "direct"; }}
 ''')
         target=socket.socket();target.bind(('127.0.0.1',0));target.listen(4);target.settimeout(5);port=target.getsockname()[1]
         errors=[];payload=b'GET / HTTP/1.1\r\nHost: ok.example\r\n\r\nbody'

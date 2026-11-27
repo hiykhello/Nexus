@@ -27,7 +27,7 @@ inbounds {{
  shadowsocks "ss" {{ listen host="127.0.0.1" port={ss_port}; method "2022-blake3-aes-128-gcm"; key-file "{root / 'key'}"; }}
 }}
 outbound "direct" type="direct"
-routing {{ rule-set "block" path="block.kdl" format="kdl"; tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="block" domain-source="sniffed"; rule action="route" outbound="direct"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "block" path="block.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="block" domain-source="sniffed"; rule action="route" outbound="direct"; }}; final "direct"; }}
 ''')
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as origin:
             origin.bind(('127.0.0.1', 0)); origin.settimeout(.4)

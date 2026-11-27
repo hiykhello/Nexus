@@ -153,7 +153,7 @@ outbounds {{
         transport "xhttp" {{ mode "{}"; protocol "{}"; {}; }}
     }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 )kdl",mode,protocol,extra));
     }
 

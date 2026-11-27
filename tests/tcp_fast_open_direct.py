@@ -84,7 +84,7 @@ try:
 role "client"
 inbound "local" type="mixed" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct" {{ tcp-fast-open #true; }}
-routing {{ {ordered} default-outbound "direct"; }}
+routing {{ {ordered} final "direct"; }}
 ''')
         with nexus_process(pathlib.Path(sys.argv[1]).resolve(), config):
             for _ in range(2):

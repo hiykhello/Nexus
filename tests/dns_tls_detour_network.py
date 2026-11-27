@@ -32,7 +32,7 @@ inbounds {{
   }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         with DotServer(root, host, family) as dot:
             config = root / "front.kdl"
@@ -51,7 +51,7 @@ dns {{
   strategy "ipv4_only"
   disable-cache #true
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
             config.write_text(source)
             with Origin(expected=3) as origin, nexus_process(binary, config):

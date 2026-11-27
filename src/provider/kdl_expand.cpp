@@ -213,9 +213,14 @@ namespace provider {
             return {};
         };
 
+        auto is_outbound_dial_default = [](std::string_view name) noexcept -> bool {
+            return name == "auto-detect-interface" || name == "interface" || name == "mark" ||
+                   name == "network-type" || name == "network-strategy";
+        };
         std::set<std::string> static_outbounds;
         glaze::KdlNode* outbounds_node = nullptr;
         auto scan_existing = [&](glaze::KdlNode const& n) {
+            if (is_outbound_dial_default(n.name)) return;
             auto tag = outbound_name(n);
             if (!tag.empty()) static_outbounds.insert(tag);
             else if (n.name == "direct" || n.name == "block") static_outbounds.insert(n.name);

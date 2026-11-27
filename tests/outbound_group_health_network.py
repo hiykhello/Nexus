@@ -82,7 +82,7 @@ outbound "backup" type="fallback" {{
     probe-timeout-ms 1700
 }}
 outbound "manual" type="selector" {{ member "backup"; }}
-routing {{ default-outbound "manual"; }}
+routing {{ final "manual"; }}
 ''')
 
 

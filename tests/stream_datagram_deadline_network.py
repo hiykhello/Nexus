@@ -42,7 +42,7 @@ role "server"
 inbound "trojan" type="trojan" {{ listen host="127.0.0.1" port={front}; authentication {{ user "bob" password-file="{root/'password'}"; }}; tls {{ certificate-file "{root/'cert'}"; private-key-file "{root/'key'}"; }}; }}
 outbound "direct" type="direct"
 dns {{ servers {{ udp "resolver" host="127.0.0.1" port={dns.port}; }}; final "resolver"; strategy "ipv4_only"; disable-cache #true; }}
-routing {{ {program} default-outbound "direct"; }}
+routing {{ {program} final "direct"; }}
 ''')
         with nexus_process(binary,str(config)):
             context=ssl.create_default_context(cafile=str(root/'cert'))

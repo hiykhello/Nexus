@@ -35,13 +35,13 @@ def verify(binary, fixture, protocol, host, fast_open=False):
             if protocol == "tls":
                 write_config(config, observation, front, listen)
                 source = config.read_text().replace('outbounds { direct "direct"; }', 'outbound "egress" type="direct"')
-                source = source.replace('default-outbound "direct"', 'default-outbound "egress"')
+                source = source.replace('final "direct"', 'final "egress"')
                 source = source.replace(f'ca-file="{cert}"', f'ca-file="{cert}" detour="egress"')
                 source = source.replace('final "protected"', 'disable-cache #true\n    final "protected"')
             else:
                 source = config_text(protocol, front, listen, host, port, cert, bootstrap.port)
                 source = source.replace('outbound "direct"', 'outbound "egress"').replace(
-                    'default-outbound "direct"', 'default-outbound "egress"')
+                    'final "direct"', 'final "egress"')
                 source = source.replace('bind-interface="lo"', 'detour="egress"')
             protect = root / "protect.sock"
             direct = 'outbound "egress" type="direct"'

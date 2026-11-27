@@ -128,7 +128,7 @@ outbound "edge" type="vless" {{
  tls {{ server-name "cover.example"; reality {{ public-key "{public.hex()}"; short-id "0123456789abcdef"; }}; }}
  {fast_open}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 """)
         proxy=subprocess.Popen([NEXUS,'run','--config',config_path],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:

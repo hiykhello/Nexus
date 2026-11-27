@@ -85,7 +85,7 @@ workers {workers}
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="snell" {{ server host="127.0.0.1" port={gateway}; version 4; psk-file "{psk}"; obfs "http"; obfs-host "example.test"; obfs-uri "/hello"; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
                 box_config = {'log': {'level': 'warn'},
                     'inbounds': [{'type': 'snell', 'listen': '127.0.0.1', 'listen_port': edge, 'version': 5, 'psk': 'snell-http-test', 'obfs_mode': 'http'}],
@@ -99,7 +99,7 @@ role "server"
 workers {workers}
 inbound "edge" type="snell" {{ listen host="127.0.0.1" port={edge}; version 5; psk-file "{psk}"; replay-window-seconds 60; obfs "http"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
                 box_config = {'log': {'level': 'warn'},
                     'inbounds': [{'type': 'socks', 'listen': '127.0.0.1', 'listen_port': front}],

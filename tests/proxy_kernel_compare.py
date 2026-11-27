@@ -210,7 +210,7 @@ role "client"
 workers 2
 inbounds {{ mixed "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}; }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
     listen host="127.0.0.1" port={dns_port}
     server "peer" type="udp" host="127.0.0.1" port={upstream}

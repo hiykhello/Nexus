@@ -257,11 +257,11 @@ outbounds {{
     outbound "proxy" type="socks5" {{ server host="127.0.0.1" port=1081; }}
 }}
 routing {{
-    rule-set "geo" path="{}" format="srs"
+    rulesets {{ "geo" path="{}" format="srs"; }}
     rules sniff-timeout-ms=300 unknown="skip" udp=#true {{
         - rule-set="geo" to="proxy"
     }}
-    default "direct"
+    final "direct"
 }}
 )kdl", cdir.string(), srs_path.string());
         };

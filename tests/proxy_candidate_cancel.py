@@ -67,7 +67,7 @@ workers {workers}
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }} }}
 outbounds {{ direct "direct"; }}
 dns {{ servers {{ udp "local" host="127.0.0.1" port={dns.getsockname()[1]}; }}; strategy "ipv4_only"; disable-cache #true; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         process = subprocess.Popen([binary, 'run', '--config', config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:
@@ -142,7 +142,7 @@ workers {workers}
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }} }}
 outbounds {{ direct "direct"; }}
 dns {{ servers {{ udp "local" host="127.0.0.1" port={dns.getsockname()[1]}; }}; strategy "ipv4_only"; disable-cache #true; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         process = subprocess.Popen([binary, 'run', '--config', config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         try:

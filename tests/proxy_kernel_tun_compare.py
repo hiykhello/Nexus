@@ -58,7 +58,7 @@ inbound "tun" type="tun" {{
     auto-route #false
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     return ["run", "--config", str(path)]
 

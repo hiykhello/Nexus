@@ -30,7 +30,7 @@ role "client"
 dns {{ listen host="127.0.0.1" port={listen}; disable-cache #true; server "a" type="udp" host="127.0.0.1" port={upstream.getsockname()[1]}{binding}; }}
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={proxy}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 query = bytes.fromhex("123401000001000000000000076578616d706c6504746573740000010001")
 seen = []
@@ -169,7 +169,7 @@ role "client"
 dns {{ listen host="127.0.0.1" port={domain_listen}; server "bootstrap" type="udp" host="127.0.0.1" port={bootstrap.getsockname()[1]}{binding}; server "remote" type="udp" host="resolver.test" port={target.getsockname()[1]} domain-resolver="bootstrap"{binding}; final "remote"; }}
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={domain_proxy}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
     path = Path(directory) / "config.kdl";path.write_text(domain_config)
     process = subprocess.Popen([str(binary), "run", "--config", str(path)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)

@@ -36,7 +36,7 @@ inbounds {{
  {ss}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
  server "first" type="udp" host="127.0.0.1" port={first.port};
  server "fallback" type="udp" host="127.0.0.1" port={fallback.port};
@@ -115,7 +115,7 @@ def reject_all():
 role "server"
 inbound "in" type="mixed" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
  server "first" type="udp" host="127.0.0.1" port={peer.port};
  rule action="reject";

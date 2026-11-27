@@ -46,7 +46,7 @@ http-clients {{
     protocol "auto"; timeout-ms 1200;
   }}
 }}
-routing {{ default-outbound "physical"; }}
+routing {{ final "physical"; }}
 ''')
         env = dict(os.environ, NEXUS_TEST_MAX_PACKET="1500")
         with Origin(root) as origin, subprocess.Popen([fixture, root / "cert", root / "key", source], env=env,
@@ -113,7 +113,7 @@ http-clients {{
     {header}
   }}
 }}
-routing {{ default-outbound "physical"; }}
+routing {{ final "physical"; }}
 ''')
 
         if fixture is None:

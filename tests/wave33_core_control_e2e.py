@@ -344,13 +344,13 @@ dns {{
     final "upstream"
 }}
 routing {{
-    rule-set "local-block" path="{local_rule}" format="kdl"
+    rulesets {{ "local-block" path="{local_rule}" format="kdl"; }}
     rules udp=#true {{
         - network "icmp" action="bypass"
         - port {udp_echo.port} action="bypass"
         - ip-cidr "10.0.0.0/8" action="bypass"
         - rule-set "local-block" to="block"
-        - default "direct"
+        - final "direct"
     }}
 }}
 ''')

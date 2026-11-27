@@ -43,7 +43,7 @@ dns {{
   strategy "ipv4_only"
   optimistic-cache-seconds 5
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         gate = threading.Event()
         with nexus_process(binary, config), Origin(expected=4) as origin:
@@ -112,19 +112,19 @@ dns {{
   final "upstream"
   optimistic-cache-seconds 5
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         if intercept:
             rule = config.parent / "dns.kdl"
             rule.write_text(f'schema-version 2\nkind "predicate"\nrule type="port" value="{listener}"\n')
             content = config.read_text().replace(f'  listen host="127.0.0.1" port={listener}\n', '')
-            content = content.replace('routing { default-outbound "direct"; }', '''routing {
-  rule-set "dns" path="dns.kdl" format="kdl"
+            content = content.replace('routing { final "direct"; }', '''routing {
+  rulesets {{ "dns" path="dns.kdl" format="kdl"; }}
   tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {
     rule action="hijack-dns" rule-set="dns"
     rule action="route" outbound="direct"
   }
-  default-outbound "direct"
+  final "direct"
 }''')
             config.write_text(content)
         peer.authenticated = True

@@ -43,7 +43,7 @@ role "client"
 workers {workers}
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         ready_r, ready_w = os.pipe()
         gate_r, gate_w = os.pipe()

@@ -100,7 +100,7 @@ def check_route(binary, root, first, second, ordered, regex=False, srs_compiler=
         f'schema-version 2\nkind "predicate"\n'
         f'rule type="not" {{ rule type="process-name" value={json.dumps(first.name)}; }}\n'
     )
-    other_set = '' if ordered else 'rule-set "other" path="other.kdl" format="kdl"'
+    other_set = '' if ordered else '        other path="other.kdl" format="kdl"'
     if ordered:
         route = '''tcp-program sniff-timeout-ms=50 unknown="skip" {
             rule action="route" rule-set="first" outbound="direct"
@@ -121,10 +121,12 @@ inbounds {{
 }}
 outbounds {{ direct "direct"; block "deny"; }}
 routing {{
-    rule-set "first" path="{file}" format="{format_name}"
-    {other_set}
+    rulesets {{
+        first path="{file}" format="{format_name}"
+{other_set}
+    }}
     {route}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     with socket.socket() as origin:
@@ -213,9 +215,9 @@ inbounds {{
 }}
 outbounds {{ direct "direct" {{ routing-mark {mark}; }}; block "deny"; }}
 routing {{
-    rule-set "other" path="other.kdl" format="kdl"
+    rulesets {{ "other" path="other.kdl" format="kdl"; }}
     rules {{ - kind="rule-set" value="other" outbound="deny"; }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
             rule = ["OUTPUT", "-p", "tcp", "-d", host, "--dport", str(target), "-m", "mark", "!", "--mark",

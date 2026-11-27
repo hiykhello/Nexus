@@ -113,7 +113,7 @@ routing {{
   tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{
     rule action="route" outbound="edge"
   }}
-  default-outbound "edge"
+  final "edge"
 }}
 ''')
         return self.file

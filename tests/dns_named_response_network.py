@@ -43,11 +43,11 @@ workers 2
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
  shadowsocks "ss" {{ listen host="127.0.0.1" port={ss_port}; method "2022-blake3-aes-128-gcm"; key-file "{key_path}"; }} }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{ listen host="127.0.0.1" port={dns_port};
  server "first" type="udp" host="127.0.0.1" port={first.port};
  server "second" type="udp" host="127.0.0.1" port={second.port};
- rule-set "loopback" path="loopback.kdl" format="kdl";
+ rulesets {{ "loopback" path="loopback.kdl" format="kdl"; }}
  rule action="evaluate" server="first" tag="first-result" rewrite-ttl=4;
  rule action="evaluate" server="second" tag="second-result" rewrite-ttl=7;
  rule domain-suffix="rule.test" rule-set="loopback" match-response="second-result" action="respond";

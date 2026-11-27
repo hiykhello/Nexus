@@ -29,7 +29,7 @@ outbounds {{
         quic {{ {}; }}
     }}
 }}
-routing {{ default-outbound "hy"; }}
+routing {{ final "hy"; }}
 )kdl",fields));
     }
 

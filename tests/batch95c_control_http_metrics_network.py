@@ -33,7 +33,7 @@ role "client"
 control http-listen="127.0.0.1:{ctrl_port}" metrics=#true
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         res = subprocess.run([binary, "run", "--config", str(cfg)], capture_output=True, text=True, timeout=5)
         assert res.returncode != 0 and "http control startup failed" in res.stderr, res.stderr
@@ -49,7 +49,7 @@ role "client"
 control http-listen="0.0.0.0:19090"
 inbound "in" type="socks5" { listen host="127.0.0.1" port=18080; authentication "none"; }
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 ''')
         res = subprocess.run([binary, "run", "--config", str(cfg)], capture_output=True, text=True, timeout=5)
         assert res.returncode != 0 and "bearer-token-file" in res.stderr, res.stderr
@@ -86,7 +86,7 @@ outbound "auto_probe" type="url-test" {{
     probe-interval-ms 60000
     probe-timeout-ms 500
 }}
-routing {{ default-outbound "choice"; }}
+routing {{ final "choice"; }}
 ''')
         auth = {"Authorization": f"Bearer {token_val}"}
         with running([binary, "run", "--config", cfg], front, root / "proxy.log"):

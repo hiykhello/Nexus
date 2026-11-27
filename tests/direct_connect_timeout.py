@@ -29,7 +29,7 @@ workers {workers}
 dns {{ server "dns" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; }}
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct" {{ connect-timeout-ms {timeout_ms}; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:

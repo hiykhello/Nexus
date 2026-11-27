@@ -60,7 +60,7 @@ role "client"
 dns {{ server "upstream" type="{transport}" host="127.0.0.1" port={dns_port}; strategy "ipv4_only"; edns #true; }}
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={proxy_port}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
                 env = os.environ.copy()
                 env["LD_PRELOAD"] = str(guard)

@@ -78,7 +78,7 @@ workers 1
 {inbound}
 outbound "direct" type="direct" {{ {direct} }}
 {node}
-routing {{ {program} default-outbound "{final}"; }}
+routing {{ {program} final "{final}"; }}
 '''
 
 

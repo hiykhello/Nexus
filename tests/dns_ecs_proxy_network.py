@@ -90,7 +90,7 @@ inbounds {{
  shadowsocks "ss" {{ listen host="127.0.0.1" port={ss_port}; method "2022-blake3-aes-128-gcm"; key-file "{key_file}"; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
  {server}
  rule domain="one.test" action="route-options" client-subnet="198.51.100.1/24"

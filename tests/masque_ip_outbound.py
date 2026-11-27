@@ -125,7 +125,7 @@ outbound "edge" type="masque" {{
     authentication {{ bearer-file "{secret}"; }}
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
                 with nexus_process(str(binary), str(cfg)):
                     roundtrip(front, b"first")

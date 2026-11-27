@@ -47,7 +47,7 @@ def configure(root, front, dns, port, tun, ordered, trojan):
         - kind="rule-set" value="tunnel" outbound="edge"
     }
 '''
-    explicit = 'rule-set "explicit-dns" path="explicit-dns.kdl" format="kdl"' if ordered else ""
+    explicit = '        explicit-dns path="explicit-dns.kdl" format="kdl"' if ordered else ""
     path.write_text(f'''schema-version 1
 role "client"
 log {{ privacy "verbose"; }}
@@ -63,11 +63,13 @@ dns {{
     final "up"
 }}
 routing {{
-    rule-set "deny" path="ip.kdl" format="kdl"
-    rule-set "tunnel" path="proxy.kdl" format="kdl"
-    {explicit}
+    rulesets {{
+        deny path="ip.kdl" format="kdl"
+        tunnel path="proxy.kdl" format="kdl"
+{explicit}
+    }}
     {routing}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     return path

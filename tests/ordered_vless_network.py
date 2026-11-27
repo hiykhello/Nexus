@@ -20,7 +20,7 @@ def main(binary):
 role "server"
 inbound "vless" type="vless" {{ listen host="127.0.0.1" port={port}; authentication {{ user "bob" uuid-file="{root/'uuid'}"; }}; tls {{ certificate-file "{root/'cert'}"; private-key-file "{root/'key'}"; }}; }}
 outbound "direct" type="direct" {direct_options}
-routing {{ rule-set "blocked" path="rule.kdl" format="kdl"; tcp-program sniff-timeout-ms=100 unknown="skip" {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="route" outbound="direct"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "blocked" path="rule.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms=100 unknown="skip" {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="route" outbound="direct"; }}; final "direct"; }}
 ''')
         target=socket.socket();target.bind(('127.0.0.1',0));target.listen(2);target.settimeout(5);target_port=target.getsockname()[1]
         errors=[];request=b'GET / HTTP/1.1\r\nHost: ok.example\r\n\r\nbody'

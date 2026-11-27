@@ -169,7 +169,7 @@ namespace {
                 }
                 outbound "pool" type="selector" { member "jump"; selected "jump"; }
             }
-            routing { default-outbound "pool"; }
+            routing { final "pool"; }
         )");
         expect(ok.has_value() && ok->ssh_outbounds.size() == 1 &&
                ok->ssh_outbounds[0].config.user == "alice" &&
@@ -183,35 +183,35 @@ namespace {
             schema-version 1; role "client"
             inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
             outbounds { outbound "jump" type="ssh" { server host="127.0.0.1" port=22; user "a"; password-file "/tmp/p"; }; }
-            routing { default-outbound "jump"; }
+            routing { final "jump"; }
         )").has_value(), "150B: reject missing host-key-sha256");
 
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
             inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
             outbounds { outbound "jump" type="ssh" { server host="127.0.0.1" port=22; user "a"; host-key-sha256 "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"; }; }
-            routing { default-outbound "jump"; }
+            routing { final "jump"; }
         )").has_value(), "150B: reject ssh outbound without password-file or private-key-file");
 
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
             inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
             outbounds { outbound "jump" type="ssh" { server host="127.0.0.1" port=22; user "a"; password-file "rel/pw"; host-key-sha256 "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"; }; }
-            routing { default-outbound "jump"; }
+            routing { final "jump"; }
         )").has_value(), "150B: reject relative password-file");
 
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
             inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
             outbounds { outbound "jump" type="ssh" { server host="127.0.0.1" port=22; user "a"; password-file "/tmp/p"; cipher "aes256-ctr"; host-key-sha256 "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"; }; }
-            routing { default-outbound "jump"; }
+            routing { final "jump"; }
         )").has_value(), "150B: reject legacy non-AEAD cipher");
 
         expect(!config::parse_kdl(R"(
             schema-version 1; role "client"
             inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
             outbounds { outbound "jump" type="ssh" { server host="127.0.0.1" port=22; user "a"; password-file "/tmp/p"; host-key-sha256 "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"; }; }
-            routing { rule domain="example.com" network="udp" action="jump"; default-outbound "jump"; }
+            routing { rule domain="example.com" network="udp" action="jump"; final "jump"; }
         )").has_value(), "150B: reject explicit UDP rule pointing to TCP-only ssh outbound");
     }
 

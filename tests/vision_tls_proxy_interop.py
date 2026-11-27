@@ -37,7 +37,7 @@ workers 2
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={front}; flow "xtls-rprx-vision"; authentication {{ uuid-file "{uuid}"; }}; tls {{ server-name "cover.example"; ca-file "{root/'cert'}"; verify #true; }}; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     server=subprocess.Popen(['sing-box','run','-c',root/'box.json'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     proxy=subprocess.Popen([nexus_binary,'run','--config',root/'nexus.kdl'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)

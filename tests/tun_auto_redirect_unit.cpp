@@ -105,7 +105,7 @@ inbounds {{
     }}
 }}
 outbounds {{ outbound "direct" type="direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 )kdl",fields));
         };
         auto enabled=parse("auto-route #true; auto-redirect #true");
@@ -140,8 +140,8 @@ inbounds {
 }
 outbounds { outbound "direct" type="direct"; }
 routing {
-    rule-set "rs" format="kdl" path="rs.kdl"
-    default-outbound "direct"
+    rulesets { "rs" format="kdl" path="rs.kdl"; }
+    final "direct"
 }
 )kdl");
         check(combined.has_value(),"auto-redirect + route-address-set + route-address + tproxy-mark + MAC + gso accepted");
@@ -248,7 +248,7 @@ dns {{
     fake-ip server="up" ipv4-pool="{}" state-directory="/tmp/fakeip"
     final "up"
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 )kdl",cidr));
         };
         check(parse_fakeip("198.18.0.0/30").has_value(),"fake-ip /30 accepted");

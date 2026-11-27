@@ -47,7 +47,7 @@ inbounds {{
     }}
 }}
 outbounds {{ outbound "direct" type="direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 {state}
 dns {{
     listen host="127.0.0.1" port={dns_port}
@@ -172,7 +172,7 @@ servers {{
     server "plain" type="udp" host="{plain.host}" port={plain.port}
     server "secure" type="tls" host="{tls.host}" port={tls.port} server-name="dot.test" ca-file="{tls.cert}"
 }}
-rule-set "policy" path="{rules}" format="kdl"
+rulesets {{ "policy" path="{rules}" format="kdl"; }}
 rules {{ - rule-set="policy" server="secure"; }}
 final "plain"
 '''

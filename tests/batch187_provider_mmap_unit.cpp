@@ -299,7 +299,7 @@ proxy-providers {{
 }}
 inbounds {{ inbound "in" type="socks5" {{ listen "127.0.0.1:1080"; authentication "none"; }} }}
 outbounds {{ direct; selector "proxy" {{ use "loc"; }}; }}
-routing {{ default "proxy"; }}
+routing {{ final "proxy"; }}
 )kdl", cert.string(), sub_file.string(), (tmp.path / "loc_cache").string());
         write_text(local_cfg, local_kdl);
 
@@ -338,7 +338,7 @@ proxy-providers {{
 }}
 inbounds {{ inbound "in" type="socks5" {{ listen "127.0.0.1:1080"; authentication "none"; }} }}
 outbounds {{ direct; selector "proxy" {{ use "remote"; }}; }}
-routing {{ default "proxy"; }}
+routing {{ final "proxy"; }}
 )kdl", state_cache.string(), cert.string(), srv.port);
         write_text(http_cfg, http_kdl);
 
@@ -368,8 +368,7 @@ role "client"
 inbounds { inbound "in" type="socks5" { listen "127.0.0.1:1080"; authentication "none"; } }
 outbounds { direct; block; }
 routing {
-  rule-set "r1" { domain-suffix "r1.test"; }
-  rule-set "r2" { domain "r2.test"; }
+  rulesets { r1 { domain-suffix "r1.test"; }; r2 { domain "r2.test"; }; }
   sub-rule "media" {
     - "domain-suffix" "stream.org" "cdn.net" to="block"
   }
@@ -377,7 +376,7 @@ routing {
     - "rule-set" "r1" "r2" to="block"
     - "domain" "keep.local" invert=#true to="block"
     - sub-rule="media" "network" "tcp"
-    - default "direct"
+    - final "direct"
   }
 }
 )kdl";
@@ -394,7 +393,7 @@ outbounds { direct; }
 routing {
   sub-rule "a" { - sub-rule="b"; }
   sub-rule "b" { - sub-rule="a"; }
-  rules { - sub-rule="a"; - default "direct"; }
+  rules { - sub-rule="a"; - final "direct"; }
 }
 )kdl";
         check(!config::parse_kdl(cyc_kdl), "cyclic sub-rule rejected");
@@ -465,7 +464,7 @@ routing {
         auto sub_file = tmp.path / "watch_sub.yaml", cfg_path = tmp.path / "watch_prov.kdl";
         write_text(sub_file, "proxies:\n  - {name: \"N1\", type: trojan, server: 198.51.100.71, port: 443, password: \"p1\"}\n");
         auto make_kdl = [&](std::string_view n) {
-            return std::format("schema-version 1\nrole \"client\"\nproxy-providers {{\n  provider \"{}\" {{ type \"file\"; path \"{}\"; cache-dir \"{}\"; update-interval-ms 1000; }}\n}}\ninbounds {{ inbound \"in\" type=\"socks5\" {{ listen \"127.0.0.1:1080\"; authentication \"none\"; }} }}\noutbounds {{ direct; selector \"proxy\" {{ use \"{}\"; }}; }}\nrouting {{ default \"proxy\"; }}\n", n, sub_file.string(), (tmp.path / "wcache").string(), n);
+            return std::format("schema-version 1\nrole \"client\"\nproxy-providers {{\n  provider \"{}\" {{ type \"file\"; path \"{}\"; cache-dir \"{}\"; update-interval-ms 1000; }}\n}}\ninbounds {{ inbound \"in\" type=\"socks5\" {{ listen \"127.0.0.1:1080\"; authentication \"none\"; }} }}\noutbounds {{ direct; selector \"proxy\" {{ use \"{}\"; }}; }}\nrouting {{ final \"proxy\"; }}\n", n, sub_file.string(), (tmp.path / "wcache").string(), n);
         };
         auto kdl1 = make_kdl("loc1"), kdl2 = make_kdl("loc2");
         write_text(cfg_path, kdl1);

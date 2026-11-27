@@ -49,7 +49,7 @@ http-clients {{
     header "X-Nexus-Test" "custom value"
   }}
 }}
-routing {{ default-outbound "physical"; }}
+routing {{ final "physical"; }}
 """)
         with subprocess.Popen([fixture, cert, key, source], stdout=subprocess.PIPE, bufsize=0,
                               stderr=subprocess.PIPE, env=dict(os.environ, NEXUS_TEST_MAX_PACKET="1500")) as peer:

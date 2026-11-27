@@ -226,7 +226,7 @@ inbound "stls-in" type="shadowtls" {{
     authentication {{ user "u1" password-file="{pass_f}"; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             s_proc, s_port = launch_nexus(nexus_bin, stls_srv_cfg, "ShadowTLS listening on ")
             procs.append(s_proc)
@@ -244,7 +244,7 @@ outbound "stls" type="shadowtls" {{
     authentication {{ password-file "{pass_f}"; }}
     tls {{ server-name "localhost"; ca-file "{cert}"; fingerprint "{fp}"; verify #true; }}
 }}
-routing {{ default-outbound "stls"; }}
+routing {{ final "stls"; }}
 ''')
                 c_proc, socks_port = launch_nexus(nexus_bin, stls_cli_cfg, "SOCKS5 listening on ")
                 try:
@@ -277,7 +277,7 @@ inbound "tuic-in" type="tuic" {{
     tls {{ certificate-file "{cert}"; private-key-file "{key}"; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             t_proc, t_port = launch_nexus(nexus_bin, tuic_srv_cfg, "TUIC listening on ")
             procs.append(t_proc)
@@ -294,7 +294,7 @@ outbound "tuic-out" type="tuic" {{
     authentication {{ uuid-file "{uuid_f}"; password-file "{pass_f}"; }}
     tls {{ server-name "localhost"; ca-file "{cert}"; fingerprint "firefox"; verify #true; }}
 }}
-routing {{ default-outbound "tuic-out"; }}
+routing {{ final "tuic-out"; }}
 ''')
             tc_proc, tc_socks = launch_nexus(nexus_bin, tuic_cli_cfg, "SOCKS5 listening on ")
             procs.append(tc_proc)
@@ -318,7 +318,7 @@ inbound "masque-in" type="masque" {{
     allow cidr="127.0.0.0/8" first-port=1 last-port=65535
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             m_proc, m_port = launch_nexus(nexus_bin, mq_srv_cfg, "MASQUE listening on ")
             procs.append(m_proc)
@@ -335,7 +335,7 @@ outbound "mq-out" type="masque" {{
     authentication {{ bearer-file "{bearer_f}"; }}
     tls {{ server-name "localhost"; ca-file "{cert}"; fingerprint "safari"; verify #true; }}
 }}
-routing {{ default-outbound "mq-out"; }}
+routing {{ final "mq-out"; }}
 ''')
             mc_proc, mc_socks = launch_nexus(nexus_bin, mq_cli_cfg, "SOCKS5 listening on ")
             procs.append(mc_proc)

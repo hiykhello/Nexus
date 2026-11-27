@@ -34,15 +34,17 @@ dns {{
 }}
 outbound "direct" type="direct"
 routing {{
-    rule-set "dns-port" path="dns-port.kdl" format="kdl"
-    rule-set "blocked" path="blocked.kdl" format="kdl"
+    rulesets {{
+        "dns-port" path="dns-port.kdl" format="kdl"
+        "blocked" path="blocked.kdl" format="kdl"
+    }}
     tcp-program sniff-timeout-ms=200 udp=#true unknown="skip" {{
         rule action="hijack-dns" rule-set="dns-port"
         rule action="sniff"
         rule action="reject" rule-set="blocked" domain-source="sniffed"
         rule action="route" outbound="direct"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     with nexus_process(cli, config), Peer(root, front, PASSWORD) as peer:

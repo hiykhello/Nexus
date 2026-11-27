@@ -104,7 +104,7 @@ http-clients {{
     ech-config-file "{ech}";
   }}
 }}
-routing {{ default-outbound "physical"; }}
+routing {{ final "physical"; }}
 ''')
 
     def arguments(self, path):
@@ -160,7 +160,7 @@ inbound "edge" type="trojan" {{
   tls {{ certificate-file "{fixture.root / 'cert'}"; private-key-file "{fixture.root / 'key'}"; }}
 }}
 outbound "physical" type="direct" {{ inet4-bind-address "127.0.0.3"; }}
-routing {{ default-outbound "physical"; }}
+routing {{ final "physical"; }}
 ''')
     return config
 

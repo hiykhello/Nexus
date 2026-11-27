@@ -15,7 +15,7 @@ role "client"
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="snell" {{ server host="127.0.0.1" port={edge}; version 4; psk-file "{psk}"; {field} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         if accepted:
             with running([str(binary), 'run', '--config', str(config)], front, root/f'{index}.log'): pass

@@ -104,7 +104,7 @@ workers {workers}
 {inbound_config}
 outbound "direct" type="direct"
 {outbound_config}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     (root / "client.kdl").write_text(f'''schema-version 1
 role "client"
@@ -112,7 +112,7 @@ workers {workers}
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={socks}; authentication "none"; }}
 outbound "direct" type="direct"
 {nexus_outbound(inbound, front, root)}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     nexus = subprocess.Popen([NEXUS, "run", "--config", root / "nexus.kdl"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     client_proxy = subprocess.Popen([NEXUS, "run", "--config", root / "client.kdl"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)

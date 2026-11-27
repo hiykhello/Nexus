@@ -88,7 +88,7 @@ inbounds {{
  {ss}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
  {server}
  {rules}

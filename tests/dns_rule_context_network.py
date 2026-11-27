@@ -131,7 +131,7 @@ dns {{
  rule domain="ss-unknown.test" auth-user="alice" action="reject"
  final "first"
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         with nexus_process(binary, config, 7 if args.ss else 5) as process:
             allowed, blocked = ports[1], ports[0]

@@ -56,7 +56,7 @@ inbound "edge" type="anytls" {{
  user-limits {{ user "alice" byte-quota={quota}; user "bob" bytes-per-second=100 burst-bytes=8; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         replacement.replace(path)
 

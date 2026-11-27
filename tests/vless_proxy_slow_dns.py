@@ -34,7 +34,7 @@ inbounds {{ vless "edge" {{
  tls {{ certificate-file "{certder}"; private-key-file "{keyder}"; }}
 }} }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     ready_r,ready_w=os.pipe(); gate_r,gate_w=os.pipe()
     env=os.environ.copy(); env.update(LD_PRELOAD=str(shim),NEXUS_TEST_RESOLVER_READY_FD=str(ready_w),NEXUS_TEST_RESOLVER_GATE_FD=str(gate_r))

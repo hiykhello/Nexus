@@ -65,13 +65,13 @@ namespace {
             "proxy-providers {{\n  provider \"p1\" {{ type \"file\"; path \"{}\"; cache-dir \"{}\"; update-interval-ms 1000; }}\n}}\n"
             "inbounds {{ socks5 \"in\" {{ listen \"127.0.0.1:1080\"; authentication \"none\"; }}; }}\n"
             "outbounds {{ direct; block; selector \"proxy\" {{ use \"p1\"; }}; }}\n"
-            "routing {{ default-outbound \"proxy\"; }}\n",
+            "routing {{ final \"proxy\"; }}\n",
             sub_file.string(), cache_dir.string());
         constexpr std::string_view kdl_no_prov =
             "schema-version 1\nrole \"client\"\n"
             "inbounds { socks5 \"in\" { listen \"127.0.0.1:1080\"; authentication \"none\"; }; }\n"
             "outbounds { direct; block; }\n"
-            "routing { default-outbound \"direct\"; }\n";
+            "routing { final \"direct\"; }\n";
 
         cli::ProxyProviderManager mgr;
         auto init = mgr.prepare_initial(kdl_with_prov, cfg_path.string(), true);
@@ -110,28 +110,28 @@ namespace {
             "state { directory \"/tmp/nx-state-a\"; }\n"
             "inbounds { socks5 \"in\" { listen \"127.0.0.1:1080\"; authentication \"none\"; }; }\n"
             "outbounds { direct; block; }\n"
-            "routing { default-outbound \"direct\"; }\n";
+            "routing { final \"direct\"; }\n";
         constexpr std::string_view kdl_outbounds =
             "schema-version 1\nrole \"client\"\n"
             "control socket=\"/tmp/nx-ctrl.sock\" selector-state-directory=\"/tmp/nx-sel-a\"\n"
             "state { directory \"/tmp/nx-state-a\"; }\n"
             "inbounds { socks5 \"in\" { listen \"127.0.0.1:1080\"; authentication \"none\"; }; }\n"
             "outbounds { direct; block; socks5 \"extra\" { server \"127.0.0.1:1089\"; }; }\n"
-            "routing { default-outbound \"extra\"; }\n";
+            "routing { final \"extra\"; }\n";
         constexpr std::string_view kdl_sel_dir =
             "schema-version 1\nrole \"client\"\n"
             "control socket=\"/tmp/nx-ctrl.sock\" selector-state-directory=\"/tmp/nx-sel-b\"\n"
             "state { directory \"/tmp/nx-state-a\"; }\n"
             "inbounds { socks5 \"in\" { listen \"127.0.0.1:1080\"; authentication \"none\"; }; }\n"
             "outbounds { direct; block; }\n"
-            "routing { default-outbound \"direct\"; }\n";
+            "routing { final \"direct\"; }\n";
         constexpr std::string_view kdl_state_dir =
             "schema-version 1\nrole \"client\"\n"
             "control socket=\"/tmp/nx-ctrl.sock\" selector-state-directory=\"/tmp/nx-sel-a\"\n"
             "state { directory \"/tmp/nx-state-b\"; }\n"
             "inbounds { socks5 \"in\" { listen \"127.0.0.1:1080\"; authentication \"none\"; }; }\n"
             "outbounds { direct; block; }\n"
-            "routing { default-outbound \"direct\"; }\n";
+            "routing { final \"direct\"; }\n";
 
         auto c_base = config::parse_kdl(kdl_base);
         auto c_out = config::parse_kdl(kdl_outbounds);
@@ -162,13 +162,13 @@ namespace {
             "schema-version 1\nrole \"client\"\nworkers 1\n"
             "inbounds {{ socks5 \"in\" {{ listen \"127.0.0.1:{}\"; authentication \"none\"; }}; }}\n"
             "outbounds {{ direct; block; }}\n"
-            "routing {{ default-outbound \"direct\"; }}\n", port);
+            "routing {{ final \"direct\"; }}\n", port);
         auto kdl2 = std::format(
             "schema-version 1\nrole \"client\"\nworkers 1\n"
             "inbounds {{ socks5 \"in\" {{ listen \"127.0.0.1:{}\"; authentication \"none\"; }}; }}\n"
             "outbounds {{\n  direct; block;\n  socks5 \"node-b\" {{ server \"127.0.0.1:1089\"; }};\n"
             "  selector \"manual\" {{ member \"direct\"; member \"node-b\"; selected \"direct\"; }};\n}}\n"
-            "routing {{ default-outbound \"manual\"; }}\n", port);
+            "routing {{ final \"manual\"; }}\n", port);
 
         auto cfg1 = config::parse_kdl(kdl1);
         auto ids1 = config::reload_identities(kdl1);
@@ -263,10 +263,10 @@ namespace {
                 "http-clients {{ hc {{ outbound \"direct\"; domain-resolver \"sys\"; ca-file \"/tmp/ca.pem\"; }}; }}\n"
                 "dns {{\n"
                 "  servers {{ udp \"sys\" host=\"127.0.0.1\" port=53; }}\n"
-                "  rule-set \"rs\" url=\"{}\" format=\"domain-list\" update-interval-ms=60000 http-client=\"hc\"\n"
+                "  rulesets {{ \"rs\" url=\"{}\" format=\"domain-list\" update-interval-ms=60000 http-client=\"hc\"; }}\n"
                 "  rules {{ - rule-set=\"rs\" to=\"sys\"; }}\n"
                 "}}\n"
-                "routing {{ default-outbound \"direct\"; }}\n", url);
+                "routing {{ final \"direct\"; }}\n", url);
         };
         auto k1 = make_kdl("https://mock.test/first.txt");
         auto k_fail = make_kdl("https://mock.test/fail.txt");

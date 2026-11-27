@@ -58,7 +58,7 @@ with tempfile.TemporaryDirectory() as directory, DnsPeer() as dns, Echo() as ech
     if policy_view:
         rule_file=root/"dns.kdl"
         rule_file.write_text('schema-version 2\nkind "predicate"\nrule type="domain" value="unrelated.test"\n')
-        dns_rules='rule-set "reload" path="dns.kdl" format="kdl"\n  rule rule-set="reload" action="reject"'
+        dns_rules='rulesets { reload path="dns.kdl" format="kdl"; }\n  rule rule-set="reload" action="reject"'
     config.write_text(f"""schema-version 1
 role "client"
 inbounds {{
@@ -78,7 +78,7 @@ dns {{
   {dns_rules}
   fake-ip server="business" ipv4-pool="198.18.12.0/29" ipv6-pool="fd15:42::/96" ttl-seconds=2 state-directory="{state}" initialize=#true
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 """)
     command=["stdbuf","-oL",binary,"run","--config",str(config)]
     with subprocess.Popen(command,stdout=subprocess.PIPE,stderr=subprocess.PIPE) as cli:

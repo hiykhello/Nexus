@@ -14,7 +14,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-race-disabled-') as directory:
 role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={free_port()}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{ server "a" type="udp" host="127.0.0.1"; rule action="route" server="a" {field}; }}
 ''')
         result = subprocess.run([str(binary), 'run', '--config', str(config)], capture_output=True, text=True, timeout=5)

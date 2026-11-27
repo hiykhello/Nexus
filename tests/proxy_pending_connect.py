@@ -69,7 +69,7 @@ role "client"
 workers {workers}
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }} }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         process, client = start(config, port)
         try:

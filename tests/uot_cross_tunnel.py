@@ -44,7 +44,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={listen_port}; aut
 outbound "direct" type="direct"
 outbound "first" type="shadowsocks" {{ server host="127.0.0.1" port={listeners[0].getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
 outbound "second" type="shadowsocks" {{ server host="127.0.0.1" port={listeners[1].getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
-routing {{ rule-set "second" path="second.kdl" format="kdl"; rules {{ - kind="rule-set" value="second" outbound="second"; }}; default-outbound "first"; }}
+routing {{ rulesets {{ "second" path="second.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="second" outbound="second"; }}; final "first"; }}
 ''')
             proxy = subprocess.Popen([nexus, "run", "--config", root / "config.kdl"], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
             deadline = time.monotonic() + 5

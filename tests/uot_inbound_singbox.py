@@ -52,7 +52,7 @@ inbounds {{ shadowsocks "ss" {{ listen host="127.0.0.1" port={ssport}; method "2
 outbound "direct" type="direct"
 outbound "reject" type="block"
 {edge}
-routing {{ default-outbound "{'edge' if chain else 'direct'}"; }}
+routing {{ final "{'edge' if chain else 'direct'}"; }}
 ''')
     config={"log":{"level":"error"},"inbounds":[{"type":"socks","listen":"127.0.0.1","listen_port":socksport}],
             "outbounds":[{"type":"shadowsocks","tag":"edge","server":"127.0.0.1","server_port":ssport,

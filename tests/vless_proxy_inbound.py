@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-vless-async-inbound-") as directo
 role "server"
 inbounds {{ vless "edge" {{ listen host="127.0.0.1" port={downstream_port}; authentication {{ user "client" uuid-file="{uuid}"; }}; tls {{ certificate-file "{downstream_cert}"; private-key-file "{server_key}"; }}; }} }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         if largecert:
             bad_config=root/"too-large.kdl"
@@ -142,7 +142,7 @@ inbounds {{ vless "edge" {{
   tls {{ certificate-file "{server_cert}"; private-key-file "{server_key}"; }}
 }} }}
 outbounds {{ {outbound} }}
-routing {{ default-outbound "{final}"; }}
+routing {{ final "{final}"; }}
 ''')
     if pem:
         valid_chain=fullchain.read_text()

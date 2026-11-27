@@ -418,7 +418,7 @@ outbounds {
     }
     outbound "grp" type="selector" { member "v"; member "p"; member "direct"; selected "v" }
 }
-routing { default-outbound "grp" }
+routing { final "grp" }
 )kdl";
         auto cfg = config::parse_kdl(kdl_ok);
         check(cfg && cfg->vless_outbounds.size() == 1 && cfg->vless_outbounds[0].config.tls_fragment.enabled &&
@@ -443,7 +443,7 @@ outbounds {
         tls { server-name "example.com"; ca-file "/tmp/ca.pem"; verify #true; tls-fragment { min 100; max 10 } }
     }
 }
-routing { default-outbound "v" }
+routing { final "v" }
 )kdl";
         check(!config::parse_kdl(kdl_bad), "reject tls-fragment min > max");
 

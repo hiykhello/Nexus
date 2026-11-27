@@ -336,7 +336,7 @@ namespace {
                 "outbound \"direct\" type=\"direct\"\n"
                 "outbound \"alt\" type=\"socks5\" {{ server host=\"127.0.0.1\" port=18081; }}\n"
                 "outbound \"proxy\" type=\"selector\" {{ member \"direct\"; member \"alt\"; selected \"direct\"; }}\n"
-                "routing {{ default-outbound \"proxy\"; }}\n",
+                "routing {{ final \"proxy\"; }}\n",
                 sock_path, http_port, token_path.string(), socks_port);
         }
 

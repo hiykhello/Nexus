@@ -22,7 +22,7 @@ outbounds {
         tls { server-name "cover.example"; ca-file "/tmp/ca.pem"; fingerprint "chrome"; verify #true; }
     }
 }
-routing { default-outbound "stls-out"; }
+routing { final "stls-out"; }
 )";
     auto stls_parsed = config::parse_kdl(shadowtls_cfg);
     if (!stls_parsed || !stls_parsed->inbounds.front().shadowtls ||
@@ -51,7 +51,7 @@ outbounds {
         tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; fingerprint "firefox"; verify #true; }
     }
 }
-routing { default-outbound "tuic-out"; }
+routing { final "tuic-out"; }
 )";
     auto tuic_parsed = config::parse_kdl(tuic_cfg);
     if (!tuic_parsed || !tuic_parsed->inbounds.front().tuic ||
@@ -77,7 +77,7 @@ outbounds {
         tls { server-name "proxy.example"; ca-file "/tmp/ca.pem"; fingerprint "safari"; verify #true; }
     }
 }
-routing { default-outbound "mq"; }
+routing { final "mq"; }
 )";
     auto mq_parsed = config::parse_kdl(masque_out_cfg);
     if (!mq_parsed || mq_parsed->masque_outbounds.size() != 1 ||
@@ -117,7 +117,7 @@ inbounds {
     }
 }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )";
     auto tun_parsed = config::parse_kdl(tun_cfg);
     if (!tun_parsed || !tun_parsed->inbounds.front().tun ||
@@ -133,9 +133,9 @@ routing { default-outbound "direct"; }
     unsupported_stack.replace(unsupported_stack.find("system"), std::string_view("system").size(), "gvisor");
     if (config::parse_kdl(unsupported_stack))
         return 5;
-    if (config::parse_kdl("schema-version 1\nrole \"client\"\ninbounds { inbound \"t\" type=\"tun\" {\n    auto-route #true\n}; }\noutbounds { outbound \"d\" type=\"direct\"; }\nrouting { default-outbound \"d\"; }\n"))
+    if (config::parse_kdl("schema-version 1\nrole \"client\"\ninbounds { inbound \"t\" type=\"tun\" {\n    auto-route #true\n}; }\noutbounds { outbound \"d\" type=\"direct\"; }\nrouting { final \"d\"; }\n"))
         return 6;
-    if (config::parse_kdl("schema-version 1\nrole \"client\"\ninbounds { inbound \"t\" type=\"tun\" {\n    mtu 10\n}; }\noutbounds { outbound \"d\" type=\"direct\"; }\nrouting { default-outbound \"d\"; }\n"))
+    if (config::parse_kdl("schema-version 1\nrole \"client\"\ninbounds { inbound \"t\" type=\"tun\" {\n    mtu 10\n}; }\noutbounds { outbound \"d\" type=\"direct\"; }\nrouting { final \"d\"; }\n"))
         return 7;
 
     auto wg_cfg = R"(schema-version 1
@@ -156,7 +156,7 @@ outbounds {
         routing-mark 42
     }
 }
-routing { default-outbound "wg"; }
+routing { final "wg"; }
 )";
     auto wg_parsed = config::parse_kdl(wg_cfg);
     if (!wg_parsed || wg_parsed->wireguard_outbounds.size() != 1 ||
@@ -182,7 +182,7 @@ outbounds {
         reserved "AQID"
     }
 }
-routing { default-outbound "wg"; }
+routing { final "wg"; }
 )");
     if (!wg_b64 || !wg_b64->wireguard_outbounds.front().config.warp ||
         wg_b64->wireguard_outbounds.front().config.reserved != std::array<std::uint8_t, 3>{1, 2, 3})
@@ -205,7 +205,7 @@ outbounds {
         tls { server-name "proxy.example"; ca-file "/tmp/ca.pem"; verify #true; }
     }
 }
-routing { default-outbound "mq-ip"; }
+routing { final "mq-ip"; }
 )");
     if (!mq_ip || mq_ip->masque_outbounds.size() != 1 || !mq_ip->masque_outbounds.front().config.connect_ip ||
         mq_ip->masque_outbounds.front().config.mtu != 1360 || !mq_ip->masque_outbounds.front().config.local_v4 ||
@@ -230,7 +230,7 @@ inbounds {
     }
 }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )");
     if (!stls_w31 || !stls_w31->inbounds.front().shadowtls) return 11;
     auto const& s_in = *stls_w31->inbounds.front().shadowtls;
@@ -259,7 +259,7 @@ inbounds {{
     }}
 }}
 outbounds {{ outbound "direct" type="direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 )", bad_s);
         if (config::parse_kdl(doc)) return 13;
     }
@@ -285,7 +285,7 @@ outbounds {
         tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; alpn "h3"; ech-dns #true; ech-query-server-name "cloudflare-ech.com"; verify #true; }
     }
 }
-routing { default-outbound "tuic-out"; }
+routing { final "tuic-out"; }
 )");
     if (tuic_w31) {
         if (!tuic_w31->inbounds.front().tuic->zero_rtt_handshake ||
@@ -310,7 +310,7 @@ outbounds {
         tls { server-name "tuic.example"; ca-file "/tmp/ca.pem"; ech-query-server-name "ech.example.net"; ech-dns #true; verify #true; }
     }
 }
-routing { default-outbound "tuic-out"; }
+routing { final "tuic-out"; }
 )");
     if (ech_order) {
         if (ech_order->tuic_outbounds.front().config.ech.query_server_name != "ech.example.net" ||
@@ -337,7 +337,7 @@ outbounds {{
         tls {{ server-name "tuic.example"; ca-file "/tmp/ca.pem"; {}; verify #true; }}
     }}
 }}
-routing {{ default-outbound "tuic-out"; }}
+routing {{ final "tuic-out"; }}
 )", bad_ech);
         if (config::parse_kdl(doc)) return 16;
     }

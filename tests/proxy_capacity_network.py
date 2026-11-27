@@ -67,7 +67,7 @@ control socket="{root / 'control'}"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 {extra_inbound}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 {dns}"""
 
 

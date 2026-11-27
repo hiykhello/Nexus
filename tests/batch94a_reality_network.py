@@ -113,7 +113,7 @@ inbound "edge" type="vless" {{
   }}; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         return [binary, "run", "--config", file]
     file = root / "server.json"
@@ -147,7 +147,7 @@ outbound "edge" type="vless" {{
   tls {{ server-name "localhost"; key-exchange "{group}"; {shape}
          reality {{ public-key "{public.hex()}"; short-id "{SHORT}"; }}; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         return [binary, "run", "--config", file]
     file = root / "client.json"

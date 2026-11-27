@@ -89,7 +89,7 @@ inbound "tun" type="tun" {{
     inet6-address "2001:db8:2::1/128"
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         with process([*route, sys.executable, Path(__file__).resolve(), "--origin"]) as peer:
             assert line(peer) == b"ready\n"

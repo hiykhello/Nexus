@@ -264,7 +264,7 @@ schema-version 1
 role "client"
 inbounds { inbound "android-tun" type="tun" { mtu 1400; }; }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )kdl");
         require(cfg.has_value(), "parse Android-style TUN config");
         auto r_srv = relay::Server::create();
@@ -309,7 +309,7 @@ inbounds {{
     }}
 }}
 outbounds {{ outbound "direct" type="direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 )kdl", excludes);
         auto cfg = config::parse_kdl(kdl);
         require(cfg.has_value(), cfg ? "" : cfg.error());
@@ -332,7 +332,7 @@ inbounds {
     }
 }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )kdl");
         require(bridge_cfg.has_value() && bridge_cfg->inbounds[0].tun->extra.bridge_mode, "device-mode bridge parsed");
 
@@ -345,7 +345,7 @@ inbounds {
     }
 }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )kdl");
         require(skip_cfg.has_value() && skip_cfg->inbounds[0].tun->extra.device_fd_skip_ioctl,
             "device-fd skip-ioctl parsed");

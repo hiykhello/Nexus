@@ -286,7 +286,7 @@ proxy-providers {{
 }}
 inbounds {{ inbound "s" type="socks5" {{ listen "127.0.0.1:1080"; authentication "none"; }} }}
 outbounds {{ direct; selector "auto" {{ use "shared"; }}; }}
-routing {{ default "auto"; }}
+routing {{ final "auto"; }}
 )kdl", cert.string(), live_cache.string(), cert.string(), port, url_path, live_cache.string());
         };
         auto cfg_path = (tmp.path / "prov.kdl").string();
@@ -317,10 +317,10 @@ routing {{ default "auto"; }}
         std::string h1(64, 'a'), h2(64, 'b'), h1_upper(64, 'A');
         auto build_kdl = [](std::string_view r1_extra, std::string_view r2_url, std::string_view r2_extra, bool in_dns) {
             std::string dns_rs = in_dns
-                ? std::format("rule-set \"d1\" url=\"{}\" format=\"kdl\" http-client=\"c1\"{}\n    rules {{ - rule-set=\"d1\" server=\"sys\"; }}", r2_url, r2_extra)
+                ? std::format("rulesets {{ d1 url=\"{}\" format=\"kdl\" http-client=\"c1\"{}; }}\n    rules {{ - rule-set=\"d1\" server=\"sys\"; }}", r2_url, r2_extra)
                 : std::string{};
             std::string route_rs2 = !in_dns
-                ? std::format("rule-set \"r2\" url=\"{}\" format=\"kdl\" http-client=\"c1\"{}", r2_url, r2_extra)
+                ? std::format("        r2 url=\"{}\" format=\"kdl\" http-client=\"c1\"{}", r2_url, r2_extra)
                 : std::string{};
             std::string route_rule2 = !in_dns ? "- rule-set=\"r2\" to=\"direct\";" : "";
             return std::format(R"kdl(
@@ -335,10 +335,12 @@ dns {{
 }}
 http-clients {{ c1 {{ outbound "direct"; domain-resolver "sys"; ca-file "/tmp/ca.pem"; }} }}
 routing {{
-    rule-set "r1" url="https://rules.test/shared.kdl" format="kdl" http-client="c1"{}
-    {}
+    rulesets {{
+        r1 url="https://rules.test/shared.kdl" format="kdl" http-client="c1"{}
+{}
+    }}
     rules sniff-timeout-ms=300 unknown="skip" {{ - rule-set="r1" to="direct"; {} }}
-    default "direct"
+    final "direct"
 }}
 )kdl", dns_rs, r1_extra, route_rs2, route_rule2);
         };
@@ -424,9 +426,9 @@ state {{ cache-directory "{}"; ruleset-cache-max-bytes {}; }}
 inbounds {{ inbound "s" type="socks5" {{ listen "127.0.0.1:1080"; authentication "none"; }} }}
 outbounds {{ direct; }}
 routing {{
-    rule-set "geo" path="{}" format="srs"
+    rulesets {{ geo path="{}" format="srs"; }}
     rules sniff-timeout-ms=300 unknown="skip" {{ - rule-set="geo" to="direct"; }}
-    default "direct"
+    final "direct"
 }}
 )kdl", cache_dir.string(), budget, srs_file.string());
         };

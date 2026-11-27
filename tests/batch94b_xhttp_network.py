@@ -67,7 +67,7 @@ inbound "edge" type="vless" {{
   {transport}
 }}
 {direct}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
     else:
         security = f'tls {{ server-name "localhost"; ca-file "{root / "cert"}"; verify #true; }}'
@@ -83,7 +83,7 @@ outbound "edge" type="vless" {{
   {security}
   {transport}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 '''
     file = root / f"nexus-{role}.kdl"
     file.write_text(f'schema-version 1\nrole "{role}"\n' + config)

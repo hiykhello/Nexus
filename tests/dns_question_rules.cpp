@@ -25,7 +25,7 @@ role "client"
 dns {{ servers {{ server "a" type="udp" host="127.0.0.1"; server "b" type="local"; }}; {} {} }}
 inbounds {{ inbound "in" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }} }}
 outbounds {{ outbound "direct" type="direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 )",dns_extra,rules_block));
     }
     namespace dns=dns;
@@ -224,7 +224,7 @@ rule action="route" server="a";)");
     if (!all_inverted || ::policy::select_dns_action(all_inverted->dns->rules,"a.test",1,1).server!=0) return 45;
 
     auto sets=parse(R"(rule rule-set="q" invert=#true action="reject";)",
-        R"(rule-set "q" path="q.srs" format="srs";)");
+        R"(rulesets { q path="q.srs" format="srs"; };)");
     if (!sets || sets->dns->rule_files.size()!=1 || !sets->dns->rules[0].has_rule_set || sets->dns->rules[0].match_all) return 70;
     auto set_rule=sets->dns->rules[0];
     if (::policy::normalize_dns_rule(set_rule,2)) return 71;
@@ -242,9 +242,9 @@ rule action="route" server="a";)");
     if (::policy::bind_dns_rule_set(invalid_set,{{{"ip-cidr","192.0.2.0/24",{}}},2})) return 75;
     if (::policy::bind_dns_rule_set(invalid_set,{{{"query-type","1",{}}},1}) ||
         ::policy::bind_dns_rule_set(invalid_set,{{{"domain","a.test",{}}},99})) return 77;
-    if (parse(R"(rule rule-set="q" ip-cidr-match-source=#true server="a";)",R"(rule-set "q" path="q.kdl" format="kdl";)") ||
-        parse(R"(rule rule-set="missing" server="a";)",R"(rule-set "q" path="q.srs" format="srs";)") ||
-        parse(R"(rule action="reject";)",R"(rule-set "q" path="q.srs" format="srs";)") ) return 76;
+    if (parse(R"(rule rule-set="q" ip-cidr-match-source=#true server="a";)",R"(rulesets { q path="q.kdl" format="kdl"; };)") ||
+        parse(R"(rule rule-set="missing" server="a";)",R"(rulesets { q path="q.srs" format="srs"; };)") ||
+        parse(R"(rule action="reject";)",R"(rulesets { q path="q.srs" format="srs"; };)") ) return 76;
 
     dns::detail::AddressAnswers<true> combined;
     if (!combined.add(answer("canonical.test",32,60)) || !combined.add(answer("canonical.test",32,12))) return 6;

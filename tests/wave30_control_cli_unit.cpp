@@ -45,7 +45,7 @@ routing {
             port 25
         }
     }
-    default-outbound "direct"
+    final "direct"
 }
 )";
         auto cfg = config::parse_kdl(kKdl);
@@ -204,7 +204,7 @@ routing {
             "schema-version 1\nrole \"client\"\nworkers 1\n"
             "inbounds { inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\" } }\n"
             "outbounds { outbound \"direct\" type=\"direct\" }\n"
-            "routing { default-outbound \"direct\" }\n";
+            "routing { final \"direct\" }\n";
         auto good = config::parse_kdl(std::string(kBase) +
             "control http-listen=\"127.0.0.1:19090\" {\n"
             "  cors-allow-origin \"https://ui.example.com\"\n"

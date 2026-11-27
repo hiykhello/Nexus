@@ -43,7 +43,7 @@ http-clients {{
     {header}
   }}
 }}
-routing {{ default-outbound "physical"; }}
+routing {{ final "physical"; }}
 ''')
 
         def fetch(port, path, *options):

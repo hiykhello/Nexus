@@ -40,7 +40,7 @@ role "server"
 inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={listener.getsockname()[1]}; authentication {{ uuid-file "{root/'uuid'}"; }}; tls {{ server-name "cover.example"; ca-file "{root/'cert'}"; verify #true; }} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         gate=threading.Event(); barrier=threading.Event(); finished=threading.Event(); errors=[]
         def serve():

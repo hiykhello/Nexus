@@ -132,7 +132,7 @@ with socket.socket(int(sys.argv[1]),socket.SOCK_DGRAM) as peer:
         alias_rule=""
         if fakeip:
             (root/"alias.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="domain" value="origin.test"\n')
-            alias_rule='rule-set "alias" path="alias.kdl" format="kdl"'
+            alias_rule='        alias path="alias.kdl" format="kdl"'
             if tunneled:
                 route=route.replace('rule action="route" outbound="edge"',
                     'rule action="route" rule-set="alias" domain-source="fakeip" outbound="edge"\n                rule action="reject"')
@@ -144,7 +144,7 @@ with socket.socket(int(sys.argv[1]),socket.SOCK_DGRAM) as peer:
             predicate=ingress if not fakeip else (
                 'rule type="and" { '+ingress+'; rule type="domain" value="origin.test"; }')
             (root/"ingress.kdl").write_text('schema-version 2\nkind "predicate"\n'+predicate+'\n')
-            ingress_rule='rule-set "ingress" path="ingress.kdl" format="kdl"'
+            ingress_rule='        ingress path="ingress.kdl" format="kdl"'
             if fakeip:
                 alias_rule=""
             if tunneled:
@@ -156,7 +156,7 @@ with socket.socket(int(sys.argv[1]),socket.SOCK_DGRAM) as peer:
                     route_items=[item.replace('value="alias" outbound="direct"', 'value="ingress" outbound="direct"') for item in route_items]
                 else:
                     route_items.append('- kind="rule-set" value="ingress" outbound="direct"')
-                ingress_rule+='\n    rule-set "all" path="all.kdl" format="kdl"'
+                ingress_rule+='\n        all path="all.kdl" format="kdl"'
                 (root/"all.kdl").write_text(
                     'schema-version 2\nkind "predicate"\nrule type="network" value="udp"\n')
                 route_items.append('- kind="rule-set" value="all" outbound="deny"')
@@ -170,12 +170,14 @@ inbounds {{ tproxy "local" {{ udp #true; listen host="{listener_address}" port={
 outbounds {{ direct "direct" {{ routing-mark 20804; }}; block "deny"; {edge} }}
 {dns_config}
 routing {{
-    rule-set "uid" path="uid.kdl" format="kdl"
-    rule-set "process" path="process.kdl" format="kdl"
-    {alias_rule}
-    {ingress_rule}
+    rulesets {{
+        uid path="uid.kdl" format="kdl"
+        process path="process.kdl" format="kdl"
+{alias_rule}
+{ingress_rule}
+    }}
     {route}
-    default-outbound "{outbound}"
+    final "{outbound}"
 }}
 ''')
         rule=("-i","nxclienthost","-p","udp","-d",original_address,"--dport",str(target_port),"-j","TPROXY",

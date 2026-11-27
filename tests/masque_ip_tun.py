@@ -182,7 +182,7 @@ outbound "edge" type="masque" {{
     authentication {{ bearer-file "{token}"; }}
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
             original = config.read_text()
             if direct_binding:
@@ -304,7 +304,7 @@ outbound "edge" type="masque" {{
   tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
 {bootstrap}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
         protected = ("127.0.0.1",) if named_chain else ("127.0.0.1", "192.0.2.3")
         for protected_host in protected:

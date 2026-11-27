@@ -127,10 +127,13 @@ namespace cli {
                     std::ranges::any_of(n.properties, [&](auto const& p) { return p.first == "type" && val_str(p.second) == "tun"; }));
             };
             auto in_name = [&](glaze::KdlNode const& n) -> std::string_view {
-                return (!n.tag && n.arguments.size() == 1) ? val_str(n.arguments[0]) : std::string_view{};
+                if (!n.tag && n.arguments.size() == 1) return val_str(n.arguments[0]);
+                if (!n.tag && n.arguments.empty() && n.name != "inbound") return n.name;
+                return {};
             };
             auto canonical_in = [](glaze::KdlNode n) -> glaze::KdlNode {
                 if (n.name != "inbound") {
+                    if (n.arguments.empty()) n.arguments.push_back(glaze::KdlValue{n.name, {}});
                     if (!std::ranges::any_of(n.properties, [](auto const& p) { return p.first == "type"; }))
                         n.properties.push_back({"type", glaze::KdlValue{n.name, {}}});
                     n.name = "inbound";
@@ -252,9 +255,12 @@ namespace cli {
                 auto doc=glaze::read_kdl<glaze::KdlDocument>(*text);
                 if (!doc) return std::unexpected(fname+": invalid KDL syntax");
                 auto check_named=[&](std::map<std::string,std::string>& seen,std::string_view kind,glaze::KdlNode const& n) -> std::expected<void,std::string> {
-                    if (n.arguments.size()==1) if (auto* s=std::get_if<std::string>(&n.arguments[0].data))
-                        if (auto [it,ok]=seen.emplace(*s,fname); !ok)
-                            return std::unexpected(std::format("duplicate {} \"{}\" in {} (already defined in {})",kind,*s,fname,it->second));
+                    std::string_view tag;
+                    if (n.arguments.size()==1) { if (auto* s=std::get_if<std::string>(&n.arguments[0].data)) tag=*s; }
+                    else if (n.arguments.empty() && ((kind=="inbound" && n.name!="inbound") || (kind=="outbound" && (n.name=="direct" || n.name=="block")))) tag=n.name;
+                    if (!tag.empty())
+                        if (auto [it,ok]=seen.emplace(std::string(tag),fname); !ok)
+                            return std::unexpected(std::format("duplicate {} \"{}\" in {} (already defined in {})",kind,tag,fname,it->second));
                     return {};
                 };
                 for (auto const& n : *doc) {
@@ -265,9 +271,12 @@ namespace cli {
                     } else if (n.name=="inbound" || n.name=="outbound") {
                         if (auto ok=check_named(n.name=="inbound" ? inbounds : outbounds,n.name,n); !ok) return std::unexpected(std::move(ok.error()));
                     } else if (n.name=="inbounds" || n.name=="outbounds") {
-                        for (auto const& c : n.children)
+                        for (auto const& c : n.children) {
+                            if (n.name=="outbounds" && (c.name=="auto-detect-interface" || c.name=="interface" ||
+                                c.name=="mark" || c.name=="network-type" || c.name=="network-strategy")) continue;
                             if (auto ok=check_named(n.name=="inbounds" ? inbounds : outbounds,n.name=="inbounds" ? "inbound" : "outbound",c); !ok)
                                 return std::unexpected(std::move(ok.error()));
+                        }
                     }
                 }
                 merged.append(*text);

@@ -68,7 +68,7 @@ outbound "edge" type="{protocol}" {{
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; {ech}; }}
     connect-timeout-ms 1800
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 {nameserver}
 ''')
     return cfg, front

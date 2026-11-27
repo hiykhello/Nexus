@@ -171,7 +171,7 @@ inbounds {{
  socks5 "tcp" {{ listen host="127.0.0.1" port={socks_port}; authentication "none"; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
  {dns_config}
 }}

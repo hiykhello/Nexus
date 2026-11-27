@@ -67,11 +67,11 @@ workers 2
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
  shadowsocks "ss" {{ listen host="127.0.0.1" port={ss_port}; method "2022-blake3-aes-128-gcm"; key-file "{key_path}"; }} }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{ listen host="127.0.0.1" port={dns_port};
  server "first" type="udp" host="127.0.0.1" port={first.port};
  server "fallback" type="udp" host="127.0.0.1" port={fallback.port};
- rule-set "response" path="rules.srs" format="srs";
+ rulesets {{ "response" path="rules.srs" format="srs"; }}
  rule action="evaluate" server="first";
  rule rule-set="response" match-response=#true action="respond";
  rule action="route" server="fallback";

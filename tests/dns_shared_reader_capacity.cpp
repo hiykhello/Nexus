@@ -12,7 +12,7 @@ namespace {
         std::string text="schema-version 1\nrole \"server\"\nworkers 16\ninbounds {\n";
         for(unsigned i=0;i<16;++i)
             text+=std::format("inbound \"ss{}\" type=\"shadowsocks\" {{ listen host=\"127.0.0.1\" port={}; method \"2022-blake3-aes-128-gcm\"; key-file \"/unused-reader-capacity.key\"; }}\n",i,20000+i);
-        text+="}\noutbounds { outbound \"direct\" type=\"direct\"; }\nrouting { default-outbound \"direct\"; tcp-program sniff-timeout-ms=500 unknown=\"skip\" udp=#true { rule action=\"route\" outbound=\"direct\"; }; }\n";
+        text+="}\noutbounds { outbound \"direct\" type=\"direct\"; }\nrouting { final \"direct\"; tcp-program sniff-timeout-ms=500 unknown=\"skip\" udp=#true { rule action=\"route\" outbound=\"direct\"; }; }\n";
         auto parsed=config::parse_kdl(text);
         if(!parsed)throw std::runtime_error(parsed.error());
         return std::move(*parsed);

@@ -25,7 +25,7 @@ role "server"
 workers {workers}
 inbounds {{ shadowsocks "ss" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }} }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         proxy=subprocess.Popen([nexus,"run","--config",config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         clients=[]; upstreams=[]

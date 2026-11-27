@@ -76,7 +76,7 @@ dns {{
     final "secure"
     strategy "ipv4_only"
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
         config.write_text(source)
 
@@ -161,7 +161,7 @@ dns {{
     final "resolver-0"
     disable-cache #true
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         origins = set()
         with nexus_process(binary, config):

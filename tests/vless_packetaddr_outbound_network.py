@@ -41,7 +41,7 @@ outbound "edge" type="vless" {{
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
 {lower_outbound}
-routing {{ {rules}default-outbound "edge"; }}
+routing {{ {rules}final "edge"; }}
 ''')
     with nexus_process(cli, cfg), udp_client(front) as (client, relay), contextlib.ExitStack() as stack:
         endpoints = []

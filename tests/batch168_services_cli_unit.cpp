@@ -48,7 +48,7 @@ services {{
     derp-server max-peers=128
 }}
 routing {{
-    default-outbound "direct"
+    final "direct"
 }}
 )kdl", tmp_dir.string());
 
@@ -95,7 +95,7 @@ outbounds { outbound "direct" type="direct"; }
 services {
     openvpn
 }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )kdl";
         require(!config::parse_kdl(bad_kdl).has_value(), "excluded service openvpn rejected");
     }

@@ -238,7 +238,7 @@ def write_nexus_cfg(path: pathlib.Path, port: int) -> None:
     path.write_text(
         f'schema-version 1\nrole "client"\nworkers 1\n'
         f'inbound "s5" type="socks5" {{\n    listen host="127.0.0.1" port={port}\n    authentication "none"\n}}\n'
-        f'outbound "direct" type="direct"\nrouting {{\n    default-outbound "direct"\n}}\n',
+        f'outbound "direct" type="direct"\nrouting {{\n    final "direct"\n}}\n',
         encoding="utf-8",
     )
 

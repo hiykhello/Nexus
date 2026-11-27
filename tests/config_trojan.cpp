@@ -12,7 +12,7 @@ outbound "edge" type="trojan" {{ {} }}
 {}
 }}
 {}
-routing {{ default-outbound "{}"; }}
+routing {{ final "{}"; }}
 )",inbound,outbound,extra_outbounds,extra_top,route));
     }
     constexpr std::string_view inbound=R"(trojan "edge-in" {

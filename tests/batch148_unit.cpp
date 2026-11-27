@@ -186,7 +186,7 @@ outbounds {
         }
     }
 }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )");
         expect(ok_tun.has_value(), ok_tun ? std::string_view("ok") : std::string_view(ok_tun.error()));
         if (ok_tun) {
@@ -210,7 +210,7 @@ inbounds {
     }
 }
 outbounds { outbound "direct" type="direct" { routing-mark 100; }; }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )");
         expect(ok_mptcp.has_value(), ok_mptcp ? std::string_view("ok") : std::string_view(ok_mptcp.error()));
         if (ok_mptcp) {
@@ -228,7 +228,7 @@ inbounds {
     }
 }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )");
         expect(!bad_strict.has_value(), "148B: strict-route + exclude-package must be rejected");
     }
@@ -274,7 +274,7 @@ inbounds {
 }
 outbounds { outbound "direct" type="direct"; }
 routing {
-    default-outbound "direct"
+    final "direct"
     tcp-program sniff-timeout-ms=1000 unknown="skip" {
         rule action="route-options" tls-record-fragment=#true tls-fragment-min=8 tls-fragment-max=24 tcp-prefix="47455420"
         rule action="reject" method="drop"
@@ -401,7 +401,7 @@ outbounds {
         selected "vl"
     }
 }
-routing { default-outbound "pool" }
+routing { final "pool" }
 )");
         expect(cert_cfg.has_value(), cert_cfg ? std::string_view("ok") : std::string_view(cert_cfg.error()));
         if (cert_cfg) {

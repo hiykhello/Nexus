@@ -51,7 +51,7 @@ inbound "edge" type="masque" {{
     }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         client = root / "client.kdl"
         client.write_text(f'''schema-version 1
@@ -71,7 +71,7 @@ outbound "edge" type="masque" {{
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
     idle-timeout-ms 3000
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         echo = Path(__file__).with_name("tailscale_endpoint_network.py")
         launch = ["stdbuf", "-oL", binary, "run", "--config", server]

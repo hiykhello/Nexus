@@ -32,7 +32,7 @@ outbound "edge" type="hysteria2" {{ server host="{host}" port={port};
  authentication {{ password-file "{password}"; }}
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         server = subprocess.Popen([str(peer), str(family), str(port), str(root / 'cert'), str(root / 'key')],
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

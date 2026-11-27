@@ -61,7 +61,7 @@ inbound "edge" type="trojan" {{
     tls {{ certificate-file "{cert}"; private-key-file "{key}"; }}
 }}
 {direct}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     with running([binary, "run", "--config", str(config)], port, root / "trojan.log"):
         yield f'''trojan "edge" {{
@@ -100,7 +100,7 @@ outbounds {{
 }}
 routing {{
     {program}
-    default-outbound "{selected}"
+    final "{selected}"
 }}
 ''')
         command = [binary, "run", "--traffic-stats", "--config", str(config)]

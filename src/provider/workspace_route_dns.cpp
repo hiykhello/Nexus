@@ -179,13 +179,13 @@ namespace provider::ws_detail {
             if (fmt.empty()) fmt = "nxmm";
             if (lower_ascii(a.source_type) == "remote") {
                 has_remote = true;
-                os << "  rule-set " << kdl_quote(a.tag) << " type=\"remote\" url=" << kdl_quote(a.url) << " format=" << kdl_quote(fmt);
+                os << "    " << kdl_quote(a.tag) << " type=\"remote\" url=" << kdl_quote(a.url) << " format=" << kdl_quote(fmt);
                 if (is_dns) os << " http-client=\"ruleset-http\"";
                 if (!a.sha256.empty()) os << " sha256=" << kdl_quote(a.sha256);
                 if (a.update_interval_ms >= 1000 && a.update_interval_ms <= 86400000) os << " update-interval-ms=" << a.update_interval_ms;
                 os << '\n';
             } else {
-                os << "  rule-set " << kdl_quote(a.tag) << " type=\"local\" path=" << kdl_quote(a.path) << " format=" << kdl_quote(fmt) << '\n';
+                os << "    " << kdl_quote(a.tag) << " type=\"local\" path=" << kdl_quote(a.path) << " format=" << kdl_quote(fmt) << '\n';
             }
         }
 
@@ -195,14 +195,15 @@ namespace provider::ws_detail {
                 if (!n.arguments.empty()) if (auto* s = std::get_if<std::string>(&n.arguments[0].data)) return *s;
                 return {};
             };
-            std::string first_srv;
+            std::string def_srv, final_srv, first_srv;
             for (auto const& n : nodes) {
-                if (n.name == "final") if (auto s = arg0(n); !s.empty()) return s;
-                if (n.name == "server" && first_srv.empty()) first_srv = arg0(n);
-                if (n.name == "servers" && first_srv.empty())
-                    for (auto const& ch : n.children) if (ch.name == "server") { first_srv = arg0(ch); if (!first_srv.empty()) break; }
+                if (n.name == "default" && def_srv.empty()) def_srv = arg0(n);
+                else if (n.name == "final" && final_srv.empty()) final_srv = arg0(n);
+                else if (n.name == "server" && first_srv.empty()) first_srv = arg0(n);
+                else if (n.name == "servers" && first_srv.empty())
+                    for (auto const& ch : n.children) { first_srv = arg0(ch); if (!first_srv.empty()) break; }
             }
-            return first_srv;
+            return !def_srv.empty() ? def_srv : (!final_srv.empty() ? final_srv : first_srv);
         }
 
         auto emit_or_group(std::ostringstream& os, std::vector<std::string> const& lines) -> void {
@@ -387,8 +388,12 @@ namespace provider::ws_detail {
             if (dns_listen_ep) dns_out << "  listen host=" << kdl_quote(dns_listen_ep->first) << " port=" << dns_listen_ep->second << '\n';
             dns_out << "  servers {\n" << dns_servers_os.str() << "  }\n";
             if (!fakeip_line.empty()) dns_out << fakeip_line;
-            for (auto const& rs_tag : ref_dns_sets)
-                if (auto it = ctx.asset_by_tag.find(rs_tag); it != ctx.asset_by_tag.end()) emit_ruleset_decl(dns_out, *it->second, true, dns_has_remote);
+            if (!ref_dns_sets.empty()) {
+                dns_out << "  rulesets {\n";
+                for (auto const& rs_tag : ref_dns_sets)
+                    if (auto it = ctx.asset_by_tag.find(rs_tag); it != ctx.asset_by_tag.end()) emit_ruleset_decl(dns_out, *it->second, true, dns_has_remote);
+                dns_out << "  }\n";
+            }
             if (dns_rule_count > 0) dns_out << "  rules {\n" << dns_rules_os.str() << "  }\n";
             dns_out << "  final " << kdl_quote(resolved_default == "direct" ? ctx.direct_dns_primary : ctx.remote_dns_primary) << '\n';
             dns_out << "  strategy " << kdl_quote(normalize_dns_strategy(sd.strategy)) << '\n';
@@ -469,16 +474,21 @@ namespace provider::ws_detail {
         if (def_block) rules_os << "    - action=\"reject\" {\n      or {\n        network \"tcp\"\n        network \"udp\"\n      }\n    }\n";
 
         routing_out << "routing {\n";
-        if (rp.auto_detect_interface) routing_out << "  auto-detect-interface #true\n";
         if (rp.find_process) routing_out << "  find-process #true\n";
-        for (auto const& rs_tag : ref_route_sets)
-            if (auto it = ctx.asset_by_tag.find(rs_tag); it != ctx.asset_by_tag.end()) emit_ruleset_decl(routing_out, *it->second, false, route_has_remote);
-        if (route_has_remote) routing_out << "  default-http-client \"ruleset-http\"\n";
-        routing_out << "  rules sniff-timeout-ms=300 unknown=\"skip\" udp=#true {\n" << rules_os.str() << "  }\n  default " << kdl_quote(resolved_default) << "\n}\n";
+        if (!ref_route_sets.empty()) {
+            routing_out << "  rulesets {\n";
+            for (auto const& rs_tag : ref_route_sets)
+                if (auto it = ctx.asset_by_tag.find(rs_tag); it != ctx.asset_by_tag.end()) emit_ruleset_decl(routing_out, *it->second, false, route_has_remote);
+            routing_out << "  }\n";
+        }
+        routing_out << "  rules sniff-timeout-ms=300 unknown=\"skip\" udp=#true {\n" << rules_os.str() << "  }\n  final " << kdl_quote(resolved_default) << "\n}\n";
 
-        if ((route_has_remote || dns_has_remote) && ctx.dns_emitted && !ctx.resolved_ca_file.empty() && !ctx.direct_dns_primary.empty())
-            http_clients_out << "http-clients {\n  ruleset-http {\n    outbound \"direct\"\n    domain-resolver "
+        if ((route_has_remote || dns_has_remote) && ctx.dns_emitted && !ctx.resolved_ca_file.empty() && !ctx.direct_dns_primary.empty()) {
+            http_clients_out << "http-clients {\n";
+            if (route_has_remote) http_clients_out << "  default \"ruleset-http\"\n";
+            http_clients_out << "  ruleset-http {\n    outbound \"direct\"\n    domain-resolver "
                              << kdl_quote(ctx.direct_dns_primary) << "\n    ca-file " << kdl_quote(ctx.resolved_ca_file) << "\n  }\n}\n";
+        }
         return {};
     }
 }

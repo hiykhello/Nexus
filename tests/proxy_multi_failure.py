@@ -30,7 +30,7 @@ inbounds {{
   socks5 "second" {{ listen host="127.0.0.1" port={ports[1]}; authentication "none"; }}
 }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         env = os.environ.copy()
         env.update(LD_PRELOAD=str(fault), NEXUS_START_FAULT="accept-target", NEXUS_FAULT_PORT=str(ports[1]))

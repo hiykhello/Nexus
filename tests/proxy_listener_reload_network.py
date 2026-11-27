@@ -27,7 +27,7 @@ def config(path, workers, bindings):
         auth = 'authentication "none"' if password is None else (
             f'authentication "password" username="alice" password-file="{password}"')
         lines.append(f'inbound "{name}" type="socks5" {{ listen host="127.0.0.1" port={port}; {auth}; }}')
-    lines.extend(['outbound "direct" type="direct"', 'routing { default-outbound "direct"; }'])
+    lines.extend(['outbound "direct" type="direct"', 'routing { final "direct"; }'])
     candidate = path.with_suffix(".candidate")
     candidate.write_text("\n".join(lines) + "\n")
     candidate.replace(path)

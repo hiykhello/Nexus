@@ -417,7 +417,7 @@ namespace provider {
         std::string def_out = valid_tags.contains(doc.default_outbound) ? doc.default_outbound :
             (group_names.contains(def_group) ? def_group : (emitted.empty() ? "direct" : emitted.front().first));
         if (def_out == "block") def_out = group_names.contains(def_group) ? def_group : "direct";
-        out << "routing {\n  default " << kdl_escape(def_out) << '\n';
+        out << "routing {\n  final " << kdl_escape(def_out) << '\n';
         bool has_rules = std::ranges::any_of(doc.rules, [&](auto const& r) {
             return r.kind != "rule-set" && valid_tags.contains(r.target);
         });

@@ -16,13 +16,15 @@
 
 ## 配置模型草案
 
-| 节点 | 拟定含义 |
+| 节点 | 规范含义 |
 | --- | --- |
-| `schema-version` | Nexus 配置结构版本，与 KDL 语言版本分别管理 |
-| `role` | 部署角色，示例使用 `client` 或 `server` |
-| `inbound` | 具名入站，描述监听及协议处理 |
-| `outbound` | 具名出站，描述连接目标的方式 |
-| `routing` | 路由选择及默认出口 |
+| `schema-version` | Nexus 配置结构版本，与 KDL 语言版本分别管理（当前为 `1`） |
+| `role` | 部署角色，取 `"client"` 或 `"server"` |
+| `http-clients` | 具名 HTTP 客户端集合：`default "<名称>"` 与 `<名称> { ... }`（无 `client` 包装节点） |
+| `dns` | DNS 解析配置：`servers { ... }`、`default "<拨号解析器>"`、`final "<兜底服务器>"`、`rulesets { <名称> ... }` 与 `rules { - ... }` |
+| `inbounds` | 入站集合：`<类型> ["<名称>"] { ... }`（单实例入站如 `tun { ... }` 省略名称时默认以类型名为 tag） |
+| `outbounds` | 出站与拨号默认项：`auto-detect-interface`、`interface`、`mark`、`network-type`、`network-strategy`，以及 `<协议> "<名称>" { ... }`、`direct`、`block` |
+| `routing` | 纯路由配置：`find-process`、`rulesets { <名称> ... }`、`rules { - ... }` 与 `final "<出站>"`（不承载拨号/HTTP/DNS 默认项） |
 
 早期示例使用 `tcp-forward` 和 `direct` 表达最小静态转发关系；[配置规范草案](spec.md)进一步展示 Mixed、TUN、VLESS/TLS、DNS、规则及控制面的拟定字段。这些名称均不表示已实现或构成最终配置契约。
 

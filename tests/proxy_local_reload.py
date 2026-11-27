@@ -38,7 +38,7 @@ workers 2
 dns {{ server "local" type="local"; strategy "ipv4_only"; }}
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     env=os.environ.copy(); env['LD_PRELOAD']=str(path/'guard.so')
     proc=subprocess.Popen([require_nexus(),'run','--config',path/'config'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)

@@ -18,7 +18,7 @@ workers 2
 dns {{ server "bootstrap" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; strategy "ipv4_only"; disable-cache #true; }}
 inbound "edge" type="vless" {{ listen host="127.0.0.1" port={front}; authentication {{ user "test" uuid-file="{path/'uuid'}"; }}; tls {{ reality {{ private-key-file "{path/'secret'}"; server-name "localhost"; short-id ""; fallback host="cover.test" port={cover.getsockname()[1]}; fallback-resolver "bootstrap"; }}; }}; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     server=subprocess.Popen([require_nexus(),'run','--config',path/'server.kdl'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     def connect():

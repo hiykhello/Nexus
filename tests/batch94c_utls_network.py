@@ -47,7 +47,7 @@ outbound "node" type="trojan" {{
   authentication {{ password-file "{root / "password"}"; }}
   tls {{ server-name "{name}"; ca-file "{root / ca}"; verify #true; fingerprint "{fingerprint}"; }}
 }}
-routing {{ default-outbound "node"; }}
+routing {{ final "node"; }}
 ''')
     return [binary, "run", "--config", config]
 
@@ -151,7 +151,7 @@ inbound "in{index}" type="socks5" {{
                           'routing {\n tcp-program sniff-timeout-ms=1000 unknown="skip" {\n' + "".join(
                               f'  rule action="route" outbound="node{i}" {{ inbound "in{i}"; }}\n'
                               for i in range(len(cases)))
-                          + ' }\n default-outbound "node0";\n}\n')
+                          + ' }\n final "node0";\n}\n')
         pool = stack.enter_context(ThreadPoolExecutor(max_workers=1))
         stack.enter_context(running([binary, "run", "--config", config], fronts[0], root / "psk.log"))
         for i, label in enumerate(("original", "alternate SNI", "different trust anchors", "different endpoint")):
@@ -201,7 +201,7 @@ http-clients {{
     timeout-ms 3000
   }}
 }}
-routing {{ default-outbound "physical"; }}
+routing {{ final "physical"; }}
 ''')
         with subprocess.Popen([fixture, root / "origin.crt", root / "origin.key"], stdout=subprocess.PIPE,
                               stderr=subprocess.PIPE, bufsize=0) as peer:

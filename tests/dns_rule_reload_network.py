@@ -58,13 +58,13 @@ dns {{
   disable-cache #true
   strategy "ipv4_only"
   final "business"
-  rule-set "dns" path="dns.kdl" format="kdl"
+  rulesets {{ "dns" path="dns.kdl" format="kdl"; }}
   rule rule-set="dns" action="reject"
 }}
 routing {{
-  rule-set "traffic" path="route.kdl" format="kdl"
+  rulesets {{ "traffic" path="route.kdl" format="kdl"; }}
   rules {{ - kind="rule-set" value="traffic" outbound="drop"; }}
-  default-outbound "direct"
+  final "direct"
 }}
 """)
     with nexus_process(binary,str(cfg)) as process, contextlib.ExitStack() as active:

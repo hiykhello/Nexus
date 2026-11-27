@@ -47,8 +47,10 @@ dns {{
   final "peer"
 }}
 routing {{
-  rule-set "slow" path="slow.kdl" format="kdl"
-  rule-set "dns" path="dns.kdl" format="kdl"
+  rulesets {{
+      "slow" path="slow.kdl" format="kdl"
+      "dns" path="dns.kdl" format="kdl"
+  }}
   tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{
     rule action="route-options" rule-set="slow" connect-timeout-ms=220
     rule action="route-options" rule-set="slow" connect-timeout-ms=3000
@@ -57,7 +59,7 @@ routing {{
     rule action="resolve"
     rule action="route" outbound="direct"
   }}
-  default-outbound "direct"
+  final "direct"
 }}
 ''')
         with nexus_process(binary, config):

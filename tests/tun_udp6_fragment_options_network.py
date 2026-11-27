@@ -111,7 +111,7 @@ inbound "tun" type="tun" {{
     mtu 1400
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         echo = Path(__file__).resolve()
         with process([*route, sys.executable, echo, "--echo"]) as origin:

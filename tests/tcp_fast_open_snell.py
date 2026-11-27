@@ -29,7 +29,7 @@ inbound "in" type="mixed" {{ listen host="127.0.0.1" port={front}; authenticatio
 {direct}
 {lower}
 outbound "edge" type="snell" {{ server host="snell.test" port={snell_port}; version 4; psk-file "{psk}"; bootstrap-resolver "boot"; {extra} {obfs} {reuse} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
          with socket.socket() as origin:
           origin.bind(('127.0.0.1',0));origin.listen();origin.settimeout(8);out=[]

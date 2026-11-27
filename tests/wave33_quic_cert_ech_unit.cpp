@@ -283,7 +283,7 @@ inbounds {
     inbound "t-acme" type="tuic" { listen host="127.0.0.1" port=8445; authentication { user "u" uuid-file="/tmp/u" password-file="/tmp/p" }; tls { certificate-provider "acme"; ech-key-file "/tmp/ech.key" } }
     inbound "t-reload" type="tuic" { listen host="127.0.0.1" port=8446; authentication { user "u" uuid-file="/tmp/u" password-file="/tmp/p" }; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; cert-hot-reload #true } }
 }
-outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl");
+outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl");
         if (!parsed) std::cerr << "hy2/tuic KDL err: " << parsed.error() << '\n';
         require(parsed.has_value() && parsed->inbounds.size() == 4, "parse KDL with Hy2/TUIC acme/reload/ech");
         require(parsed->inbounds[0].hysteria2->certificate_provider == "acme" && parsed->inbounds[0].hysteria2->ech_key_file == "/tmp/ech.key", "hy2 acme+ech");
@@ -293,21 +293,21 @@ outbounds { outbound "direct" type="direct" }; routing { default-outbound "direc
         auto m_acme = config::parse_kdl(R"kdl(schema-version 1; role "server"
 services { acme directory-url="https://acme.example/dir" email="a@b.c" state-dir="/tmp/acme" { domain "m.example" } }
 inbounds { inbound "m-acme" type="masque" { listen host="127.0.0.1" port=8447; authority "m.example"; authentication { bearer-file "/tmp/b" }; allow cidr="192.0.2.0/24" first-port=1 last-port=65535; tls { certificate-provider "acme"; ech-key-file "/tmp/ech.key" } } }
-outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl");
+outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl");
         if (!m_acme) std::cerr << "masque acme err: " << m_acme.error() << '\n';
         require(m_acme.has_value() && m_acme->inbounds[0].masque->certificate_provider == "acme" && m_acme->inbounds[0].masque->ech_key_file == "/tmp/ech.key", "masque acme+ech");
 
         auto m_reload = config::parse_kdl(R"kdl(schema-version 1; role "server"
 inbounds { inbound "m-reload" type="masque" { listen host="127.0.0.1" port=8448; authority "m2.example"; authentication { bearer-file "/tmp/b" }; allow cidr="192.0.2.0/24" first-port=1 last-port=65535; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; cert-hot-reload #true } } }
-outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl");
+outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl");
         if (!m_reload) std::cerr << "masque reload err: " << m_reload.error() << '\n';
         require(m_reload.has_value() && m_reload->inbounds[0].masque->cert_hot_reload, "masque reload");
 
         constexpr std::array<std::string_view, 4> invalid_kdl{{
-            R"kdl(schema-version 1; role "server"; inbounds { inbound "h" type="hysteria2" { listen host="127.0.0.1" port=8443; authentication { user "u" password-file="/tmp/p" }; tls { certificate-provider "acme" } } }; outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
-            R"kdl(schema-version 1; role "server"; inbounds { inbound "t" type="tuic" { listen host="127.0.0.1" port=8444; authentication { user "u" uuid-file="/tmp/u" password-file="/tmp/p" }; tls { certificate-provider "acme" } } }; outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
-            R"kdl(schema-version 1; role "server"; inbounds { inbound "m" type="masque" { listen host="127.0.0.1" port=8445; authority "m.test"; authentication { bearer-file "/tmp/b" }; allow cidr="192.0.2.0/24" first-port=1 last-port=65535; tls { certificate-provider "acme" } } }; outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
-            R"kdl(schema-version 1; role "server"; inbounds { inbound "t" type="tuic" { listen host="127.0.0.1" port=8444; authentication { user "u" uuid-file="/tmp/u" password-file="/tmp/p" }; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; alpn "h3" } } }; outbounds { outbound "direct" type="direct" }; routing { default-outbound "direct" })kdl",
+            R"kdl(schema-version 1; role "server"; inbounds { inbound "h" type="hysteria2" { listen host="127.0.0.1" port=8443; authentication { user "u" password-file="/tmp/p" }; tls { certificate-provider "acme" } } }; outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
+            R"kdl(schema-version 1; role "server"; inbounds { inbound "t" type="tuic" { listen host="127.0.0.1" port=8444; authentication { user "u" uuid-file="/tmp/u" password-file="/tmp/p" }; tls { certificate-provider "acme" } } }; outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
+            R"kdl(schema-version 1; role "server"; inbounds { inbound "m" type="masque" { listen host="127.0.0.1" port=8445; authority "m.test"; authentication { bearer-file "/tmp/b" }; allow cidr="192.0.2.0/24" first-port=1 last-port=65535; tls { certificate-provider "acme" } } }; outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
+            R"kdl(schema-version 1; role "server"; inbounds { inbound "t" type="tuic" { listen host="127.0.0.1" port=8444; authentication { user "u" uuid-file="/tmp/u" password-file="/tmp/p" }; tls { certificate-file "/tmp/c"; private-key-file "/tmp/k"; alpn "h3" } } }; outbounds { outbound "direct" type="direct" }; routing { final "direct" })kdl",
         }};
         for (auto doc : invalid_kdl) require(!config::parse_kdl(doc).has_value(), "reject invalid QUIC TLS KDL");
     }

@@ -37,7 +37,7 @@ import org.nexus.android.ui.theme.NexusTheme
 internal const val PREVIEW_SAMPLE_CUSTOM_CONFIG = """schema-version 1
 role "client"
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }"""
+routing { final "direct"; }"""
 
 internal val PREVIEW_SAMPLE_GROUPS = listOf(
     OutboundGroupSnapshot(

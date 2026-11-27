@@ -101,7 +101,7 @@ outbound "edge" type="hysteria2" {{ server host="{host}" port={edge_port}; detou
  {quic}
 }}
 {lower(kind, root, ports[kind])}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
                         with Echo() as echo, nexus_process(str(binary), str(path)):
                             half_close(front)

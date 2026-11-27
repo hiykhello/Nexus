@@ -58,7 +58,7 @@ inbounds {{
  {ss}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
  server "first" type="udp" host="127.0.0.1" port={dns.port}
  rule domain="protected.test" auth-user="alice" invert=#true action="reject"

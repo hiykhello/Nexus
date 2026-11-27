@@ -138,7 +138,7 @@ outbound "edge" type="vless" {{
  authentication {{ uuid-file "{path / 'uuid'}"; }}
  tls {{ server-name "cover.example"; {'key-exchange "x25519-mlkem768-only";' if args.hybrid_only else 'key-exchange "x25519-mlkem768";' if args.hybrid else ''} reality {{ public-key "{public.hex()}"; short-id "0123456789abcdef"; }}; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             if args.xray_client:
                 client_config = {"log": {"loglevel": "error"},

@@ -56,7 +56,7 @@ workers {workers}
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }} }}
 outbounds {{ direct "direct"; }}
 {dns_config}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         process = subprocess.Popen([binary, 'run', '--config', config], stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, env={**os.environ, 'LD_PRELOAD': str(shim)})

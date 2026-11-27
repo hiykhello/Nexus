@@ -18,14 +18,18 @@ state {
 
 control http-listen="127.0.0.1:9090" metrics=#true
 
-inbound "local" type="socks5" {
-    listen host="127.0.0.1" port=10808
-    authentication "none"
+inbounds {
+    socks5 "local" {
+        listen host="127.0.0.1" port=10808
+        authentication "none"
+    }
 }
 
-outbound "direct" type="direct"
-outbound "block" type="block"
+outbounds {
+    direct
+    block
+}
 
 routing {
-    default-outbound "direct"
+    final "direct"
 }

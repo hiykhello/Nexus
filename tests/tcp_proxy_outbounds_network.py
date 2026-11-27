@@ -43,7 +43,7 @@ outbounds {{
     direct "direct" {{ inet4-bind-address "127.0.0.1"; }}
     {outbounds}
 }}
-routing {{ default-outbound "{selected}"; }}
+routing {{ final "{selected}"; }}
 {dns}
 ''')
 
@@ -190,7 +190,7 @@ inbounds {{
     }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         with Echo() as origin, nexus_process(binary, config):
             with socket.create_connection((host, front), timeout=3) as client:

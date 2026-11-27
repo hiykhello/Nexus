@@ -65,7 +65,7 @@ outbound "edge" type="hysteria2" {{
     authentication {{ password-file "{password}"; }}
     tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             with nexus_process(binary, conf):
                 with contextlib.ExitStack() as clients:

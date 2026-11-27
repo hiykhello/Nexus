@@ -267,7 +267,7 @@ routing {{
     rules {{
         - domain "sel.probe.test" to="sel"
         - domain "dead.probe.test" to="dead"
-        - default "direct"
+        - final "direct"
     }}
 }}
 ''', encoding="utf-8")

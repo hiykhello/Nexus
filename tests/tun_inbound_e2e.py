@@ -148,7 +148,7 @@ inbound "tun" type="tun" {
     strict-route #true
 }
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 ''')
         def rules():
             return [ip(family, "rule", "show") for family in ("-4", "-6")]
@@ -202,14 +202,14 @@ routing { default-outbound "direct"; }
             }))
             proxy = root / "proxy.kdl"
             proxy.write_text(config.read_text().replace(
-                'routing { default-outbound "direct"; }',
+                'routing { final "direct"; }',
                 f'''outbound "ss" type="shadowsocks" {{
     server host="192.0.2.2" port=18082
     method "2022-blake3-aes-128-gcm"
     key-file "{key}"
     udp-over-tcp "v2"
 }}
-routing {{ default-outbound "ss"; }}'''))
+routing {{ final "ss"; }}'''))
             with process([*prefix, "/usr/bin/sing-box", "run", "-c", server]):
                 eventually(lambda: "192.0.2.2:18082" in subprocess.check_output([*prefix, "ss", "-nlt"], text=True))
                 with process(["stdbuf", "-oL", nexus_bin, "run", "--config", proxy]) as nexus:
@@ -286,11 +286,11 @@ def run_netns_inner(nexus_bin, ordered=False, native_ss=False):
         - kind="rule-set" value="ingress" outbound="direct"
         - kind="rule-set" value="all" outbound="block"
     }'''
-        extra_sets = 'rule-set "all" format="kdl" path="all.kdl"'
+        extra_sets = '        all format="kdl" path="all.kdl"'
         if ordered:
             (root / "payload.kdl").write_text('schema-version 2\nkind "predicate"\n'
                 'rule type="protocol" value="ssh"\nrule type="protocol" value="stun"\n')
-            extra_sets = 'rule-set "payload" format="kdl" path="payload.kdl"'
+            extra_sets = '        payload format="kdl" path="payload.kdl"'
             ingress = '''tcp-program sniff-timeout-ms=60 unknown="skip" udp=#true {
         rule action="reject" rule-set="blk"
         rule action="bypass"
@@ -313,11 +313,13 @@ inbound "tun-in" type="tun" {{
 outbound "direct" type="direct"
 outbound "block" type="block"
 routing {{
-    rule-set "blk" format="kdl" path="block.kdl"
-    rule-set "ingress" format="kdl" path="ingress.kdl"
-    {extra_sets}
+    rulesets {{
+        blk format="kdl" path="block.kdl"
+        ingress format="kdl" path="ingress.kdl"
+{extra_sets}
+    }}
     {ingress}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         p_direct, _ = launch_nexus(nexus_bin, cfg_direct, "TUN listening on nx-e2e0")
@@ -397,7 +399,7 @@ inbound "ss-in" type="shadowsocks" {{
 outbound "direct" type="direct" {{
     routing-mark 42
 }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         p_srv, srv_line = launch_nexus(nexus_bin, cfg_srv, "SS-2022 listening on ")
         actual_ss = int(srv_line.rsplit(":", 1)[1])
@@ -420,16 +422,16 @@ outbound "ss" type="shadowsocks" {{
     key-file "{key_f}"
     {udp_mode}
 }}
-routing {{ default-outbound "ss"; }}
+routing {{ final "ss"; }}
 ''')
         if ordered:
             text = cfg_tun_ss.read_text()
-            cfg_tun_ss.write_text(text.replace('routing { default-outbound "ss"; }', '''routing {
+            cfg_tun_ss.write_text(text.replace('routing { final "ss"; }', '''routing {
     tcp-program sniff-timeout-ms=60 unknown="skip" udp=#true {
       rule action="route-options" connect-timeout-ms=2000
       rule action="bypass" outbound="ss"
     }
-    default-outbound "ss"
+    final "ss"
 }'''))
         p_tun_ss, _ = launch_nexus(nexus_bin, cfg_tun_ss, "TUN listening on nx-e2e1")
         try:

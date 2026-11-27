@@ -116,7 +116,7 @@ outbound "direct" type="direct"
             protocol = "shadowsocks" if args.protocol == "ss" else "vless"
             options = f'method "2022-blake3-aes-128-gcm"; key-file "{psk}";' if args.protocol == "ss" else f'authentication {{ uuid-file "{root / "uuid"}"; }}; tls {{ server-name "cover.example"; ca-file "{root / "cert"}"; verify #true; }};'
             text += f'outbound "n{index}" type="{protocol}" {{ server host="n{index}.test" port=443; bootstrap-resolver "boot"; connect-timeout-ms 1200; {detour} {options} }}\n'
-        text += 'routing { rule-set "direct" path="direct.kdl" format="kdl"; rules { - kind="rule-set" value="direct" outbound="direct"; }; default-outbound "n15"; }\n'
+        text += 'routing { rulesets {{ "direct" path="direct.kdl" format="kdl"; }}; rules { - kind="rule-set" value="direct" outbound="direct"; }; final "n15"; }\n'
         config = root / "config.kdl"
         config.write_text(text)
         errors = []

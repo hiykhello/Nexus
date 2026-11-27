@@ -54,7 +54,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-chain-limits-") as directory:
 role "server"
 inbounds {{ vless "edge" {{ listen host="127.0.0.1" port={port}; authentication {{ user "client" uuid-file="{uuid}"; }}; tls {{ certificate-file "{chain}"; private-key-file "{key}"; }}; }} }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     server = subprocess.Popen([nexus, "run", "--config", config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

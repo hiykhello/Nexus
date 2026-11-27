@@ -23,7 +23,7 @@ dns {{ server "bootstrap" type="udp" host="127.0.0.1" port={dns.port}; final "bo
 http-clients {{
     updates {{ outbound "physical"; domain-resolver "bootstrap"; ca-file "{root / 'cert'}"; protocol "h3"; }}
 }}
-routing {{ default-outbound "physical"; }}
+routing {{ final "physical"; }}
 ''')
     env = dict(os.environ, NEXUS_TEST_MAX_PACKET="1500")
     with subprocess.Popen([sys.argv[2], root/"cert", root/"key", rules], env=env,

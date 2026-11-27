@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix="nexus-mptcp-") as directory:
 role "client"
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct" {{ multipath-tcp #true; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     process = subprocess.Popen([str(binary), "run", "--config", str(config)], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:

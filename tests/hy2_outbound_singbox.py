@@ -262,7 +262,7 @@ outbound "edge" type="hysteria2" {{ server host="{host}" port={port};
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
  {'detour "direct";' if detour else ''}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
                     with Echo() as echo, nexus_process(str(binary), str(nexus)):
                         half_close(front)

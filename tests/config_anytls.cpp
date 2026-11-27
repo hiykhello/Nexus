@@ -21,7 +21,7 @@ outbounds {{
     {}
 }}
 {}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 )",inbound,connection,options,extra_outbounds,extra_top));
     }
 }

@@ -432,16 +432,16 @@ export namespace config::routing_detail {
             } else if (child.name == "default-outbound") {
                 auto value = scalar(child);
                 if (route.default_outbound || !value || !valid_name(*value))
-                    return error("one default-outbound is required");
+                    return error("one routing final is required");
                 route.default_outbound = *value;
             } else return error("unsupported routing node: " + child.name);
         }
         if (route.defaults.default_network_strategy && route.defaults.default_network_type) {
             route.defaults.default_network_strategy->preferred = *route.defaults.default_network_type;
             if (route.defaults.default_network_strategy->fallback == route.defaults.default_network_strategy->preferred)
-                return error("routing default-network-type cannot equal default-network-strategy fallback");
+                return error("outbounds network-type cannot equal network-strategy fallback");
         }
-        if (!route.default_outbound) return error("routing requires default-outbound");
+        if (!route.default_outbound) return error("routing requires final");
         for (auto const& rule : route.rules)
             if (auto file = std::ranges::find(route.files, rule.set, &NamedRouteFile::name); file == route.files.end())
                 return error("rule-set reference not found");

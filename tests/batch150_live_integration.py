@@ -208,7 +208,7 @@ def write_ssh_config(path: pathlib.Path, socks_port: int, ssh_port: int, key_fil
         f'    max-sessions {max_sessions}\n'
         f'{detour_line}'
         f'}}\n'
-        f'routing {{ default-outbound "ssh0"; }}\n'
+        f'routing {{ final "ssh0"; }}\n'
     )
 
 
@@ -308,7 +308,7 @@ def main() -> int:
         cfg_hop.write_text(
             f'schema-version 1\nrole "client"\n'
             f'inbound "in" type="socks5" {{ listen host="127.0.0.1" port={hop_port}; authentication "none"; }}\n'
-            f'outbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}\n'
+            f'outbound "direct" type="direct"\nrouting {{ final "direct"; }}\n'
         )
         nx_hop = start_nexus(cfg_hop, hop_port, "hop")
         procs.append((nx_hop, False))

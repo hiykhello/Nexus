@@ -24,7 +24,7 @@ workers 2
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
  shadowsocks "ss" {{ listen host="127.0.0.1" port={ss_port}; method "2022-blake3-aes-128-gcm"; key-file "{key_path}"; }} }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{ server "bootstrap" type="udp" host="127.0.0.1" port={bootstrap.port};
  server "named" type="udp" host="dns.bootstrap.test" port={upstream.port} domain-resolver="bootstrap";
  server "stalled" type="udp" host="stall.bootstrap.test" port={upstream.port} domain-resolver="bootstrap";

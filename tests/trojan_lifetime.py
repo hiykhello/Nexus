@@ -57,7 +57,7 @@ inbound "trojan" type="trojan" {{ listen host="127.0.0.1" port={port};
 }}
 outbound "direct" type="direct"
 dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.port}; strategy "ipv4_only"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
 
         def echo():
@@ -123,7 +123,7 @@ outbound "remote" type="trojan" {{ server host="node.test" port={stalled.getsock
  bootstrap-resolver "boot"; connect-timeout-ms {5000 if stop else 800};
 }}
 dns {{ server "boot" type="udp" host="127.0.0.1" port={dns.port}; strategy "ipv4_only"; }}
-routing {{ default-outbound "remote"; }}
+routing {{ final "remote"; }}
 ''')
 
         def peer():

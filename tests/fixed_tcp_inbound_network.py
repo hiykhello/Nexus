@@ -67,7 +67,7 @@ inbounds {{
 }}
 outbound "direct" type="direct"
 routing {{
-    default-outbound "direct"
+    final "direct"
     tcp-program sniff-timeout-ms=100 unknown="skip" {{
         {action}
     }}

@@ -35,7 +35,7 @@ log {{ privacy "verbose"; }}
 control socket="{path.parent / 'control.sock'}"
 inbound "front" type="socks5" {{ listen host="127.0.0.1" port={proxy_port}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
     if dns_port is not None:
         source += f'''dns {{

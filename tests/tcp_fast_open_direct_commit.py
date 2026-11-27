@@ -123,7 +123,7 @@ role "client"
 inbound "local" type="mixed" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct" {{ tcp-fast-open #true; }}
 dns {{ server "dns" type="udp" host="127.0.0.1" port={dns.port}; strategy "ipv4_only"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         with nexus_process(pathlib.Path(sys.argv[1]).resolve(), config):
             with connect(front) as client:

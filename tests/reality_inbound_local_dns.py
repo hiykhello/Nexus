@@ -32,7 +32,7 @@ role "server"
 workers 2
 inbound "edge" type="vless" {{ listen host="127.0.0.1" port={front}; authentication {{ user "test" uuid-file="{path/'uuid'}"; }}; tls {{ reality {{ private-key-file "{path/'secret'}"; server-name "localhost"; short-id ""; fallback host="cover.test" port={cover.getsockname()[1]}; }}; }}; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     env=os.environ.copy(); env['LD_PRELOAD']=str(path/'guard.so')
     server=subprocess.Popen([require_nexus(),'run','--config',path/'server.kdl'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)

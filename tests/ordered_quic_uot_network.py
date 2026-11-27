@@ -23,7 +23,7 @@ def main(binary, fixture):
 role "server"
 inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; }}
 outbound "direct" type="direct"
-routing {{ rule-set "blocked" path="rule.kdl" format="kdl"; tcp-program sniff-timeout-ms=300 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="route" outbound="direct"; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "blocked" path="rule.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms=300 unknown="skip" udp=#true {{ rule action="sniff"; rule action="reject" rule-set="blocked" domain-source="sniffed"; rule action="route" outbound="direct"; }}; final "direct"; }}
 ''')
         origin.bind(('127.0.0.1',0));other.bind(('127.0.0.1',0));origin.settimeout(.4);other.settimeout(3)
         def header(sock):return b'\x00\x00\x00\x01'+socket.inet_aton('127.0.0.1')+struct.pack('!H',sock.getsockname()[1])

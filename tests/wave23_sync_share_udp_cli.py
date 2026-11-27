@@ -297,7 +297,7 @@ def test_udp_probe_direct_and_socks5(nexus: str, root: Path) -> None:
         'schema-version 1\nrole "client"\n'
         f'inbound "s5" type="socks5" {{ listen host="127.0.0.1" port={socks_port}; authentication "none"; }}\n'
         'outbound "direct" type="direct"\n'
-        'routing { default-outbound "direct"; }\n',
+        'routing { final "direct"; }\n',
         encoding="utf-8",
     )
     proc = subprocess.Popen([nexus, "run", "--config", str(cfg)],

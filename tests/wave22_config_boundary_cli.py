@@ -59,7 +59,7 @@ def test_check_and_host_override(nexus: str, root: Path, repo: Path) -> None:
         '    direct\n'
         '    block\n'
         '}\n'
-        'routing { default "direct"; }\n'
+        'routing { final "direct"; }\n'
     )
     ov = root / "host-override.kdl"
     ov.write_text(
@@ -126,7 +126,7 @@ def test_check_and_host_override(nexus: str, root: Path, repo: Path) -> None:
         '    final "cf"\n'
         '}\n'
         'routing {\n'
-        '    rules { - ip-is-private #true to="direct"; - default "proxy"; }\n'
+        '    rules { - ip-is-private #true to="direct"; - final "proxy"; }\n'
         '}\n'
     )
     rich_ov = root / "rich-ov.kdl"
@@ -218,10 +218,11 @@ def test_convert_nodes_json(nexus: str, root: Path) -> None:
         probe = root / f"probe-{node['tag']}.kdl"
         probe.write_text(
             'schema-version 1\nrole "client"\ncertificate { store "system"; }\n'
-            'inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }\n'
-            'outbound "direct" type="direct"\n'
+            'inbounds { inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }\n'
+            'outbounds {\noutbound "direct" type="direct"\n'
             + node["kdl"]
-            + f'routing {{ default-outbound "{node["tag"]}"; }}\n'
+            + '}\n'
+            + f'routing {{ final "{node["tag"]}"; }}\n'
         )
         chk = run_cli(nexus, "check", str(probe))
         assert chk.returncode == 0, f"standalone node KDL failed check: {chk.stderr}\n{node['kdl']}"
@@ -265,14 +266,13 @@ def test_run_host_override_and_hot_reload(nexus: str, root: Path) -> None:
     base.write_text(
         'schema-version 1\n'
         'role "client"\n'
-        'inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }\n'
-        'outbound "direct" type="direct"\n'
-        'outbound "block" type="block"\n'
-        'routing { default-outbound "direct"; }\n'
+        'inbounds { inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }\n'
+        'outbounds { outbound "direct" type="direct"; outbound "block" type="block"; }\n'
+        'routing { final "direct"; }\n'
     )
     ov = root / "run-ov.kdl"
     ov.write_text(
-        f'inbound "in" type="socks5" {{ listen host="127.0.0.1" port={p1}; authentication "none"; }}\n'
+        f'inbounds {{ inbound "in" type="socks5" {{ listen host="127.0.0.1" port={p1}; authentication "none"; }}; }}\n'
     )
 
     # Start with --host-override BEFORE --config
@@ -284,14 +284,14 @@ def test_run_host_override_and_hot_reload(nexus: str, root: Path) -> None:
         wait_port(p1)
         # Update host-override to a new port and send SIGHUP: hot reload must keep applying host-override!
         ov.write_text(
-            f'inbound "in" type="socks5" {{ listen host="127.0.0.1" port={p2}; authentication "none"; }}\n'
+            f'inbounds {{ inbound "in" type="socks5" {{ listen host="127.0.0.1" port={p2}; authentication "none"; }}; }}\n'
         )
         proc.send_signal(signal.SIGHUP)
         wait_port(p2)
         # Reload attempting to direct a file log sink at host-override.kdl must fail without overwriting it
         bad_reload_ov = (
             f'log {{ sink "file" path="{ov}"; }}\n'
-            f'inbound "in" type="socks5" {{ listen host="127.0.0.1" port={p2}; authentication "none"; }}\n'
+            f'inbounds {{ inbound "in" type="socks5" {{ listen host="127.0.0.1" port={p2}; authentication "none"; }}; }}\n'
         )
         ov.write_text(bad_reload_ov)
         os.chmod(ov, 0o600)
@@ -310,7 +310,7 @@ def test_run_host_override_and_hot_reload(nexus: str, root: Path) -> None:
     prot_ov = root / "protected-ov.kdl"
     prot_text = (
         f'log {{ sink "file" path="{prot_ov}"; }}\n'
-        f'inbound "in" type="socks5" {{ listen host="127.0.0.1" port={p1}; authentication "none"; }}\n'
+        f'inbounds {{ inbound "in" type="socks5" {{ listen host="127.0.0.1" port={p1}; authentication "none"; }}; }}\n'
     )
     prot_ov.write_text(prot_text)
     os.chmod(prot_ov, 0o600)

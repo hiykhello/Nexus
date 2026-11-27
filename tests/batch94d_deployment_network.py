@@ -34,7 +34,7 @@ inbound "socks" type="socks5" {{
   udp-advertise-ip "{advertised}"
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
         cfg.write_text(source.replace(advertised, "invalid-host"))
         bad = check_process(binary, cfg)
@@ -117,7 +117,7 @@ def uds(binary, root):
 role "client"
 inbound "local" type="fixed-tcp" {{ listen {listen}; target {target}; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
             cfg.write_text(config)
             if scheme == "filesystem":

@@ -38,15 +38,17 @@ role "client"
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
 routing {{
-    DOMAIN_SET
-    rule-set "quic" path="quic.kdl" format="kdl"
+    rulesets {{
+        DOMAIN_SET
+        quic path="quic.kdl" format="kdl"
+    }}
     tcp-program sniff-timeout-ms=200 unknown="skip" udp=#true {{
         rule action="sniff"
         KEEP_DOMAIN
         rule action="reject" rule-set="quic"
         rule action="route" outbound="direct"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 '''
         header = b"\0\0\0\x01" + socket.inet_aton("127.0.0.1") + struct.pack("!H", origin.getsockname()[1])
@@ -71,7 +73,7 @@ routing {{
                     receive(value)
             receive(b"UDP control")
         if enabled:
-            config.write_text(template.replace("DOMAIN_SET", 'rule-set "domain" path="domain.kdl" format="kdl"')
+            config.write_text(template.replace("DOMAIN_SET", 'domain path="domain.kdl" format="kdl"')
                 .replace("KEEP_DOMAIN", 'rule action="route" rule-set="domain" domain-source="sniffed" outbound="direct"'))
             with nexus_process(binary, str(config)), udp_client(front) as (client, relay):
                 for value in (plain, ech, b"UDP control"):
@@ -119,13 +121,13 @@ inbounds {
 }
 outbound "physical" type="direct"
 routing {
-  rule-set "quic" path="quic.kdl" format="kdl"
+  rulesets { quic path="quic.kdl" format="kdl"; }
   tcp-program sniff-timeout-ms=200 unknown="skip" udp=#true {
     rule action="sniff"
     rule action="reject" rule-set="quic"
     rule action="route" outbound="physical"
   }
-  default-outbound "physical"
+  final "physical"
 }
 """)
         with nexus_process(binary, str(config)):

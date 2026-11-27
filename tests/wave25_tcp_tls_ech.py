@@ -319,7 +319,7 @@ outbound "edge" type="{mode}" {{
     tls {{ server-name "{INNER_SNI}"; ca-file "{root / 'cert.pem'}"; verify #true; {tls_extra}; }}
     connect-timeout-ms 2500
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 {dns_block}
 ''')
     return cfg, front

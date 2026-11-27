@@ -167,7 +167,7 @@ inbound "local" type="mixed" {{ listen host="127.0.0.1" port={port}; authenticat
 outbound "direct" type="direct"
 outbound "reject" type="block"
 outbound "ss" type="shadowsocks" {{ server host="{host}" port={upstream_port}; {resolver} method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
-routing {{ rule-set "deny" path="deny.kdl" format="kdl"; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; default-outbound "ss"; }}
+routing {{ rulesets {{ "deny" path="deny.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; final "ss"; }}
 ''')
             for invalid, mode in [("AAAA",0o600), (base64.b64encode(bytes(range(size))).decode(),0o644)]:
                 key.write_text(invalid); key.chmod(mode)

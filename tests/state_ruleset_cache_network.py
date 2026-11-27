@@ -85,7 +85,7 @@ def configuration(root, dns):
 role "client"
 inbound "front" type="socks5" {{ listen host="127.0.0.1" port={free_port()}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 dns {{
     server "numeric" type="udp" host="127.0.0.1" port={dns.port}
     final "numeric"

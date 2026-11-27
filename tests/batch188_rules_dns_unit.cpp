@@ -204,7 +204,7 @@ routing {
         - package-name "com.example.app" to="proxy"
         - route-mode "direct" to="direct"
     }
-    default "proxy"
+    final "proxy"
 }
 )kdl");
         require(cfg.has_value(), cfg ? "" : cfg.error());
@@ -297,7 +297,7 @@ dns {
     }
     final "hosts"
 }
-routing { default-outbound "direct" }
+routing { final "direct" }
 )kdl");
         require(cfg.has_value(), cfg ? "" : cfg.error());
         auto transports = cli::prepare_dns_transports(*cfg);

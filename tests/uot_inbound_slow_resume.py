@@ -35,7 +35,7 @@ workers 2
 inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; }}
 outbound "direct" type="direct"
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={relay.getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     config = {"log":{"level":"error"}, "inbounds":[{"type":"shadowsocks", "listen":"127.0.0.1", "listen_port":box_port, "method":"2022-blake3-aes-128-gcm", "password":key}], "outbounds":[{"type":"direct", "tag":"direct"}], "route":{"final":"direct"}}
     (root / "box.json").write_text(json.dumps(config))

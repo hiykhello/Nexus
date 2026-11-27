@@ -82,7 +82,7 @@ workers 2
 inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={self.front}; method "2022-blake3-aes-128-gcm"; key-file "{self.root / 'key'}"; }}
 outbound "direct" type="direct"
 dns {{ servers {{ udp "resolver" host="127.0.0.1" port={self.dns.port}; }}; final "resolver"; strategy "ipv4_only"; disable-cache #true; }}
-routing {{ rule-set "name" path="rule.kdl" format="kdl"; tcp-program sniff-timeout-ms={timeout} unknown="skip" udp=#true {{ {'; '.join(rules)}; }}; default-outbound "direct"; }}
+routing {{ rulesets {{ "name" path="rule.kdl" format="kdl"; }}; tcp-program sniff-timeout-ms={timeout} unknown="skip" udp=#true {{ {'; '.join(rules)}; }}; final "direct"; }}
 ''')
         return path
 

@@ -23,7 +23,7 @@ role "client"
 dns {{ listen host="127.0.0.1" port={listen}; server "bootstrap" type="udp" host="127.0.0.1" port={bootstrap.getsockname()[1]}; server "remote" type="udp" host="resolver.test" port={first.getsockname()[1]} domain-resolver="bootstrap"; final "remote"; }}
 inbound "in" type="socks5" {{ listen host="127.0.0.1" port={proxy}; authentication "none"; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 stop=threading.Event();selected=[1];counts=[0,0];failures=[]
 def serve(sock,kind):

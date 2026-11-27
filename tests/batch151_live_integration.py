@@ -261,7 +261,7 @@ inbound "h2-in" type="http" {{
     listen host="127.0.0.1" port={sp_port}; authentication "password" username="u" password-file="{pw}"
     tls {{ certificate-file "{cert}"; private-key-file "{key}"; }}; http2 #true
 }}
-outbound "direct" type="direct"; routing {{ default-outbound "direct"; }}
+outbound "direct" type="direct"; routing {{ final "direct"; }}
 '''), sp_port, "s1_srv")
     cp = start_nexus(nexus, write_kdl(d / "s1c.kdl", f'''schema-version 1; role "client"
 inbound "s5" type="socks5" {{ listen host="127.0.0.1" port={cp_port}; authentication "none"; }}
@@ -269,7 +269,7 @@ outbound "hc" type="http-connect" {{
     http-version "h2"; server host="127.0.0.1" port={sp_port}; authentication username="u" password-file="{pw}"
     tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}
 }}
-outbound "direct" type="direct"; routing {{ default-outbound "hc"; }}
+outbound "direct" type="direct"; routing {{ final "hc"; }}
 '''), cp_port, "s1_cli")
     try:
         payload = os.urandom(65536 + 123)
@@ -298,7 +298,7 @@ outbound "hc" type="http-connect" {{
     http-version "auto"; server host="127.0.0.1" port={h1_port}
     tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}
 }}
-outbound "direct" type="direct"; routing {{ default-outbound "hc"; }}
+outbound "direct" type="direct"; routing {{ final "hc"; }}
 '''), cp_port, "s2_cli")
     try:
         payload = b"auto-alpn-http11-fallback-" * 200
@@ -320,7 +320,7 @@ inbound "h3-in" type="http" {{
     listen host="127.0.0.1" port={sp_port}; authentication "password" username="u3" password-file="{pw}"
     tls {{ certificate-file "{cert}"; private-key-file "{key}"; }}; http2 #false; http3 #true; connect-udp #true
 }}
-outbound "direct" type="direct"; routing {{ default-outbound "direct"; }}
+outbound "direct" type="direct"; routing {{ final "direct"; }}
 '''), None, "s3_srv")
     cp = start_nexus(nexus, write_kdl(d / "s3c.kdl", f'''schema-version 1; role "client"
 inbound "s5" type="socks5" {{ listen host="127.0.0.1" port={cp_port}; authentication "none"; }}
@@ -328,7 +328,7 @@ outbound "hc" type="http-connect" {{
     http-version "h3"; server host="127.0.0.1" port={sp_port}; authentication username="u3" password-file="{pw}"; udp #true
     tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}
 }}
-outbound "direct" type="direct"; routing {{ default-outbound "hc"; }}
+outbound "direct" type="direct"; routing {{ final "hc"; }}
 '''), cp_port, "s3_cli")
     try:
         tcp_msg = b"h3-connect-tcp-payload-" * 300
@@ -346,7 +346,7 @@ outbound "nv" type="naive" {{
     protocol "{proto}"; server host="127.0.0.1" port={srv_port}; authentication username="{user}" password-file="{pw}"
     tls {{ server-name "localhost"; ca-file "{cert}"; verify #true; }}; padding {"#true" if pad else "#false"}
 }}
-outbound "direct" type="direct"; routing {{ default-outbound "nv"; }}
+outbound "direct" type="direct"; routing {{ final "nv"; }}
 '''
 
 def suite_4_naive_h2(nexus: pathlib.Path, d: pathlib.Path, echo_port: int, cert: pathlib.Path, key: pathlib.Path) -> None:
@@ -358,7 +358,7 @@ inbound "naive-in" type="naive" {{
     tls {{ certificate-file "{cert}"; private-key-file "{key}"; }}
     authentication {{ user "alice" username="alice" password-file="{pw}"; }}; padding #true; fallback-status 404
 }}
-outbound "direct" type="direct"; routing {{ default-outbound "direct"; }}
+outbound "direct" type="direct"; routing {{ final "direct"; }}
 '''), sp_port, "s4_srv")
     p1 = start_nexus(nexus, write_kdl(d / "s4p.kdl", naive_cli_kdl(c1_port, sp_port, "alice", pw, cert, "h2", True)), c1_port, "s4_pad")
     p2 = start_nexus(nexus, write_kdl(d / "s4n.kdl", naive_cli_kdl(c2_port, sp_port, "alice", pw, cert, "h2", False)), c2_port, "s4_nopad")
@@ -389,7 +389,7 @@ inbound "naive-both" type="naive" {{
     tls {{ certificate-file "{cert}"; private-key-file "{key}"; }}
     authentication {{ user "bob" username="bob" password-file="{pw}"; }}; padding #true; fallback-status 200
 }}
-outbound "direct" type="direct"; routing {{ default-outbound "direct"; }}
+outbound "direct" type="direct"; routing {{ final "direct"; }}
 '''), sp_port, "s5_srv")
     p3 = start_nexus(nexus, write_kdl(d / "s5h3.kdl", naive_cli_kdl(c3_port, sp_port, "bob", pw, cert, "h3", True)), c3_port, "s5_h3")
     p2 = start_nexus(nexus, write_kdl(d / "s5h2.kdl", naive_cli_kdl(c2_port, sp_port, "bob", pw, cert, "h2", True)), c2_port, "s5_h2")

@@ -332,13 +332,16 @@ namespace config {
             auto outbound=outbound_index(result,*direct,block,client.outbound);
             if(!outbound || *outbound==1) return error("HTTP client outbound is not available");
             client.outbound_index=*outbound;
+            if (client.resolver.empty() && route->defaults.default_domain_resolver)
+                client.resolver = *route->defaults.default_domain_resolver;
+            if (client.resolver.empty()) return error("HTTP client requires domain-resolver");
             auto resolver=std::ranges::find(result.dns->servers,client.resolver,&DnsServer::name);
             if(resolver==result.dns->servers.end())return error("HTTP client domain-resolver not found");
             client.resolver_index=static_cast<std::size_t>(resolver-result.dns->servers.begin());
         }
         if (route->default_http_client) {
             if (std::ranges::find(result.http_clients,*route->default_http_client,&NamedHttpClient::name)==result.http_clients.end())
-                return error("routing default-http-client not found in http-clients");
+                return error("http-clients default not found in http-clients");
             result.default_http_client=*route->default_http_client;
         }
         std::map<std::string,std::string> remote_sha256;
@@ -347,7 +350,7 @@ namespace config {
             if (spec.http_client.empty()) spec.http_client=result.default_http_client;
             if (spec.http_client.empty() ||
                 std::ranges::find(result.http_clients,spec.http_client,&NamedHttpClient::name)==result.http_clients.end())
-                return error("remote rule-set requires a configured http-client or routing default-http-client");
+                return error("remote rule-set requires a configured http-client or http-clients default");
             auto [it,inserted]=remote_sha256.emplace(kdl::normalize_remote_url(spec.url),spec.sha256);
             if (!inserted && it->second!=spec.sha256)
                 return error("conflicting sha256 declarations for remote rule-set URL: "+spec.url);

@@ -43,7 +43,7 @@ role "server"
 workers 2
 inbound "edge" type="vless" {{ listen host="127.0.0.1" port={front}; flow "xtls-rprx-vision"; authentication {{ user "test" uuid-file="{uuid}"; }}; tls {{ certificate-file "{root/'cert'}"; private-key-file "{root/'key'}"; }}; }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     config={'log':{'level':'warn'},'inbounds':[{'type':'socks','listen':'127.0.0.1','listen_port':port}],
         'outbounds':[{'type':'vless','server':'127.0.0.1','server_port':front,'uuid':'00010203-0405-0607-0809-0a0b0c0d0e0f','flow':'xtls-rprx-vision','tls':{'enabled':True,'server_name':'localhost','certificate_path':str(root/'cert')}}]}
@@ -59,7 +59,7 @@ workers 2
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={front}; flow "xtls-rprx-vision"; authentication {{ uuid-file "{uuid}"; }}; tls {{ server-name "localhost"; ca-file "{root/'cert'}"; verify #true; }}; {fast_open} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 """)
     client_cmd=[args.nexus,'run','--config',root/'client.kdl'] if nexus_client else ['sing-box','run','-c',root/'box.json']
     box=subprocess.Popen(client_cmd,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)

@@ -113,7 +113,7 @@ namespace {
             "inbound \"local-socks5\" type=\"socks5\" { listen host=\"127.0.0.1\" port=11080; authentication \"none\"; }\n"
             "inbound \"local-http\" type=\"http\" { listen host=\"127.0.0.1\" port=18080; authentication \"none\"; }\n"
             "outbound \"direct\" type=\"direct\"\n"
-            "routing { default-outbound \"direct\"; }\n";
+            "routing { final \"direct\"; }\n";
 
         auto tmp = std::filesystem::temp_directory_path() / "nexus-desktop-live-coexist.kdl";
         {
@@ -211,7 +211,7 @@ namespace {
                 "schema-version 1\nrole \"client\"\n"
                 "inbound \"local\" type=\"socks5\" {{ listen host=\"127.0.0.1\" port={}; authentication \"none\"; }}\n"
                 "outbound \"direct\" type=\"direct\"\n"
-                "routing {{ default-outbound \"direct\"; }}\n",
+                "routing {{ final \"direct\"; }}\n",
                 port);
         }
         expect(sup.start(ok_cfg) && sup.running(), "valid config starts supervisor: " + sup.last_error());

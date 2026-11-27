@@ -27,7 +27,7 @@ role "server"
 inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root / 'key'}"; }}
 outbound "direct" type="direct"
 outbound "edge" type="vless" {{ connect-timeout-ms 250; server host="127.0.0.1" port={upstream.getsockname()[1]}; authentication {{ uuid-file "{root / 'uuid'}"; }}; tls {{ server-name "cover.example"; ca-file "{root / 'cert'}"; verify #true; }} }}
-routing {{ tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="route" outbound="edge"; }}; default-outbound "edge"; }}
+routing {{ tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{ rule action="route" outbound="edge"; }}; final "edge"; }}
 ''')
         def hold():
             try:

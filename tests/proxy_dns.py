@@ -166,8 +166,8 @@ def scenario(workers, mode="success", ipv6=False, named_config=False, strategy=N
         config = pathlib.Path(tmp) / "proxy.kdl"
         if mode == "block":
             (pathlib.Path(tmp) / "blocked.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
-        routing = ('outbound "reject" type="block"\nrouting { rule-set "blocked" path="blocked.kdl" format="kdl"; '
-                   'rules { - kind="rule-set" value="blocked" outbound="reject"; }; default-outbound "direct"; }') if mode == "block" else 'routing { default-outbound "direct"; }'
+        routing = ('outbound "reject" type="block"\nrouting { rulesets { blocked path="blocked.kdl" format="kdl"; }; '
+                   'rules { - kind="rule-set" value="blocked" outbound="reject"; }; final "direct"; }') if mode == "block" else 'routing { final "direct"; }'
         if named_config == "tcp":
             dns_config = f'dns {{ server "tcp" type="tcp" host="{host}" port={dns.getsockname()[1]}; }}'
         elif named_config is True:

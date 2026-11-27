@@ -116,7 +116,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentic
 outbound "edge" type="{kind}" {{ server host="127.0.0.1" port={observer.port};
  authentication {{ uuid-file "{root / 'uuid'}"; }}
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; {fingerprint} verify #true; }}; {extra} transport "grpc" {{ service-name "nexus.Service"; response-policy "sing-box-lite"; }} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(str(binary), str(config)):
             with socks(front, 1, ('127.0.0.1', origin.port))[0] as client:
@@ -153,7 +153,7 @@ outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={observer.port};
  authentication {{ uuid-file "{root / 'uuid'}"; }}; tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; fingerprint "tls13-randomized"; verify #true; }};
  {dial} transport "grpc" {{ service-name "nexus.Service"; response-policy "sing-box-lite"; }} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(str(binary), str(config)):
             clients=[]
@@ -191,7 +191,7 @@ outbound "direct" type="direct"
 outbound "edge" type="vless" {{ server host="127.0.0.1" port={observer.port};
  authentication {{ uuid-file "{root / 'uuid'}"; }}; tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; fingerprint "tls13-randomized"; verify #true; }};
  {dial} transport "grpc" {{ service-name "nexus.Service"; response-policy "sing-box-lite"; }} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(str(binary),str(config)):
             for attempt in range(2):
@@ -228,7 +228,7 @@ outbound "direct" type="direct"
 outbound "edge" type="{kind}" {{ server host="127.0.0.1" port={observer.port};
  authentication {{ uuid-file "{root / 'uuid'}"; }}
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; fingerprint "tls13-randomized"; verify #true; }}; {extra} transport "grpc" {{ service-name "nexus.Service"; response-policy "sing-box-lite"; }} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(str(binary), str(config)):
             with connect(front) as client:
@@ -263,7 +263,7 @@ outbound "direct" type="direct"
 outbound "edge" type="{kind}" {{ server host="127.0.0.1" port={observer.port};
  authentication {{ uuid-file "{root / 'uuid'}"; }}
  tls {{ server-name "wrong.example"; ca-file "{root / 'cert'}"; fingerprint "tls13-randomized"; verify #true; }}; transport "grpc" {{ service-name "nexus.Service"; response-policy "sing-box-lite"; }} }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
         with nexus_process(str(binary), str(config)):
             with connect(front) as client:

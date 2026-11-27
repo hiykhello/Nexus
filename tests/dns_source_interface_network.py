@@ -41,18 +41,18 @@ dns {{
     server "answer" type="udp" host="127.0.0.1" port={origin.port}
     rule domain="interface-a.test" source-interface="{NAME}" action="route" server="answer"
     rule domain="interface-b.test" rule-set="iface" action="route" server="answer"
-    rule-set "iface" path="via-tun.kdl" format="kdl"
+    rulesets {{ "iface" path="via-tun.kdl" format="kdl"; }}
     rule source-interface="wrong" invert=#true action="route" server="answer"
     rule action="reject"
     final "answer"
 }}
 routing {{
-    rule-set "target" path="target.kdl" format="kdl"
+    rulesets {{ "target" path="target.kdl" format="kdl"; }}
     tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{
         rule action="hijack-dns" rule-set="target"
         rule action="reject"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         with nexus_process(cli, config):

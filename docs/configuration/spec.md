@@ -4,11 +4,11 @@
 
 ## 文档、名称与加载
 
-主文件包含一个 `schema-version 1`、一个 `role "client"` 或 `role "server"`。`log`、`dns`、`routing`、`control` 最多各一个；`inbounds`、`outbounds` 分别包含可重复的 `inbound`、`outbound`；`endpoint` 可重复，第一位置参数为非空名称，分组内使用类型名作为节点名，例如 `socks5 "local"`、`direct "direct"`（`outbounds` 中 `direct`、`block` 可省略同名参数）；`listen`/`server`/`fallback`/`target` 支持 `"host:port"` 或 IPv6 `"[::1]:port"` 短写；出站组可用 `members "a" "b"` 展开成员；DNS `servers` 同样使用 `udp` 等类型名。规则放在 `rules` 块中，以 `-` 为每条规则的节点名：路由 `rules` 支持可选 `sniff-timeout-ms`、`unknown`、`udp` 属性及有序简写（`- sniff`、`- resolve`、`- hijack-dns`、`- reject`、`- <谓词> <值...> to="出口"`、`- rule-set "集" to="出口"`、`- default "默认出口"`，支持 `routing { default "出口" }`）；DNS `rules` 支持 `- domain-suffix "cn" to="local"` 等属性别名与简写。旧 `inbound`/`outbound`/`server` 加 `type`、传统 `rule kind="rule-set"`、`tcp-program` 和直接 `rule` 写法继续兼容。名称在同一类内唯一；出站与可作为出口使用的 endpoint 在出口引用命名空间内也不得重复。tag 精确匹配，不做环境变量或通配展开。
+主文件包含一个 `schema-version 1`、一个 `role "client"` 或 `role "server"`。`log`、`http-clients`、`dns`、`routing`、`control` 最多各一个；`inbounds`、`outbounds` 分别包含各协议入站与出站节点；`endpoint` 可重复，第一位置参数为非空名称。分组内使用类型名作为节点名，例如 `socks5 "local"`、`direct "direct"`（`outbounds` 中 `direct`、`block` 可省略同名参数；`inbounds` 中单实例入站如 `tun { ... }` 省略名称时默认以类型名为 tag）；`listen`/`server`/`fallback`/`target` 支持 `"host:port"` 或 IPv6 `"[::1]:port"` 短写；出站组可用 `members "a" "b"` 展开成员；出站拨号默认项（`auto-detect-interface`、`interface`、`mark`、`network-type`、`network-strategy`）直接写在 `outbounds { ... }` 内（不加 `default-` 前缀）；单用户 `vless` 出站可直接写 `uuid-file "..."`。DNS 在 `dns` 块内使用 `servers { ... }`、`default "<拨号解析器>"`、`final "<兜底服务器>"`、`rulesets { <名称> ... }` 与 `rules { - ... }`（支持多参数简写及子节点谓词块，如 `- action="predefined" rcode="noerror" { rule-set "a" "b"; query-type "AAAA" "HTTPS" "SVCB" }`）。`routing` 为纯路由块，仅包含 `find-process`、`rulesets { <名称> ... }`（每个子节点直接以规则集名为节点名，其余字段支持内联属性或子节点，禁止 `-` 列表节点）、`rules { - ... }`（支持 `sniff-timeout-ms`、`unknown`、`udp` 及 `- sniff`、`- resolve`、`- hijack-dns`、`- reject`、`- ip-is-private to="direct"`、`- rule-set "集" to="出口"` 等简写）与 `final "<出口>"`（或 `rules` 内的 `- final "<出口>"`，二者不可重复）。旧写法（`routing` 内 `default-outbound`/`default`/`- default`/裸 `rule-set`/`rule-sets`/`default-*`、`dns` 内裸 `rule-set`、`http-clients` 内 `client "<名称>"` 包装及 `outbounds` 内 `default-interface` 等）均已严格移除并直接拒绝。名称在同一类内唯一；出站与可作为出口使用的 endpoint 在出口引用命名空间内也不得重复。tag 精确匹配，不做环境变量或通配展开。
 
 节点的单值子项只能出现一次，列表项（`address`、`member`、`rule`、`deny-cidr` 等）按文档顺序保留；对必须字段、未知节点/属性、非法类型、重复单值及悬空引用报错。KDL 属性按语言规范后写覆盖，若需要拒绝重复属性须先验证 Glaze 是否保留足够的原始信息，不能声称已能检查。仅下文明确的默认值可省略；其余缺失项的默认值待决定，示例尽量显式写出。
 
-后续设计 `http-clients` 时，其每个子节点的节点名直接作为该 HTTP 客户端的 tag，例如 `http-clients { updates { ... } }` 中的 tag 是 `updates`。字段及生命周期候选见[具名 HTTP 客户端设计](../architecture/http-clients.md)；当前配置解析器不支持此节点。
+`http-clients` 中每个具名客户端直接以其 tag 作为节点名（禁止 `client "<tag>"` 包装），并可用 `default "<tag>"` 指定默认客户端，例如 `http-clients { default "updates"; updates { ... } }`。字段及生命周期见[具名 HTTP 客户端设计](../architecture/http-clients.md)。
 
 先解析整份 KDL，再校验类型、引用、能力、地址和协议组合、依赖环与权限需求；构造候选时读取证书和凭据并检查。成功后才准备及接入网络资源。重载的具体事务边界、失败恢复和网络租约按[路由](../architecture/routing-engine.md)、[TUN](../platform/tun-routing-and-loopback.md)与[控制面](../architecture/control-api.md)约束实施；未经验证不能保证全系统操作原子化。规则文件相对路径相对于引用它的主配置所在目录，绝对路径保持绝对；不以当前工作目录解释。示例要求凭据/证书使用绝对路径。
 
@@ -114,7 +114,7 @@ SOCKS5 UDP 的 FakeIP 回复保留请求中的合成地址和端口。经 Trojan
 
 内部 A/AAAA 解析的有序 DNS 规则可使用 `rule domain-suffix="example.test" query-type="AAAA" server="remote"`；`domain` 与 `domain-suffix` 二选一，query type 可单独使用。query type 支持 `"A"`、`"AAAA"` 或 1..65535 的整数，当前地址解析只产生 A/AAAA。省略 query type 的旧规则继续作用于两种问题，同一条的条件同时满足后首命中选择服务器。不同服务器的结果须通过规范名、正负答复和地址数量检查后才合并；local 的 hosts、搜索域及在途快照继续保留。DNS 还支持 `domain-keyword` 和 `domain-wildcard`（`*.example.test` 只匹配一层标签），四种域名条件同条最多一个。`action="route"` 选择 server，省略 action 兼容旧行为；`action="reject"` 不带 server，令内部地址解析直接失败。显式 action 可无条件首命中。实际查询的一族被拒绝时整次解析不读缓存、不发上游问题，SOCKS 报规则拒绝、HTTP 报 403；单族策略不会检查未查询的另一族。显式 bootstrap 不应用业务拒绝规则，上游 REFUSED 保持 DNS 错误。执行边界见 [支持矩阵](../planning/proxy-kernel-support-matrix.md)。
 
-DNS 问题规则可声明并引用独立规则集，例如 `rule-set "q" path="q.srs" format="srs"` 与 `rule rule-set="q" server="remote"`；也支持 KDL 和 BEVE。规则集与同条规则的其他条件按 AND 组合，适用于消息监听及内部地址解析；SRS 依赖 `srs` 构建功能。支持的条件、来源选项及上下文限制见[规则集](rule-sets.md)。
+DNS 问题规则可在 `dns` 块的 `rulesets` 中声明并引用独立规则集，例如 `rulesets { q path="q.srs" format="srs" }`（或 `rulesets { q { path "q.srs"; format "srs" } }`）与 `rules { - rule-set "q" to="remote" }`；也支持 KDL 和 BEVE。规则集与同条规则的其他条件按 AND 组合，适用于消息监听及内部地址解析；SRS 依赖 `srs` 构建功能。支持的条件、来源选项及上下文限制见[规则集](rule-sets.md)。
 
 问题条件 `query-class` 可使用 `"IN"`、`"CH"`、`"HS"`、`"ANY"` 或 1..65535 的整数，与其他条件同时匹配。消息监听使用请求中的 class；内部 A/AAAA 地址解析使用 IN。`"ANY"` 匹配查询中的 class 255，不作为通配符。
 
@@ -178,7 +178,7 @@ DNS 问题规则也接受以下业务上下文条件，可以单独使用或与�
 
 ## 规则与热重载
 
-`routing` 的 `rule-set name path=... format="kdl"` 引入独立规则源；`format="beve"` 对应版本化 BEVE 容器；启用 `srs` 构建功能后，`format="srs"` 导入受限的 SRS 二进制条件子集，具体支持范围和三态差异见 [规则集转换](rule-sets.md)。示例使用 `kind "predicate"` 的规则集：重复 `rule type=... value=...` 为任一匹配即成员，支持的示例谓词为 `domain-suffix` 与 `ip-cidr`，不在集合内部携带出口动作。独立规则组件已支持该子集及互转，实验代理支持多个有序规则集引用，命中动作可选 direct、block 或具名 VLESS，默认可选 direct 或具名 VLESS；最多支持 16 个 VLESS 实例。主规则 `rule kind="rule-set" value=... outbound=...` 把集合放到一条有序规则的位置，首次命中执行出口；都不匹配时用 `default-outbound`。未来含动作/逻辑的规则类型须独立定义；KDL↔BEVE 保留当前规则顺序和行为，不保留注释排版。
+`routing` 的 `rulesets { <name> path=... format="kdl" }`（或子节点写法 `<name> { path "..."; format "kdl" }`）引入独立规则源；`format="beve"` 对应版本化 BEVE 容器；启用 `srs` 构建功能后，`format="srs"` 导入受限的 SRS 二进制条件子集，具体支持范围和三态差异见 [规则集转换](rule-sets.md)。示例使用 `kind "predicate"` 的规则集：重复 `rule type=... value=...` 为任一匹配即成员，支持的示例谓词为 `domain-suffix` 与 `ip-cidr`，不在集合内部携带出口动作。独立规则组件已支持该子集及互转，实验代理支持多个有序规则集引用，命中动作可选 direct、block 或具名 VLESS，默认可选 direct 或具名 VLESS。主规则 `rules { - rule-set "<name>" to="<outbound>" }` 把集合放到一条有序规则的位置，首次命中执行出口；都不匹配时用 `final`。未来含动作/逻辑的规则类型须独立定义；KDL↔BEVE 保留当前规则顺序和行为，不保留注释排版。
 
 实验代理对域名先尝试确定阻断，再解析并对每个候选地址结合域名按规则顺序匹配；这会使 IP 谓词匹配解析结果。以下是未来设计：域名条件依来源使用显式代理域名、Fake-IP 反查或受策略约束的嗅探结果；不存在信息时按规则引擎的 unknown/不匹配策略处理，禁止以字段分类索引改变全局首命中顺序。重载规则集先完整验证及构建不可变快照，失败留在旧代；已有会话保持创建时决策。[规则集转换](rule-sets.md)、[路由引擎](../architecture/routing-engine.md)。
 
@@ -401,26 +401,28 @@ Salamander 在入站和出站各自的 `quic` 块中使用 `salamander-password-
 
 用指定 Glaze 分支验证 KDL 语法及动态文档映射，再用 Nexus 语义校验器验证每个示例、字段错误、重复项、未知项、协议能力和依赖环；KDL 语法成功不表示 schema 或部署有效。成对联调要实际提供密钥与证书，在隔离网络核对客户端 Mixed/TUN → VLESS/TLS → 服务端 → 目标，覆盖 TCP、UDP、DNS/Fake-IP、防回环、规则和失败恢复。示例中没有真实凭据或可部署服务器，不能在未经实现和集成测试前运行。
 
-显式启用 TCP 有序动作时，可在 `routing` 内声明 `tcp-program`，并继续使用 `rule-set` 引用规则文件：
+显式启用 TCP 有序动作时，可在 `routing` 内声明 `rulesets` 与 `tcp-program` 引用规则文件：
 
 ```kdl
 routing {
-    rule-set "blocked" path="rules/blocked.kdl" format="kdl"
+    rulesets {
+        blocked path="rules/blocked.kdl" format="kdl"
+    }
     tcp-program sniff-timeout-ms=100 unknown="skip" {
         rule action="sniff"
         rule action="reject" rule-set="blocked" domain-source="sniffed"
         rule action="resolve"
         rule action="route" outbound="direct"
     }
-    default-outbound "direct"
+    final "direct"
 }
 ```
 
-规则按顺序执行；省略 `rule-set` 表示无条件动作。`action` 支持 `sniff`、`resolve`、`route`、`reject`，只有 `route` 要求 `outbound`。带规则集时可选 `domain-source="explicit"` 或 `"sniffed"`，默认 explicit；FakeIP 和反查来源尚未接生产数据，配置会被拒绝。`unknown="pause"` 遇未知条件停止并拒绝当前连接；`"skip"` 跳过该条规则，继续执行后续动作。嗅探期限为 1–10000 毫秒，并受连接总期限约束；客户端等待 CONNECT 成功才发送应用数据时，嗅探到期后再选路和回复。默认出站仍通过 `default-outbound` 指定。
+规则按顺序执行；省略 `rule-set` 表示无条件动作。`action` 支持 `sniff`、`resolve`、`route`、`reject`，只有 `route` 要求 `outbound`。带规则集时可选 `domain-source="explicit"` 或 `"sniffed"`，默认 explicit；FakeIP 和反查来源尚未接生产数据，配置会被拒绝。`unknown="pause"` 遇未知条件停止并拒绝当前连接；`"skip"` 跳过该条规则，继续执行后续动作。嗅探期限为 1–10000 毫秒，并受连接总期限约束；客户端等待 CONNECT 成功才发送应用数据时，嗅探到期后再选路和回复。默认出站通过 `final` 指定。
 
 `resolve` 可指定 `rule action="resolve" route-only=#true`，也可写成 `rule { action "resolve" route-only=#true; }`。有序 TCP 使用本机 DNS 候选进行后续 IP、CIDR 和私有地址匹配。选中可以承载域名的代理出站时，发送原始域名；选中直连时，复用已经解析的候选。默认为 `#false`，沿用数值目标。纯 IP 出站收到需要保留域名的连接时拒绝该连接。该选项的域名转发语义适用于 TCP。
 
-有序规则可在规则体内写逻辑谓词，具名引用使用同一个 `routing` 块的 `rule-set` 声明。
+有序规则可在规则体内写逻辑谓词，具名引用使用同一个 `routing` 块的 `rulesets` 声明。
 
 ```kdl
 rule action="route" outbound="direct" {
@@ -551,6 +553,7 @@ selector "preferred" {
 
 ```kdl
 http-clients {
+    default "updates"
     updates {
         outbound "direct"
         domain-resolver "bootstrap"
@@ -673,7 +676,7 @@ inbound "masque" type="masque" {
   allow cidr="127.0.0.0/8" first-port=1 last-port=65535
 }
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 ```
 
 监听地址须为不带 zone 的数字地址，`authority` 必须与请求匹配。Bearer 文件使用绝对路径和现有私有文件检查，去掉最多一个末尾换行后须为 1..255 字节的 Bearer token。token 须至少包含一个 ASCII 字母、数字或 `-._~+/` 字符，`=` 只能出现在末尾；证书及私钥也使用绝对路径。CONNECT-UDP 需要至少一项 `allow`，以 CIDR 和闭区间端口授权。CIDR 不能有 host bits，域名解析后的数值地址也须通过此策略。最多 256 项。可选 `dns-timeout-ms` 为 1..60000，默认 5000；`native-bytes` 为 65536..1073741824，默认 8388608。这里的 CIDR 示例只允许回环目标，实际授权应按所需目标配置。支持边界见 [支持矩阵](../planning/proxy-kernel-support-matrix.md)。

@@ -157,21 +157,23 @@ dns {{
     final "spy"
 }}
 routing {{
-    rule-set "geoip-like" {{
-        ip-cidr "10.0.0.0/8"
-    }}
-    rule-set "vip-domains" {{
-        domain "vip.reverse.test"
-    }}
-    rule-set "blocked-explicit" {{
-        domain "never-dns.test"
+    rulesets {{
+        geoip-like {{
+            ip-cidr "10.0.0.0/8"
+        }}
+        vip-domains {{
+            domain "vip.reverse.test"
+        }}
+        blocked-explicit {{
+            domain "never-dns.test"
+        }}
     }}
     tcp-program sniff-timeout-ms=500 unknown="skip" {{
         rule action="route" rule-set="geoip-like" outbound="block"
         rule action="route" rule-set="blocked-explicit" outbound="block"
         rule action="route" rule-set="vip-domains" domain-source="reverse" outbound="block"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     try:
@@ -282,6 +284,7 @@ dns {{
     final "spy"
 }}
 http-clients {{
+    default "direct-http"
     direct-http {{
         outbound "direct"
         domain-resolver "spy"
@@ -290,12 +293,13 @@ http-clients {{
     }}
 }}
 routing {{
-    default-http-client "direct-http"
-    rule-set "dyn" url="https://127.0.0.1:{http_port}/rules.kdl" format="kdl" update-interval-ms=1000
+    rulesets {{
+        dyn url="https://127.0.0.1:{http_port}/rules.kdl" format="kdl" update-interval-ms=1000
+    }}
     tcp-program sniff-timeout-ms=500 unknown="skip" {{
         rule action="route" rule-set="dyn" outbound="block"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
     try:
@@ -377,9 +381,9 @@ def test_working_dir_and_config_dir_cli(nexus_bin: Path, root: Path):
 outbound "direct" type="direct"
 outbound "block" type="block"
 routing {
-    rule-set "local" path="rel-rules.kdl" format="kdl"
+    rulesets { local path="rel-rules.kdl" format="kdl"; }
     rules { - kind="rule-set" value="local" outbound="block"; }
-    default-outbound "direct"
+    final "direct"
 }
 ''')
     (cfgd / "10-main.kdl.bak").write_text("CORRUPT BACKUP IGNORED {{{")

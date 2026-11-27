@@ -74,7 +74,7 @@ dns {{{{
     server "upstream" type="udp" host="127.0.0.1" port={peer.port}
     final "upstream"
 }}}}
-routing {{{{ default-outbound "direct"; }}}}
+routing {{{{ final "direct"; }}}}
 '''
         for listen, port in (("127.0.0.2", 53), (LOCAL4, 5300)):
             path.write_text(config.format(listen=listen, port=port))

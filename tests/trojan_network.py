@@ -303,7 +303,7 @@ inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={ss_front}; meth
 outbound "direct" type="direct"
 outbound "edge" {edge}
 dns {{ server "remote" type="udp" host="127.0.0.1" port={dns.port}; }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
             with nexus_process(binary, config, 2):
                 raw_packets(root, front, origin, drop_empty=kind in ("vless", "vision"))
@@ -330,7 +330,7 @@ inbound "trojan-in" type="trojan" {{
 }}
 outbound "direct" type="direct"
 dns {{ server "remote" type="udp" host="127.0.0.1" port={dns.port}; rule domain="blocked.test" auth-user="alice" action="reject"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
         with nexus_process(binary, server):
             raw_inbound(root, front, live)
@@ -356,7 +356,7 @@ inbound "local" type="socks5" {{ listen host="127.0.0.1" port={socks}; authentic
 outbound "direct" type="direct"
 outbound "remote" type="trojan" {{ {outbound(root, front)} }}
 dns {{ server "remote" type="tcp" host="127.0.0.1" port={dns.port}; }}
-routing {{ default-outbound "remote"; }}
+routing {{ final "remote"; }}
 ''')
             with nexus_process(binary, local):
                 for origin, domain in ((live, False), (delayed, False), (ipv6, False), (live, True)):

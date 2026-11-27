@@ -53,7 +53,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-local-socks-') as directory, sock
         for explicit in (False, True):
             with socket.socket() as reserve: reserve.bind(('127.0.0.1',0)); front=reserve.getsockname()[1]
             dns_config='dns { server "local" type="local"; strategy "ipv4_only"; }' if explicit else ''
-            (path/'server.kdl').write_text(f'''schema-version 1\nrole "server"\nworkers 1\n{dns_config}\ninbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}\noutbound "direct" type="direct"\nrouting {{ default-outbound "direct"; }}\n''')
+            (path/'server.kdl').write_text(f'''schema-version 1\nrole "server"\nworkers 1\n{dns_config}\ninbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}\noutbound "direct" type="direct"\nrouting {{ final "direct"; }}\n''')
             env=os.environ.copy(); env['LD_PRELOAD']=str(path/'guard.so')
             server=subprocess.Popen([BINARY,'run','--config',path/'server.kdl'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
             def connect():

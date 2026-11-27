@@ -19,7 +19,7 @@ inbound "local" type="socks5" {{
     authentication "none"
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 '''
 with tempfile.TemporaryDirectory() as directory:
     path = Path(directory) / "config.kdl"

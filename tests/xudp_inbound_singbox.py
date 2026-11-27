@@ -58,14 +58,14 @@ rule type="and" { rule type="inbound" value="edge"; rule type="ip-cidr" value="1
 kind "predicate"
 rule type="and" { rule type="source-ip-cidr" value="127.0.0.0/8"; rule type="source-port-range" value="1-65535"; rule type="ip-cidr" value="127.0.0.2/32"; rule type="network" value="udp"; }
 ''' if source_rule else 'schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.2/32"\n')
-    routing=('rule-set "source" path="source.kdl" format="kdl"; rules { - kind="rule-set" value="source" outbound="reject"; }; ' if block_rule else '')
+    routing=('rulesets { "source" path="source.kdl" format="kdl"; }; rules { - kind="rule-set" value="source" outbound="reject"; }; ' if block_rule else '')
     (root/'server.kdl').write_text(f'''schema-version 1
 role "server"
 workers 2
 inbound "edge" type="vless" {{ listen host="127.0.0.1" port={front};{flow} authentication {{ user "test" uuid-file="{root/'uuid'}"; }}; tls {{ {tls} }}; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ {routing}default-outbound "direct"; }}
+routing {{ {routing}final "direct"; }}
 ''')
     out = {'type': 'vless', 'server': '127.0.0.1', 'server_port': front, 'uuid': UUID,
            'tls': {'enabled': True, 'server_name': 'localhost', 'certificate_path': str(root/'cert')}}

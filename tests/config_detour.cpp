@@ -13,7 +13,7 @@ inbounds { inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authe
 outbounds {
 outbound "direct" type="direct"
 outbound "block" type="block"
-)")+nodes+"}\n"+std::string(extra_top)+R"(routing { default-outbound "exit"; }
+)")+nodes+"}\n"+std::string(extra_top)+R"(routing { final "exit"; }
 )");
     }
 }

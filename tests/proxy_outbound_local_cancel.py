@@ -31,7 +31,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-outbound-local-') as directory, s
             edge=f'outbound "edge" type="vless" {{ server host="edge.test" port=8443; authentication {{ uuid-file "{path/"uuid"}"; }}; tls {{ server-name "example.test"; ca-file "{path/"cert.pem"}"; verify #true; }}; }}'
         else:
             edge=f'outbound "edge" type="shadowsocks" {{ server host="edge.test" port=8443; method "2022-blake3-aes-128-gcm"; key-file "{path/"key"}"; }}'
-        (path/'config').write_text(f'''schema-version 1\nrole "client"\nworkers 1\ninbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}\n{edge}\noutbound "direct" type="direct"\nrouting {{ default-outbound "edge"; }}\n''')
+        (path/'config').write_text(f'''schema-version 1\nrole "client"\nworkers 1\ninbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}\n{edge}\noutbound "direct" type="direct"\nrouting {{ final "edge"; }}\n''')
         env=os.environ.copy(); env['LD_PRELOAD']=str(path/'guard.so')
         proc=subprocess.Popen([require_nexus(),'run','--config',path/'config'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:

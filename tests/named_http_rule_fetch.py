@@ -224,7 +224,7 @@ http-clients {{
     max-response-bytes 512
   }}
 }}
-routing {{ default-outbound "physical"; }}
+routing {{ final "physical"; }}
 ''')
 
         configure(root / "cert")

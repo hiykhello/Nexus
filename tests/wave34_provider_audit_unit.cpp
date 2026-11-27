@@ -107,7 +107,7 @@ proxy-providers {{
 }}
 inbounds {{ inbound "in" type="socks5" {{ listen "127.0.0.1:1080"; authentication "none"; }} }}
 outbounds {{ direct; selector "proxy" {{ use "sub"; }}; }}
-routing {{ default "proxy"; }}
+routing {{ final "proxy"; }}
 )kdl", sub.string(), pcache.string());
         write_text(cfg_path, raw_cfg);
         cli::ProxyProviderManager mgr;
@@ -147,7 +147,7 @@ outbounds {{
   selector "only-a" {{ use "a"; }}
   selector "both" {{ use "a"; use "b"; }}
 }}
-routing {{ default "only-b"; }}
+routing {{ final "only-b"; }}
 )kdl", sub_a.string(), (tmp.path / "ca").string(), sub_b.string(), (tmp.path / "cb").string());
         write_text(cfg_path, raw_cfg);
 
@@ -182,7 +182,7 @@ schema-version 1
 role "client"
 inbounds { inbound "in" type="socks5" { listen "127.0.0.1:1080"; authentication "none"; } }
 outbounds { direct; selector "g" { member "edge"; }; }
-routing { default "g"; }
+routing { final "g"; }
 )kdl";
         auto ambig = provider::expand_providers_in_kdl(ambig_kdl, provs);
         check(!ambig && ambig.error().contains("ambiguous"),
@@ -199,7 +199,7 @@ outbounds {
   selector "gb" { use "b"; }
   selector "gs" { member "edge"; }
 }
-routing { default "gb"; }
+routing { final "gb"; }
 )kdl";
         std::map<std::string, std::vector<std::pair<std::string, std::string>>> only_b{
             {"b", {{"edge", "  outbound \"edge\" type=\"socks5\" {\n    server host=\"127.0.0.1\" port=18802\n  }\n"}}},
@@ -311,7 +311,7 @@ outbounds {{
     {}
   }}
 }}
-routing {{ default "g"; }}
+routing {{ final "g"; }}
 )kdl", sub.string(), (tmp.path / "ord_cache").string(), group_body);
             write_text(cfg_path, raw_cfg);
             cli::ProxyProviderManager mgr;

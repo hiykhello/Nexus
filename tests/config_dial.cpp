@@ -17,7 +17,7 @@ outbound "{}" type="{}" {{ {} {} }}
 {}
 {}
 }}
-routing {{ default-outbound "{}"; }}
+routing {{ final "{}"; }}
 )",protocol=="direct" ? "direct" : "node",protocol,options,fields,direct,extra,protocol=="direct" ? "direct" : "node"));
     }
     auto options(config::Config const& config,std::string_view protocol) -> config::TcpSocketOptions const& {
@@ -112,10 +112,13 @@ dns {
         server "boot" type="udp" host="127.0.0.1" port=5353
         server "alt" type="udp" host="127.0.0.2" port=5353
     }
+    default "boot"
     final "boot"
 }
 inbounds { inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
 outbounds {
+    interface "lo"
+    mark 0x4242
 outbound "direct" type="direct"
 outbound "entry" type="shadowsocks" {
     server host="entry.example" port=443
@@ -143,16 +146,13 @@ outbound "layered" type="vless" {
 }
 }
 routing {
-    default-interface "lo"
-    default-mark 0x4242
-    default-domain-resolver "boot"
     find-process #true
     rules {
         - domain "a.example" to="custom"
         - domain "b.example" to="ipnode"
         - domain "c.example" to="layered"
     }
-    default-outbound "entry"
+    final "entry"
 }
 )");
         if (!inherited) { std::cerr << "routing defaults inherit: " << inherited.error() << '\n'; return 40; }
@@ -178,6 +178,9 @@ routing {
 role "client"
 inbounds { inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
 outbounds {
+    auto-detect-interface #true
+    network-strategy "hybrid"
+    network-type "wifi"
 outbound "direct" type="direct"
 outbound "node" type="shadowsocks" {
     server host="127.0.0.1" port=443
@@ -186,10 +189,7 @@ outbound "node" type="shadowsocks" {
 }
 }
 routing {
-    auto-detect-interface #true
-    default-network-strategy "hybrid"
-    default-network-type "wifi"
-    default-outbound "node"
+    final "node"
 }
 )");
         if (!auto_hybrid) { std::cerr << "auto/hybrid: " << auto_hybrid.error() << '\n'; return 47; }
@@ -208,26 +208,36 @@ routing {
             direct_hybrid->direct_network->strategy != platform::network::Strategy::hybrid ||
             direct_hybrid->direct_network->fallback_delay.count() != 0) return 51;
 
-        for (auto bad_routing : {
-            R"(default-interface ""; default-outbound "direct";)",
-            R"(default-interface "abcdefghijklmnop"; default-outbound "direct";)",
-            R"(default-interface "lo"; default-interface "lo"; default-outbound "direct";)",
-            R"(default-mark -1; default-outbound "direct";)",
-            R"(default-mark 4294967296; default-outbound "direct";)",
-            R"(default-domain-resolver "missing"; default-outbound "direct";)",
-            R"(default-network-strategy "bogus"; default-outbound "direct";)",
-            R"(default-network-type "satellite"; default-outbound "direct";)",
-            R"(default-network-strategy "prefer" fallback="wifi"; default-network-type "wifi"; default-outbound "direct";)",
-            R"(auto-detect-interface 1; default-outbound "direct";)",
-            R"(find-process "yes"; default-outbound "direct";)"}) {
+        for (auto bad_outbounds : {
+            R"(interface "";)",
+            R"(interface "abcdefghijklmnop";)",
+            R"(interface "lo"; interface "lo";)",
+            R"(mark -1;)",
+            R"(mark 4294967296;)",
+            R"(network-strategy "bogus";)",
+            R"(network-type "satellite";)",
+            R"(network-strategy "prefer" fallback="wifi"; network-type "wifi";)",
+            R"(auto-detect-interface 1;)"}) {
             auto bad = config::parse_kdl(std::format(R"(schema-version 1
 role "client"
 inbounds {{ inbound "in" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }} }}
-outbounds {{ outbound "direct" type="direct"; }}
-routing {{ {} }}
-)", bad_routing));
-            if (bad) { std::cerr << "expected failure for routing: " << bad_routing << '\n'; return 52; }
+outbounds {{ {} outbound "direct" type="direct"; }}
+routing {{ final "direct"; }}
+)", bad_outbounds));
+            if (bad) { std::cerr << "expected failure for outbounds: " << bad_outbounds << '\n'; return 52; }
         }
+        if (config::parse_kdl(R"(schema-version 1
+role "client"
+inbounds { inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+dns { servers { udp "boot" host="127.0.0.1" port=5353; }; default "missing"; final "boot"; }
+outbounds { outbound "direct" type="direct"; }
+routing { final "direct"; }
+)") || config::parse_kdl(R"(schema-version 1
+role "client"
+inbounds { inbound "in" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
+outbounds { outbound "direct" type="direct"; }
+routing { find-process "yes"; final "direct"; }
+)")) { std::cerr << "expected failure for invalid dns.default or routing.find-process\n"; return 52; }
     }
 
     // Shared Inbound ListenOptions across TCP/UDP inbound types & detour validation.
@@ -284,7 +294,7 @@ inbounds {
     }
 }
 outbounds { outbound "direct" type="direct"; }
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 )");
         if (!multi) { std::cerr << "listen options multi: " << multi.error() << '\n'; return 60; }
         auto const& l0 = multi->inbounds[0].listen;
@@ -316,7 +326,7 @@ routing { default-outbound "direct"; }
 role "client"
 {}
 outbounds {{ outbound "direct" type="direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 )", bad_in));
             if (bad) { std::cerr << "expected failure for inbound: " << bad_in << '\n'; return 67; }
         }

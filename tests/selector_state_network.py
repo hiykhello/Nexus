@@ -40,9 +40,9 @@ outbounds {{
     outbound "manual" type="selector" {{ member "direct"; member "blocked"; selected "direct"; }}
 }}
 routing {{
-    rule-set "target" path="target.kdl" format="kdl"
+    rulesets {{ "target" path="target.kdl" format="kdl"; }}
     rules {{ - kind="rule-set" value="target" outbound="manual"; }}
-    default-outbound "direct"
+    final "direct"
 }}
 '''
     config.write_text(source)

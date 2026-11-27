@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory(prefix='nexus-direct-tfo-blackhole-') as direct
 role "client"
 inbound "local" type="mixed" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct" {{ tcp-fast-open #true; connect-timeout-ms 300; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     with nexus_process(pathlib.Path(sys.argv[1]).resolve(), config):
         for request in (b'GET http://192.0.2.1:443/test HTTP/1.1\r\nHost: 192.0.2.1:443\r\n\r\n',

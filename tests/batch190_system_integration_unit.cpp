@@ -128,7 +128,7 @@ namespace {
             "schema-version 1\nrole \"client\"\n"
             "inbounds { inbound \"s\" type=\"socks5\" { listen host=\"127.0.0.1\" port=1080; authentication \"none\"; }; }\n"
             "outbounds { outbound \"direct\" type=\"direct\"; }\n"
-            "routing { default-outbound \"direct\"; }\n";
+            "routing { final \"direct\"; }\n";
         require(nexus_core_check_config_text(valid_kdl, err, sizeof(err)) == 0, "check_config_text valid");
         require(nexus_core_check_config_text("bad {", err, sizeof(err)) != 0 && std::string_view(err).size() > 0,
             "check_config_text invalid populates err_buf");
@@ -277,7 +277,7 @@ routing {
         - domain "man.example" to="man"
         - domain "lb.example" to="lb"
     }
-    default-outbound "auto"
+    final "auto"
 }
 )";
         auto parsed = config::parse_kdl(valid_kdl);
@@ -301,7 +301,7 @@ outbounds {
     outbound "direct" type="direct"
     outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 0; }
 }
-routing { default-outbound "g"; }
+routing { final "g"; }
 )");
         require(!bad1.has_value(), "30B reject probe-concurrency 0");
         auto bad2 = config::parse_kdl(R"(
@@ -312,7 +312,7 @@ outbounds {
     outbound "direct" type="direct"
     outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 1025; }
 }
-routing { default-outbound "g"; }
+routing { final "g"; }
 )");
         require(!bad2.has_value(), "30B reject probe-concurrency 1025");
         auto bad3 = config::parse_kdl(R"(
@@ -323,7 +323,7 @@ outbounds {
     outbound "direct" type="direct"
     outbound "g" type="selector" { member "direct"; idle-timeout-ms 1000; }
 }
-routing { default-outbound "g"; }
+routing { final "g"; }
 )");
         require(!bad3.has_value(), "30B reject idle-timeout-ms on selector");
 

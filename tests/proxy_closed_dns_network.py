@@ -16,7 +16,7 @@ with tempfile.TemporaryDirectory() as folder, Echo() as echo:
 role "client"
 inbounds {{ socks5 "local" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}; }}
 outbounds {{ direct "direct"; }}
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 """
     dns_port=free_port()
     tests=[

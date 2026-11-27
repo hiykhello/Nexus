@@ -58,7 +58,7 @@ role "server"
 workers 2
 inbound "edge" type="vless" {{ listen host="127.0.0.1" port={front}; {flow} authentication {{ user "test" uuid-file="{uuid}"; }}; tls {{ reality {{ private-key-file "{path/'secret'}"; {credentials} server-name "localhost"; short-id "0102030405060708"; fallback host="localhost" port={cover.getsockname()[1]}; }}; }}; }}
 outbound "direct" type="direct"
-routing {{ tcp-program sniff-timeout-ms=100 unknown="skip" {{ rule action="sniff"; rule action="route" outbound="direct"; }}; default-outbound "direct"; }}
+routing {{ tcp-program sniff-timeout-ms=100 unknown="skip" {{ rule action="sniff"; rule action="route" outbound="direct"; }}; final "direct"; }}
 ''')
     cfg={'log':{'level':'warn'},'inbounds':[{'type':'socks','listen':'127.0.0.1','listen_port':socks}],
          'outbounds':[{'type':'vless','server':'127.0.0.1','server_port':front,'uuid':'00010203-0405-0607-0809-0a0b0c0d0e0f',

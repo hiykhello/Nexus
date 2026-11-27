@@ -21,7 +21,7 @@ outbound "edge" type="hysteria2" {{ server host="127.0.0.1" port=443;
  tls {{ server-name "localhost"; ca-file "{root / 'cert'}"; verify #true; }}
  quic {{ max-udp-payload-size 1200; disable-path-mtu-discovery #true; }}
 }}
-routing {{ default-outbound "edge"; }}
+routing {{ final "edge"; }}
 ''')
     result = subprocess.run([str(args.binary.resolve(strict=True)), 'run', '--config', str(config)],
                             capture_output=True, text=True, timeout=5)
@@ -36,7 +36,7 @@ inbound "edge" type="hysteria2" {{ listen host="127.0.0.1" port=12345;
  quic {{ max-udp-payload-size 1500; disable-path-mtu-discovery #false; }}
 }}
 outbound "direct" type="direct"
-routing {{ default-outbound "direct"; }}
+routing {{ final "direct"; }}
 ''')
     result = subprocess.run([str(args.binary.resolve(strict=True)), 'run', '--config', str(config)],
                             capture_output=True, text=True, timeout=5)

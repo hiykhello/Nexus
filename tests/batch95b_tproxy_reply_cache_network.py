@@ -137,7 +137,7 @@ sessions-per-listener 256
 inbound "tp4" type="tproxy" { listen host="10.95.1.1" port=19501; udp #true; }
 inbound "tp6" type="tproxy" { listen host="fd95:1::1" port=19502; udp #true; }
 outbound "direct" type="direct"
-routing { default-outbound "direct"; }
+routing { final "direct"; }
 """)
         strace_log = root / "strace.log"
         proc = subprocess.Popen(

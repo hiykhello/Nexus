@@ -26,9 +26,11 @@ inbound "trojan" type="trojan" {{ listen host="127.0.0.1" port={port}; authentic
 outbound "direct" type="direct"
 dns {{ servers {{ udp "resolver" host="127.0.0.1" port={dns.port}; }}; final "resolver"; strategy "ipv4_only"; disable-cache #true; }}
 routing {{
-  rule-set "blocked" path="rule.kdl" format="kdl"
-  rule-set "slow" path="slow.kdl" format="kdl"
-  rule-set "terminal" path="terminal.kdl" format="kdl"
+  rulesets {{
+      "blocked" path="rule.kdl" format="kdl"
+      "slow" path="slow.kdl" format="kdl"
+      "terminal" path="terminal.kdl" format="kdl"
+  }}
   tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{
     rule action="bypass"
     rule action="route-options" rule-set="slow" connect-timeout-ms=120
@@ -39,7 +41,7 @@ routing {{
     rule action="resolve"
     rule action="route" outbound="direct"
   }}
-  default-outbound "direct"
+  final "direct"
 }}
 ''')
         echo=socket.socket(socket.AF_INET,socket.SOCK_DGRAM);echo.bind(('127.0.0.1',0));echo.settimeout(5);target=echo.getsockname()[1]

@@ -26,12 +26,12 @@ dns {{
     final "upstream"
 }}
 routing {{
-    rule-set "target" path="target.kdl" format="kdl"
+    rulesets {{ "target" path="target.kdl" format="kdl"; }}
     tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true {{
         rule action="hijack-dns" rule-set="target"
         rule action="reject"
     }}
-    default-outbound "direct"
+    final "direct"
 }}
 ''')
         rule = ("-i", "nxclienthost", "-p", "udp", "-d", target_address, "--dport", "53", "-j", "TPROXY",
