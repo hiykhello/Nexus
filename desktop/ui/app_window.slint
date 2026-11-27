@@ -14,7 +14,6 @@ import { NexusVScrollBar } from "components/glass_primitives.slint";
 import { OverlayFeedbackLayer } from "components/overlay_layer.slint";
 import { Sidebar } from "components/sidebar.slint";
 import { StatusCard } from "components/status_card.slint";
-import { BottomStatusBar } from "components/bottom_status_bar.slint";
 import { GroupsPanel } from "components/groups_panel.slint";
 import { ConnectionsPanel } from "components/connections_panel.slint";
 import { ProfilesPanel } from "components/profiles_panel.slint";
@@ -27,7 +26,7 @@ export { Theme, Shortcuts, I18n, Motion, LayoutMetrics, TooltipState, ToastState
 
 export component AppWindow inherits Window {
     title: "Nexus";
-    background: Theme.surface-bg;
+    background: Theme.blur-enabled ? transparent : Theme.surface-bg;
     min-width: 780px;
     min-height: 560px;
     preferred-width: 1280px;
@@ -238,7 +237,6 @@ export component AppWindow inherits Window {
         Rectangle {
             x: 0px;
             y: 0px;
-            background: Theme.surface-bg;
             clip: true;
 
             HorizontalLayout {
@@ -267,6 +265,7 @@ export component AppWindow inherits Window {
 
                     Rectangle {
                         vertical-stretch: 1;
+                        background: Theme.surface-bg;
                         clip: true;
 
                         VerticalLayout {
@@ -291,7 +290,7 @@ export component AppWindow inherits Window {
                                 lan-share-enabled: root.lan-share-enabled; lan-share-subtitle: root.lan-share-subtitle;
                                 tun-enabled: root.tun-enabled; active-profile: root.active-profile; active-node: root.active-node;
                                 active-node-latency-ms: root.active-node-latency-ms; active-sessions: root.active-sessions;
-                                connections: root.connections; groups: root.groups; selected-group: root.selected-group;
+                                groups: root.groups; selected-group: root.selected-group;
                                 active-routing-name: root.active-routing-name; active-rule-count: root.active-rule-count;
                                 upload-rate: root.upload-rate; download-rate: root.download-rate;
                                 upload-total: root.upload-total; download-total: root.download-total;
@@ -338,7 +337,7 @@ export component AppWindow inherits Window {
                                         lan-share-enabled: root.lan-share-enabled; lan-share-subtitle: root.lan-share-subtitle;
                                         tun-enabled: root.tun-enabled; active-profile: root.active-profile; active-node: root.active-node;
                                         active-node-latency-ms: root.active-node-latency-ms; active-sessions: root.active-sessions;
-                                        connections: root.connections; groups: root.groups; selected-group: root.selected-group;
+                                        groups: root.groups; selected-group: root.selected-group;
                                         active-routing-name: root.active-routing-name; active-rule-count: root.active-rule-count;
                                         upload-rate: root.upload-rate; download-rate: root.download-rate;
                                         upload-total: root.upload-total; download-total: root.download-total;
@@ -443,21 +442,6 @@ export component AppWindow inherits Window {
                                 grant-tun-privilege => { root.grant-tun-privilege(); } revoke-tun-privilege => { root.revoke-tun-privilege(); }
                             }
                         }
-                    }
-
-                    BottomStatusBar {
-                        core-running: root.core-running;
-                        core-toggling: root.core-toggling;
-                        diagnostic-message: root.diagnostic-message;
-                        diagnostic-ok: root.diagnostic-ok;
-                        conn-probe-busy: root.conn-probe-busy;
-                        groups-probing: root.groups-probing;
-                        probe-connectivity => { root.probe-connectivity(); }
-                        probe-all-nodes => {
-                            if (root.selected-group != "") { root.probe-group(root.selected-group); }
-                            else { root.active-tab = 1; root.refresh-groups(); }
-                        }
-                        toggle-core => { root.toggle-core(); }
                     }
                 }
             }

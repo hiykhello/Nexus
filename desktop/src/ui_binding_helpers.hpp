@@ -48,6 +48,7 @@ namespace desktop_ui_helpers {
             : p.accent_preset == "amber" ? nexus_ui::AccentPreset::Amber
             : p.accent_preset == "rose" ? nexus_ui::AccentPreset::Rose
             : nexus_ui::AccentPreset::Ocean);
+        theme.set_blur_enabled(p.blur_enabled);
         ui.global<nexus_ui::Motion>().set_reduced(p.reduced_motion);
 
         ui.set_outbound_mode(slint::SharedString(p.outbound_mode));
@@ -74,6 +75,7 @@ namespace desktop_ui_helpers {
         auto accent = theme.get_accent_preset();
         p.accent_preset = accent == nexus_ui::AccentPreset::Emerald ? "emerald" : accent == nexus_ui::AccentPreset::Violet ? "violet"
             : accent == nexus_ui::AccentPreset::Amber ? "amber" : accent == nexus_ui::AccentPreset::Rose ? "rose" : "ocean";
+        p.blur_enabled = theme.get_blur_enabled();
         p.reduced_motion = ui.global<nexus_ui::Motion>().get_reduced();
         p.outbound_mode = std::string(ui.get_outbound_mode());
         p.sidebar_width = ui.get_sidebar_width();
@@ -99,6 +101,52 @@ namespace desktop_ui_helpers {
         inb.http.host = std::string(ui.get_http_proxy_host());
         inb.http.port = desktop::parse_port_u16(std::string_view(ui.get_http_proxy_port())).value_or(0);
         return inb;
+    }
+
+    inline auto setup_native_window_blur(
+        nexus_ui::AppWindow& ui,
+        slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui,
+        std::shared_ptr<desktop::WindowBlurController> blur) -> void {
+        auto attempted = std::make_shared<bool>(false);
+        auto try_attach = [blur, attempted](nexus_ui::AppWindow& win_ui) mutable {
+            if (blur->active() || *attempted) return;
+#ifdef _WIN32
+            void* hwnd = win_ui.window().win32_hwnd();
+            if (!hwnd) return;
+            *attempted = true;
+            (void)blur->attach_win32(hwnd);
+#elif !defined(__APPLE__)
+            void* dpy = win_ui.window().wayland_display();
+            void* surf = win_ui.window().wayland_surface();
+            if (!dpy || !surf) return;
+            *attempted = true;
+            (void)blur->attach_wayland(dpy, surf);
+#else
+            (void)win_ui;
+            *attempted = true;
+#endif
+        };
+        (void)ui.window().set_rendering_notifier([weak_ui, try_attach = std::move(try_attach), blur, attempted](
+            slint::RenderingState state, slint::GraphicsAPI) mutable {
+            if (state == slint::RenderingState::RenderingSetup) {
+                *attempted = false;
+                if (auto strong = weak_ui.lock()) try_attach(**strong);
+            } else if (state == slint::RenderingState::BeforeRendering) {
+                auto strong = weak_ui.lock();
+                if (!strong) return;
+                if (!blur->active() && !*attempted) try_attach(**strong);
+                if (!blur->active()) return;
+                auto phys = (**strong).window().size();
+                auto sz = desktop::compute_logical_blur_size(phys.width, phys.height, (**strong).window().scale_factor());
+                auto const& theme = (**strong).global<nexus_ui::Theme>();
+                bool const blur_on = theme.get_blur_enabled();
+                bool const en = desktop::should_enable_native_blur(blur_on, blur_on ? 0.88f : 1.0f);
+                blur->sync(en, sz.width, sz.height, theme.get_dark());
+            } else if (state == slint::RenderingState::RenderingTeardown) {
+                *attempted = false;
+                blur->detach();
+            }
+        });
     }
 
     inline auto is_failed_node_state(std::string_view st) -> bool {

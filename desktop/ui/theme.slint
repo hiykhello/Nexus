@@ -6,6 +6,7 @@ export enum AccentPreset { ocean, emerald, violet, amber, rose }
 export global Theme {
     in-out property <ThemePreference> preference: ThemePreference.system;
     in-out property <AccentPreset> accent-preset: AccentPreset.ocean;
+    in-out property <bool> blur-enabled: true;
 
     public function apply-preference(pref: ThemePreference) {
         preference = pref;
@@ -108,12 +109,15 @@ export global Theme {
     out property <color> proto-direct-bg: live-emerald-soft;
 
     // Committed Instrument Matte Surface Hierarchy (Obsidian Chassis / Paper Daylight / Studio Amber)
-    out property <color> sidebar-card-bg: is-amber ? #0e0d0c : dark ? #0d0f13 : #eceae4;
-    out property <color> surface-bg: is-amber ? #141311 : dark ? #12151b : #f6f5f2;
+    out property <color> sidebar-card-bg-solid: is-amber ? #0e0d0c : dark ? #0d0f13 : #eceae4;
+    out property <color> surface-bg-solid: is-amber ? #141311 : dark ? #12151b : #f6f5f2;
+    out property <color> card-bg-solid: is-amber ? #1c1a17 : dark ? #191d25 : #ffffff;
+    out property <color> sidebar-card-bg: blur-enabled ? sidebar-card-bg-solid.with-alpha(dark ? 0.72 : 0.80) : sidebar-card-bg-solid;
+    out property <color> surface-bg: blur-enabled ? surface-bg-solid.with-alpha(dark ? 0.78 : 0.84) : surface-bg-solid;
     out property <color> sidebar-border: is-amber ? #2c2822 : dark ? #262b36 : #dddad2;
 
     // L1 Matte Card / L2 Well / L3 Inset
-    out property <color> card-bg: is-amber ? #1c1a17 : dark ? #191d25 : #ffffff;
+    out property <color> card-bg: blur-enabled ? card-bg-solid.with-alpha(dark ? 0.86 : 0.90) : card-bg-solid;
     out property <brush> card-surface: card-bg;
     out property <color> overlay-bg: is-amber ? #211e1a : dark ? #1c212b : #ffffff;
     out property <color> well-bg: is-amber ? #24211d : dark ? #202530 : #efede8;
@@ -140,7 +144,8 @@ export global Theme {
 
     out property <string> mono-font: "monospace";
     out property <color> row-bg: card-bg;
-    out property <color> row-alt-bg: is-amber ? #201d19 : dark ? #1d222b : #faf9f6;
+    out property <color> row-alt-bg-solid: is-amber ? #201d19 : dark ? #1d222b : #faf9f6;
+    out property <color> row-alt-bg: blur-enabled ? row-alt-bg-solid.with-alpha(dark ? 0.88 : 0.92) : row-alt-bg-solid;
     out property <color> row-hover-bg: is-amber ? #2b2722 : dark ? #252a35 : #e6e3db;
 
     // Calibrated WCAG 2.1 AA Typography & Semantic Statuses

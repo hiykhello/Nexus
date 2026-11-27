@@ -1,3 +1,4 @@
+import { CommandPaletteState } from "../command_palette_state.slint";
 import { TooltipState } from "../feedback.slint";
 import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
@@ -330,7 +331,15 @@ export component Sidebar inherits Rectangle {
 
         Rectangle { height: 1px; background: Theme.hairline-subtle; }
 
-        // Bottom Utility Controls: One-click Light/Dark toggle & Expand/Collapse toggle
+        // Bottom Utility Controls: Command Palette, Light/Dark toggle & Expand/Collapse toggle
+        RailUtilityButton {
+            icon: @image-url("../icons/search.svg");
+            label: I18n.t("命令面板", "Command");
+            tip-text: I18n.t("命令面板", "Command Palette") + " (" + Shortcuts.format-full(Shortcuts.command-palette) + ")";
+            collapsed: root.eff-collapsed;
+            clicked => { CommandPaletteState.toggle-palette(); }
+        }
+
         RailUtilityButton {
             icon: Theme.dark ? @image-url("../icons/sun.svg") : @image-url("../icons/moon.svg");
             label: Theme.dark ? I18n.t("切换浅色", "Light Mode") : I18n.t("切换深色", "Dark Mode");

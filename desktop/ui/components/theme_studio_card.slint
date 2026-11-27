@@ -242,6 +242,7 @@ export component ThemeStudioCard inherits Rectangle {
                 clicked => {
                     Theme.apply-preference(ThemePreference.system);
                     Theme.accent-preset = AccentPreset.ocean;
+                    Theme.blur-enabled = true;
                     I18n.preference = LanguagePreference.system;
                     Motion.reduced = false;
                     root.prefs-changed();
@@ -323,6 +324,37 @@ export component ThemeStudioCard inherits Rectangle {
         }
 
         Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        HorizontalLayout {
+            vertical-stretch: 0;
+            min-height: 36px;
+            spacing: Theme.space-md;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                alignment: center;
+                spacing: 2px;
+                Text {
+                    text: I18n.t("窗口模糊", "Window Blur");
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: Theme.text-primary;
+                }
+                Text {
+                    text: I18n.t("半透明磨砂窗口背景", "Translucent frosted window background");
+                    font-size: 11px;
+                    color: Theme.text-muted;
+                    overflow: elide;
+                }
+            }
+            VerticalLayout {
+                alignment: center;
+                NexusSwitch {
+                    checked <=> Theme.blur-enabled;
+                    toggled => { root.prefs-changed(); }
+                }
+            }
+        }
 
         HorizontalLayout {
             vertical-stretch: 0;

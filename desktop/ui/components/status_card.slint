@@ -1,9 +1,9 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { ActiveConnectionItem, OutboundGroupItem } from "../types.slint";
+import { OutboundGroupItem } from "../types.slint";
 import { DualTrackSpeedCard, HeroStatusCard } from "dash_perf_cards.slint";
 import { AppPerfCard, CorePerfCard } from "dash_process_cards.slint";
-import { ConnectionsPreviewCard, QuickSwitchRow } from "dash_row_cards.slint";
+import { QuickSwitchRow } from "dash_row_cards.slint";
 import { OutboundModeCard, PolicyGroupsCard, RoutingSummaryCard, ServiceHealthCard } from "dash_utility_cards.slint";
 import { RouteTransitStrip } from "route_transit_strip.slint";
 
@@ -33,7 +33,6 @@ export component StatusCard inherits VerticalLayout {
     in property <string> active-node: "";
     in property <int> active-node-latency-ms: -1;
     in property <int> active-sessions: 0;
-    in property <[ActiveConnectionItem]> connections: [];
     in property <[OutboundGroupItem]> groups: [];
     in property <string> selected-group: "";
     in property <string> active-routing-name: "";
@@ -137,20 +136,11 @@ export component StatusCard inherits VerticalLayout {
             }
         }
 
-        // Row 2 (min 176px, 2fr : 1fr : 1fr): Active Connections Preview | App Performance | Core Performance
+        // Row 2 (min 166px, 1fr : 1fr): App Performance | Core Performance
         HorizontalLayout {
             vertical-stretch: 1;
-            min-height: 176px;
+            min-height: 166px;
             spacing: Theme.space-sm;
-
-            ConnectionsPreviewCard {
-                horizontal-stretch: 2;
-                preferred-width: 0px;
-                min-width: 0px;
-                active-sessions: root.active-sessions;
-                connections: root.connections;
-                open-connections => { root.open-connections(); }
-            }
 
             AppPerfCard {
                 horizontal-stretch: 1;
@@ -318,13 +308,6 @@ export component StatusCard inherits VerticalLayout {
                 core-running: root.core-running; pid-text: root.core-pid-text; cpu-text: root.core-cpu-text; cpu-ratio: root.core-cpu-ratio; memory-text: root.core-memory-text;
                 clear-cache => { root.clear-cache(); }
             }
-        }
-
-        ConnectionsPreviewCard {
-            height: 176px;
-            active-sessions: root.active-sessions;
-            connections: root.connections;
-            open-connections => { root.open-connections(); }
         }
 
         HorizontalLayout {

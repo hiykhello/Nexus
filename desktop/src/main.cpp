@@ -32,6 +32,7 @@ import desktop.tray_controller;
 import desktop.tun_privilege;
 import desktop.ui_actions;
 import desktop.ui_prefs;
+import desktop.window_blur;
 import desktop.workspace_composer;
 import desktop.workspace_models;
 import desktop.workspace_store;
@@ -66,6 +67,8 @@ auto main(int argc, char** argv) -> int {
 
     auto ui = nexus_ui::AppWindow::create();
     slint::ComponentWeakHandle<nexus_ui::AppWindow> weak_ui(ui);
+    auto blur_ctrl = std::make_shared<desktop::WindowBlurController>();
+    desktop_ui_helpers::setup_native_window_blur(*ui, weak_ui, blur_ctrl);
 
     std::function<void()> show_window_from_ui;
     auto instance = desktop::SingleInstanceGuard::acquire("nexus-desktop", [weak_ui, &show_window_from_ui] {
@@ -212,7 +215,7 @@ auto main(int argc, char** argv) -> int {
         sync_perf_ui();
         if (supervisor.running()) {
             poll_telemetry(std::string_view(ui->get_active_node()).empty());
-            if ((ui->get_active_tab() == 0 || ui->get_active_tab() == 2) && !ui->get_connections_paused()) ui->invoke_refresh_connections();
+            if (ui->get_active_tab() == 2 && !ui->get_connections_paused()) ui->invoke_refresh_connections();
             if (ui->get_active_tab() == 4) ui->invoke_refresh_logs();
             inspect_ctrl.sync_log_stream(true);
         }
@@ -405,7 +408,7 @@ auto main(int argc, char** argv) -> int {
             if (!ws_up) {
                 poll_telemetry(std::string_view(ui->get_active_node()).empty());
             }
-            if (!ws_up && (ui->get_active_tab() == 0 || ui->get_active_tab() == 2) && !ui->get_connections_paused() && (++conn_poll_tick % 2 == 0) &&
+            if (!ws_up && ui->get_active_tab() == 2 && !ui->get_connections_paused() && (++conn_poll_tick % 2 == 0) &&
                 !conns_in_flight.exchange(true, std::memory_order_acq_rel)) {
                 bool posted = worker.post([&, weak_ui] {
                     auto reply = http_ctrl.connections();
