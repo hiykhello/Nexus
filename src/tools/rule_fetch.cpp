@@ -332,26 +332,12 @@ namespace {
             pin=parse_sha256(spec.sha256);
             if (!pin) return std::unexpected("invalid remote rule-set SHA-256 pin");
         }
-        std::optional<::state::RulesetCache> disk_cache;
-        std::optional<::state::RulesetKey> key;
-        ::state::RulesetLookup cached{};
-        if (config.state && !config.state->cache_directory.empty()) {
-            disk_cache.emplace(config.state->cache_directory,::state::RulesetCacheLimits{config.state->ruleset_cache_max_bytes});
-            key=cache_key(*url,format,config_source,spec.http_client);
-            if (key) {
-                if (auto hit=disk_cache->lookup(*key); hit) {
-                    cached=std::move(*hit);
-                    if (cached.hit && !validate_download(cached.hit->body,format,pin)) {
-                        (void)disk_cache->discard(*key,cached.clear_epoch,cached.hit->metadata.content_blake3);
-                        cached.hit.reset();
-                    }
-                }
-            }
-        }
+        auto cache_st = lookup_managed_ruleset_cache(config, *url, format, spec, pin);
+        auto& cached = cache_st.cached;
         auto created=acquire_pooled_client(client_pool,config,spec.http_client,url->authority);
         if (!created) {
             if (offline_fallback && cached.hit)
-                return cli::ManagedRulesetFetchResult{cached.hit->body,cached.hit->metadata.etag,true};
+                return cli::ManagedRulesetFetchResult{cached.hit->body,cached.hit->metadata.etag,true,cached.hit->metadata.fetched_at};
             return std::unexpected(created.error());
         }
         auto& client=*created->client;
@@ -395,25 +381,26 @@ namespace {
         if (external_stop.stop_requested()) return std::unexpected("HTTPS remote rule-set fetch canceled");
         if (!result) {
             if (offline_fallback && cached.hit && offline_error(result.error()))
-                return cli::ManagedRulesetFetchResult{cached.hit->body,cached.hit->metadata.etag,true};
+                return cli::ManagedRulesetFetchResult{cached.hit->body,cached.hit->metadata.etag,true,cached.hit->metadata.fetched_at};
             return std::unexpected(result.error());
         }
         release_pooled_client(client_pool,spec.http_client,url->authority,std::move(created->deps),std::move(created->client));
         if (result->status==304) {
+            if (!conditional || validator.invalid || (validator.seen && entity_tag(validator.value)!=clean_tag))
+                return std::unexpected("unexpected or mismatched HTTP 304 for remote rule-set");
             std::string tag=(validator.seen && !validator.invalid) ? validator.value : active_etag;
-            if (cached.hit) return cli::ManagedRulesetFetchResult{cached.hit->body,std::move(tag),true};
-            return cli::ManagedRulesetFetchResult{{},std::move(tag),true};
+            auto now = epoch_seconds();
+            if (cached.hit) {
+                auto lm = last_modified.empty() ? std::string_view(cached.hit->metadata.last_modified) : std::string_view(last_modified);
+                now = store_managed_ruleset_cache(cache_st, config, format, spec, url->target, tag, lm, cached.hit->body);
+                return cli::ManagedRulesetFetchResult{cached.hit->body, std::move(tag), true, now};
+            }
+            return cli::ManagedRulesetFetchResult{{}, std::move(tag), true, now};
         }
         if (auto ok=validate_download(result->body,format,pin); !ok) return std::unexpected(ok.error());
         std::string tag=(validator.seen && !validator.invalid) ? validator.value : std::string{};
-        if (disk_cache && key) {
-            auto now=epoch_seconds();
-            ::state::RulesetMetadata meta{.etag=tag,.last_modified=last_modified,.response_target=url->target,
-                .fetched_at=now,.expires_at=now+86400};
-            (void)disk_cache->store(*key,cached.clear_epoch,std::move(meta),result->body);
-            prewarm_srs_cache_sidecar(config.state->cache_directory,format,result->body,config.state->ruleset_cache_max_bytes);
-        }
-        return cli::ManagedRulesetFetchResult{std::move(result->body),std::move(tag),false};
+        auto now = store_managed_ruleset_cache(cache_st, config, format, spec, url->target, tag, last_modified, result->body);
+        return cli::ManagedRulesetFetchResult{std::move(result->body), std::move(tag), false, now};
     }
 
     auto fetch_managed_provider_impl(config::Config const& config,
@@ -422,10 +409,17 @@ namespace {
         -> std::expected<cli::ManagedProviderFetchResult, std::string> {
         auto url = parse_url(spec.url);
         if (!url) return std::unexpected("invalid HTTPS provider URL: " + spec.url);
+        auto csig = cli::http_client_signature(config, spec.http_client);
         std::filesystem::path cache_root = !spec.cache_dir.empty() ? std::filesystem::path(spec.cache_dir) :
             (config.state && !config.state->cache_directory.empty() ? std::filesystem::path(config.state->cache_directory) : std::filesystem::path{});
         std::optional<cli::ManagedProviderFetchResult> cached;
-        if (!cache_root.empty()) cached = cli::read_provider_cache(cache_root, spec.name, spec.url);
+        if (!cache_root.empty()) {
+            cached = cli::read_provider_cache(cache_root, spec.name, spec.url);
+            if (cached && ((!cached->http_client_sig.empty() &&
+                (cached->http_client_sig != csig || cached->format != spec.format)) ||
+                !provider::parse_subscription(cached->body, spec.format).has_value()))
+                cached.reset();
+        }
         auto created = acquire_pooled_client(client_pool, config, spec.http_client, url->authority);
         if (!created) {
             if (offline_fallback && cached) return *cached;
@@ -472,21 +466,26 @@ namespace {
             done = true;
         }, [&](std::exception_ptr) noexcept { done = true; })(std::move(op));
         run_with_stop(context, stop, external_stop, done);
-        if (external_stop.stop_requested()) return std::unexpected("HTTPS remote rule-set fetch canceled");
+        if (external_stop.stop_requested()) return std::unexpected("HTTPS proxy-provider fetch canceled");
         if (!result) {
             if (offline_fallback && cached && offline_error(result.error())) return *cached;
             return std::unexpected(result.error());
         }
         release_pooled_client(client_pool, spec.http_client, url->authority, std::move(created->deps), std::move(created->client));
-        std::string tag = (validator.seen && !validator.invalid) ? validator.value : active_etag;
+        auto now = epoch_seconds();
         if (result->status == 304) {
             if (!conditional || validator.invalid || (validator.seen && entity_tag(validator.value) != clean_tag))
                 return std::unexpected("unexpected or mismatched HTTP 304 for proxy-provider");
+            std::string tag = (validator.seen && !validator.invalid) ? validator.value : active_etag;
             cli::ManagedProviderFetchResult res{cached ? cached->body : std::string{}, std::move(tag),
-                userinfo ? userinfo : (cached ? cached->userinfo : std::nullopt), true};
+                userinfo ? userinfo : (cached ? cached->userinfo : std::nullopt), true, now, csig, spec.format};
+            if (!cache_root.empty() && !res.body.empty()) (void)cli::write_provider_cache(cache_root, spec.name, spec.url, res);
             return res;
         }
-        cli::ManagedProviderFetchResult res{std::move(result->body), std::move(tag), userinfo, false};
+        if (result->body.empty()) return std::unexpected("empty HTTP 200 response for proxy-provider");
+        if (auto parsed = provider::parse_subscription(result->body, spec.format); !parsed) return std::unexpected(parsed.error());
+        std::string tag = (validator.seen && !validator.invalid) ? validator.value : std::string{};
+        cli::ManagedProviderFetchResult res{std::move(result->body), std::move(tag), userinfo, false, now, csig, spec.format};
         if (!cache_root.empty()) (void)cli::write_provider_cache(cache_root, spec.name, spec.url, res);
         return res;
     }
@@ -494,6 +493,7 @@ namespace {
 
 extern "C" void nexus_register_builtin_http_fetchers() noexcept {
     cli::register_managed_ruleset_fetcher(&fetch_managed_ruleset_impl);
+    cli::register_managed_ruleset_cache_probe(&probe_fresh_managed_ruleset_cache_impl);
     cli::register_managed_provider_fetcher(&fetch_managed_provider_impl);
     cli::register_managed_http_pool_factory(+[]() -> std::shared_ptr<void> { return std::make_shared<ManagedClientPool>(); });
 }

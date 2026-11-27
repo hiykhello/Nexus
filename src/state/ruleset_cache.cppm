@@ -32,7 +32,7 @@ export namespace state {
 
     struct RulesetCacheLimits {
         std::uint64_t max_bytes = 128ull * 1024 * 1024;
-        std::size_t max_entries = 64;
+        std::size_t max_entries = 4096;
     };
 
     // Each operation takes the private rulesets directory lock. The caller

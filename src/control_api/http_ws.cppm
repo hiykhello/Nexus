@@ -263,7 +263,7 @@ export namespace control_api::http_detail {
         if (p < body.size() && body[p] == ']') return items;
         for (;;) {
             std::string item;
-            if (!parse_json_string_at(body, p, item) || items.size() >= 16) return std::nullopt;
+            if (!parse_json_string_at(body, p, item)) return std::nullopt;
             items.push_back(std::move(item));
             skip_ws();
             if (p >= body.size()) return std::nullopt;

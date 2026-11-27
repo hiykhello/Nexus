@@ -152,7 +152,7 @@ namespace dns {
         if (!normalize(key)) return std::unexpected(CacheError::invalid_key);
         auto const hash = key_hash(key);
         std::unique_lock lock(mutex_);
-        if (pending_.size()==4096) return std::unexpected(CacheError::query_limit);
+        if (pending_.size()>=max_pending_) return std::unexpected(CacheError::query_limit);
         if (next_query_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(CacheError::generation_exhausted);
         if (!detail::compact_key_storage(key)) return std::unexpected(CacheError::invalid_key);
         auto query=next_query_+1;
@@ -179,7 +179,7 @@ namespace dns {
             return std::optional<CacheToken>{};
         if (pending_.has_key(hash,[&](Pending const& item) { return same(item.key,key); })) return std::optional<CacheToken>{};
         if (refresh_count_>=max_registered_refreshes) return std::optional<CacheToken>{};
-        if (pending_.size()==4096) return std::unexpected(CacheError::query_limit);
+        if (pending_.size()>=max_pending_) return std::unexpected(CacheError::query_limit);
         if (next_query_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(CacheError::generation_exhausted);
         if (!detail::compact_key_storage(key)) return std::unexpected(CacheError::invalid_key);
         auto query=next_query_+1;

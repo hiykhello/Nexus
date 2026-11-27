@@ -7,7 +7,7 @@ import state.ruleset_cache;
 
 export namespace state {
     inline constexpr std::uint32_t max_rule_blob = 32u * 1024u * 1024u;
-    inline constexpr std::size_t max_rule_entries = 128;
+    inline constexpr std::size_t max_rule_entries = 4096;
 
     struct RulesetRow {
         RulesetKey key;

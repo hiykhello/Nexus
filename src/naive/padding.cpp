@@ -66,38 +66,102 @@ namespace naive {
         return "Basic " + std::move(b64);
     }
 
-    auto verify_basic_auth(std::string_view header, std::span<UserCredential const> users)
-        -> std::optional<std::string_view> {
-        auto trimmed = http::trim_header_ows(header);
-        if (trimmed.size() < 6) return std::nullopt;
-        auto ci = [](char a, char b) {
-            return a == b || (a >= 'A' && a <= 'Z' && static_cast<char>(a - 'A' + 'a') == b);
-        };
-        if (!std::ranges::equal(trimmed.substr(0, 5), std::string_view("basic"), ci) || trimmed[5] != ' ')
-            return std::nullopt;
-        auto token = http::trim_header_ows(trimmed.substr(6));
-        if (token.empty() || token.size() > 1024) return std::nullopt;
-        std::vector<std::uint8_t> decoded;
-        struct Clean {
-            std::vector<std::uint8_t>& v;
-            ~Clean() {
-                if (!v.empty()) crypto::cleanse(v);
+    namespace {
+        auto hash_username(std::span<std::uint8_t const> u, std::uint64_t seed) noexcept -> std::uint64_t {
+            std::uint64_t h = seed ^ 0xcbf29ce484222325ULL;
+            for (auto b : u) { h ^= b; h *= 0x100000001b3ULL; }
+            h ^= h >> 30; h *= 0xbf58476d1ce4e5b9ULL;
+            h ^= h >> 27; h *= 0x94d049bb133111ebULL;
+            return h ^ (h >> 31);
+        }
+
+        auto verify_basic_impl(std::string_view header, std::span<UserCredential const> users,
+                               UserIndex const* index) noexcept -> std::optional<std::string_view> {
+            auto trimmed = http::trim_header_ows(header);
+            if (trimmed.size() < 6) return std::nullopt;
+            auto ci = [](char a, char b) {
+                return a == b || (a >= 'A' && a <= 'Z' && static_cast<char>(a - 'A' + 'a') == b);
+            };
+            if (!std::ranges::equal(trimmed.substr(0, 5), std::string_view("basic"), ci) || trimmed[5] != ' ')
+                return std::nullopt;
+            auto token = http::trim_header_ows(trimmed.substr(6));
+            if (token.empty() || token.size() > 1024) return std::nullopt;
+            std::array<std::uint8_t, 768> decoded{};
+            struct Clean {
+                std::array<std::uint8_t, 768>& buf;
+                ~Clean() { crypto::cleanse(buf); }
+            } clean{decoded};
+            auto decoded_len = encoding::decode_base64_strict(token, std::span(decoded));
+            if (!decoded_len) return std::nullopt;
+            auto payload = std::span<std::uint8_t const>(decoded.data(), *decoded_len);
+            auto colon = std::ranges::find(payload, static_cast<std::uint8_t>(':'));
+            if (colon == payload.end()) return std::nullopt;
+            auto u = payload.first(static_cast<std::size_t>(colon - payload.begin()));
+            auto p = payload.subspan(u.size() + 1);
+            if (index && !index->empty()) return index->verify(users, u, p);
+            std::optional<std::string_view> matched;
+            for (auto const& user : users) {
+                auto eu = std::span<std::uint8_t const>(reinterpret_cast<std::uint8_t const*>(user.username.data()), user.username.size());
+                auto ep = std::span<std::uint8_t const>(reinterpret_cast<std::uint8_t const*>(user.password.data()), user.password.size());
+                bool u_ok = (u.size() == eu.size()) && crypto::constant_time_equal(u, eu);
+                bool p_ok = (p.size() == ep.size()) && crypto::constant_time_equal(p, ep);
+                if (u_ok && p_ok && !matched) matched = user.name;
             }
-        } clean{decoded};
-        if (!encoding::decode_base64_strict(token, decoded)) return std::nullopt;
-        auto colon = std::ranges::find(decoded, static_cast<std::uint8_t>(':'));
-        if (colon == decoded.end()) return std::nullopt;
-        auto u = std::span<std::uint8_t const>(decoded.data(), static_cast<std::size_t>(colon - decoded.begin()));
-        auto p = std::span<std::uint8_t const>(decoded.data() + u.size() + 1, decoded.size() - u.size() - 1);
+            return matched;
+        }
+    }
+
+    UserIndex::UserIndex(std::span<UserCredential const> users) {
+        if (users.empty()) return;
+        seed_ = 0x517cc1b727220a95ULL;
+        (void)crypto::random_bytes(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(&seed_), sizeof(seed_)));
+        std::size_t cap = 4;
+        while (cap < users.size() * 2) cap <<= 1;
+        buckets_.assign(cap, kEmpty);
+        std::size_t const mask = cap - 1;
+        for (std::size_t i = 0; i < users.size(); ++i) {
+            auto eu = std::span<std::uint8_t const>(
+                reinterpret_cast<std::uint8_t const*>(users[i].username.data()), users[i].username.size());
+            auto slot = static_cast<std::size_t>(hash_username(eu, seed_)) & mask;
+            while (buckets_[slot] != kEmpty) slot = (slot + 1) & mask;
+            buckets_[slot] = static_cast<std::uint32_t>(i);
+        }
+    }
+
+    auto UserIndex::verify(std::span<UserCredential const> users,
+                           std::span<std::uint8_t const> username,
+                           std::span<std::uint8_t const> password) const noexcept
+        -> std::optional<std::string_view> {
+        if (buckets_.empty() || users.empty()) return std::nullopt;
+        std::size_t const mask = buckets_.size() - 1;
+        auto slot = static_cast<std::size_t>(hash_username(username, seed_)) & mask;
         std::optional<std::string_view> matched;
-        for (auto const& user : users) {
-            auto eu = std::span<std::uint8_t const>(reinterpret_cast<std::uint8_t const*>(user.username.data()), user.username.size());
-            auto ep = std::span<std::uint8_t const>(reinterpret_cast<std::uint8_t const*>(user.password.data()), user.password.size());
-            bool u_ok = (u.size() == eu.size()) && crypto::constant_time_equal(u, eu);
-            bool p_ok = (p.size() == ep.size()) && crypto::constant_time_equal(p, ep);
-            if (u_ok && p_ok && !matched) matched = user.name;
+        while (buckets_[slot] != kEmpty) {
+            auto const idx = buckets_[slot];
+            if (idx < users.size()) {
+                auto const& user = users[idx];
+                auto eu = std::span<std::uint8_t const>(
+                    reinterpret_cast<std::uint8_t const*>(user.username.data()), user.username.size());
+                auto ep = std::span<std::uint8_t const>(
+                    reinterpret_cast<std::uint8_t const*>(user.password.data()), user.password.size());
+                bool u_ok = (username.size() == eu.size()) && crypto::constant_time_equal(username, eu);
+                bool p_ok = (password.size() == ep.size()) && crypto::constant_time_equal(password, ep);
+                if (u_ok && p_ok && !matched) matched = user.name;
+            }
+            slot = (slot + 1) & mask;
         }
         return matched;
+    }
+
+    auto verify_basic_auth(std::string_view header, std::span<UserCredential const> users) noexcept
+        -> std::optional<std::string_view> {
+        return verify_basic_impl(header, users, nullptr);
+    }
+
+    auto verify_basic_auth(std::string_view header, std::span<UserCredential const> users,
+                           UserIndex const& index) noexcept
+        -> std::optional<std::string_view> {
+        return verify_basic_impl(header, users, &index);
     }
 
     auto parse_padding_type_request(std::string_view value) noexcept -> bool {

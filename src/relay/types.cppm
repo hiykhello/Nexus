@@ -16,6 +16,7 @@ import anytls.pool;
 import platform.socket_options;
 
 export namespace relay {
+    inline constexpr std::uint32_t max_tunnel_outbounds = 65535u;
     using TcpSocketOptions = platform::TcpSocketOptions;
     using AnyTlsOptions = anytls::PoolOptions;
     using HttpUpgradeTransport = config::HttpUpgradeTransport;

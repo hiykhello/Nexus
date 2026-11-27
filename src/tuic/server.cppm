@@ -2,6 +2,7 @@ export module tuic.server;
 import std;
 import crypto;
 import tuic.wire;
+import tuic.stream_input;
 import tuic.application;
 import tuic.transport_options;
 import quic.cid_registry;
@@ -84,14 +85,14 @@ export namespace tuic {
 #ifdef NEXUS_QUIC_RESUMPTION
             Bundle(Listener& parent,Registry& reg,quic::SessionHandle id,corosio::endpoint peer,std::unique_ptr<ServerTls> server_tls)
                 : tls(std::move(server_tls)), hooks{parent, reg, id, parent.hooks_, id.slot},
-                  memory(parent.options_.native_bytes), app(*tls, hooks, parent.users_),
+                  memory(parent.options_.native_bytes), app(*tls, hooks, parent.users_, &parent.user_index_),
                   session(*tls,app,parent.local_),initial_peer(peer) {
                 app.set_issue_tickets(parent.options_.zero_rtt_handshake);
             }
 #else
             Bundle(Listener& parent,Registry& reg,quic::SessionHandle id,corosio::endpoint peer,std::optional<tls::ServerCredential>&& dynamic_credential)
                 : tls(std::move(dynamic_credential), parent.credential_, "h3", parent.ech_keys_), hooks{parent, reg, id, parent.hooks_, id.slot},
-                  memory(parent.options_.native_bytes), app(tls, hooks, parent.users_),
+                  memory(parent.options_.native_bytes), app(tls, hooks, parent.users_, &parent.user_index_),
                   session(tls,app,parent.local_),initial_peer(peer) {}
 #endif
         };
@@ -224,6 +225,7 @@ export namespace tuic {
         std::shared_ptr<tls::AtomicServerCredential> atomic_credential_{};
         std::shared_ptr<tls::EchServerKeys const> ech_keys_{};
         std::span<UserCredential const> users_;
+        detail::UserIndex user_index_;
         ClientTransportOptions options_;
 #ifdef NEXUS_QUIC_RESUMPTION
         TicketStore ticket_store_;
@@ -240,7 +242,7 @@ export namespace tuic {
                  std::span<UserCredential const> users, ClientTransportOptions opts, Hooks& hooks,
                  std::shared_ptr<tls::EchServerKeys const> ech_keys = {})
             : socket_(ctx), credential_(cred), atomic_credential_(std::move(atomic_cred)),
-              ech_keys_(std::move(ech_keys)), users_(users), options_(opts), hooks_(hooks) {}
+              ech_keys_(std::move(ech_keys)), users_(users), user_index_(users), options_(opts), hooks_(hooks) {}
         Listener(corosio::io_context& ctx, tls::ServerCredential const& cred,
                  std::span<UserCredential const> users, ClientTransportOptions opts, Hooks& hooks,
                  std::shared_ptr<tls::EchServerKeys const> ech_keys = {})

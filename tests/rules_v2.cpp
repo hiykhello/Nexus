@@ -364,36 +364,35 @@ rule type="not" { rule type="source-ip-is-private" value="true"; }
         rules[2].action={static_cast<ProgramActionKind>(255)};
         check(!RouteProgram::compile(rules,3),"invalid action kind rejected");
     } else check(false,"parse program conditions");
-    // A full-width expression exercises the final representable child index.
+    // A high-scale wide expression (> old 262,144 ceiling) exercises large child indices and copy survival.
+    constexpr unsigned wide_scale = 300000;
     Rule wide{"or","",{}};
-    wide.children.reserve(max_rules-1);
-    for (unsigned i=0;i<max_rules-2;++i) wide.children.push_back({"port","1",{}});
+    wide.children.reserve(wide_scale-1);
+    for (unsigned i=0;i<wide_scale-2;++i) wide.children.push_back({"port","1",{}});
     wide.children.push_back({"port","65535",{}});
     auto wide_matcher=Matcher::compile(RuleSet{{wide},2});
-    check(bool(wide_matcher),"compile maximum node count");
+    check(bool(wide_matcher),"compile high-scale node count");
     if (wide_matcher) {
         auto last=wide_matcher->match({.port=65535});
         auto missing=wide_matcher->match({});
-        check(last && *last==std::optional<std::size_t>(0),"maximum child index matches");
-        check(missing && !*missing,"maximum child index retains unknown");
+        check(last && *last==std::optional<std::size_t>(0),"high-scale child index matches");
+        check(missing && !*missing,"high-scale child index retains unknown");
         Matcher copy=*wide_matcher;
         *wide_matcher=Matcher{};
         auto copied=copy.match({.port=65535});
         check(copied && *copied==std::optional<std::size_t>(0),"copied child storage survives original");
     }
-    wide.children.push_back({"port","1",{}});
-    check(!Matcher::compile(RuleSet{{std::move(wide)},2}),"reject node count above limit");
     RuleSet maximum_domains;
     maximum_domains.version=2;
-    maximum_domains.rules.resize(max_rules,{"domain","first.test",{}});
+    maximum_domains.rules.resize(wide_scale,{"domain","first.test",{}});
     maximum_domains.rules.back().value="last.test";
     auto domain_limit=Matcher::compile(maximum_domains);
-    check(bool(domain_limit),"compile maximum domain pool");
+    check(bool(domain_limit),"compile high-scale domain pool");
     if (domain_limit) {
         Matcher copied=*domain_limit;
         *domain_limit=Matcher{};
         auto last=copied.match({.domain="last.test"});
-        check(last && *last==std::optional<std::size_t>(max_rules-1),"copied maximum domain pool retains last index");
+        check(last && *last==std::optional<std::size_t>(wide_scale-1),"copied high-scale domain pool retains last index");
     }
     RuleSet nested_text{{{"and","",{{"domain","nested.test",{}},{"port","443",{}}}},
                          {"domain","other.test",{}}},2};

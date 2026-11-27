@@ -142,8 +142,8 @@ namespace relay {
         std::span<std::pair<std::string, config::FallbackTarget> const> handshake_for_server_name,
         std::string_view wildcard_sni) -> std::expected<InboundFactory, std::string> {
         if (handshake_host.empty() || !handshake_port || target_host.empty() || !target_port ||
-            password_files.empty() || password_files.size() > 64 || (!names.empty() && names.size() != password_files.size()) ||
-            handshake_for_server_name.size() > 64)
+            password_files.empty() || password_files.size() > max_tunnel_outbounds || (!names.empty() && names.size() != password_files.size()) ||
+            handshake_for_server_name.size() > 4096)
             return std::unexpected("invalid ShadowTLS inbound configuration");
         auto mode = shadowtls::parse_wildcard_sni_mode(wildcard_sni);
         if (!mode) return std::unexpected("invalid ShadowTLS wildcard-sni mode");
@@ -155,6 +155,8 @@ namespace relay {
         profile->strict_tls13 = strict_tls13;
         profile->wildcard_sni = *mode;
         profile->handshake_for_server_name.reserve(handshake_for_server_name.size());
+        std::unordered_set<std::string> seen_sni;
+        seen_sni.reserve(handshake_for_server_name.size());
         for (auto const& [sni, target] : handshake_for_server_name) {
             if (sni.empty() || sni.size() > 253 || target.host.empty() || target.host.size() > 253 || !target.port)
                 return std::unexpected("invalid ShadowTLS handshake-for-server-name entry");
@@ -162,7 +164,7 @@ namespace relay {
             norm.reserve(sni.size());
             for (unsigned char c : sni)
                 norm.push_back((c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : static_cast<char>(c));
-            if (std::ranges::any_of(profile->handshake_for_server_name, [&](auto const& e) { return e.server_name == norm; }))
+            if (!seen_sni.insert(norm).second)
                 return std::unexpected("duplicate ShadowTLS handshake-for-server-name entry");
             profile->handshake_for_server_name.push_back({std::move(norm), target.host, target.port});
         }

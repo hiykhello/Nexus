@@ -10,4 +10,4 @@ ring-queue = {}
 byte-ring = { sources = ["byte_ring.cppm"] }
 
 [build]
-sources = ["inplace_vector.cppm", "flat_id_map.cppm", "cache_index.cppm", "ring_queue.cppm"]
+sources = ["inplace_vector.cppm", "flat_id_map.cppm", "cache_index.cppm", "ring_queue.cppm", "lru_slab.cppm"]

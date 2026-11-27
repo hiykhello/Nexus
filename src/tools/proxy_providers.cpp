@@ -23,12 +23,8 @@ namespace cli {
 
         auto sanitize_key(std::string_view raw) -> std::string {
             std::string out;
-            for (unsigned char c : raw) {
-                if (std::isalnum(c) || c == '-' || c == '_') out.push_back(static_cast<char>(c));
-                else out.push_back('-');
-            }
-            if (out.empty()) out = "provider";
-            return out;
+            for (unsigned char c : raw) out.push_back((std::isalnum(c) || c == '-' || c == '_') ? static_cast<char>(c) : '-');
+            return out.empty() ? std::string("provider") : out;
         }
 
         auto ensure_dir_0700(std::filesystem::path const& dir) -> std::expected<void, std::string> {
@@ -110,6 +106,53 @@ namespace cli {
             if (u.expire) os << "expire=" << *u.expire << ";";
             return os.str();
         }
+        auto provider_cache_stem(std::string_view name, std::string_view canonical_url) -> std::string {
+            auto key = sanitize_key(name);
+            if (key.size() > 64) key.resize(64);
+            blake3::blake3_hasher hasher{};
+            blake3::blake3_hasher_init(&hasher);
+            blake3::blake3_hasher_update(&hasher, canonical_url.data(), canonical_url.size());
+            std::array<std::uint8_t, 16> digest{};
+            blake3::blake3_hasher_finalize(&hasher, digest.data(), digest.size());
+            static constexpr char kHex[] = "0123456789abcdef";
+            key.push_back('-');
+            for (auto b : digest) { key.push_back(kHex[b >> 4]); key.push_back(kHex[b & 0x0fu]); }
+            return key;
+        }
+        auto parse_provider_meta(std::string_view text, ManagedProviderFetchResult& res) noexcept -> void {
+            std::uint64_t ts = 0; std::string sig; unsigned fmt = 0;
+            bool ok_ts = false, ok_sig = false, ok_fmt = false;
+            constexpr auto kMaxFmt = static_cast<unsigned>(provider::ProviderFormat::sip008_json);
+            while (!text.empty()) {
+                auto nl = text.find('\n');
+                auto line = nl == text.npos ? text : text.substr(0, nl);
+                text = nl == text.npos ? std::string_view{} : text.substr(nl + 1);
+                if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+                if (line.starts_with("fetched_at=")) {
+                    auto sv = line.substr(11);
+                    auto [end, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), ts);
+                    ok_ts = !ok_ts && ec == std::errc{} && end == sv.data() + sv.size() && ts > 0;
+                } else if (line.starts_with("client=")) {
+                    auto sv = line.substr(7);
+                    ok_sig = !ok_sig && !sv.empty();
+                    if (ok_sig) sig.assign(sv);
+                } else if (line.starts_with("format=")) {
+                    auto sv = line.substr(7);
+                    auto [end, ec] = std::from_chars(sv.data(), sv.data() + sv.size(), fmt);
+                    ok_fmt = !ok_fmt && ec == std::errc{} && end == sv.data() + sv.size() && fmt <= kMaxFmt;
+                }
+            }
+            if (ok_ts && ok_sig && ok_fmt) {
+                res.fetched_at = ts; res.http_client_sig = std::move(sig);
+                res.format = static_cast<provider::ProviderFormat>(fmt);
+            } else { res.fetched_at = 0; res.http_client_sig.clear(); res.format = provider::ProviderFormat::auto_detect; }
+        }
+
+        auto resolve_cache_root(config::Config const& manifest, config::ProxyProviderConfig const& spec) -> std::filesystem::path {
+            if (!spec.cache_dir.empty()) return std::filesystem::path(spec.cache_dir);
+            if (manifest.state && !manifest.state->cache_directory.empty()) return std::filesystem::path(manifest.state->cache_directory);
+            return {};
+        }
     }
 
     auto register_managed_provider_fetcher(ManagedProviderFetcher fetcher) noexcept -> void {
@@ -125,68 +168,16 @@ namespace cli {
         return fn(cfg, spec, previous_etag, offline_fallback, std::move(stop), client_pool);
     }
 
-    auto canonical_provider_url(std::string_view raw) -> std::string {
-        auto hash = raw.find('#');
-        if (hash != raw.npos) raw = raw.substr(0, hash);
-        auto scheme_end = raw.find("://");
-        if (scheme_end == raw.npos) return std::string(raw);
-        std::string scheme(raw.substr(0, scheme_end));
-        for (auto& ch : scheme)
-            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
-        auto rest = raw.substr(scheme_end + 3);
-        auto sep = rest.find_first_of("/?");
-        auto authority = rest.substr(0, sep);
-        std::string_view target = sep == rest.npos ? std::string_view{} : rest.substr(sep);
-        std::string host, port;
-        if (authority.starts_with('[')) {
-            auto close = authority.find(']');
-            if (close != authority.npos) {
-                host = std::string(authority.substr(0, close + 1));
-                if (close + 1 < authority.size() && authority[close + 1] == ':')
-                    port = std::string(authority.substr(close + 2));
-            } else host = std::string(authority);
-        } else {
-            auto colon = authority.rfind(':');
-            if (colon != authority.npos) {
-                host = std::string(authority.substr(0, colon));
-                port = std::string(authority.substr(colon + 1));
-            } else host = std::string(authority);
-        }
-        for (auto& ch : host)
-            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
-        if ((scheme == "https" && port == "443") || (scheme == "http" && port == "80")) port.clear();
-        std::string out = scheme + "://" + host;
-        if (!port.empty()) out += ":" + port;
-        if (target.empty()) out += '/';
-        else if (target.starts_with('?')) { out += '/'; out.append(target); }
-        else out.append(target);
-        return out;
-    }
-
-    namespace {
-        auto provider_cache_stem(std::string_view name, std::string_view canonical_url) -> std::string {
-            auto key = sanitize_key(name);
-            if (key.size() > 64) key.resize(64);
-            blake3::blake3_hasher hasher{};
-            blake3::blake3_hasher_init(&hasher);
-            blake3::blake3_hasher_update(&hasher, canonical_url.data(), canonical_url.size());
-            std::array<std::uint8_t, 16> digest{};
-            blake3::blake3_hasher_finalize(&hasher, digest.data(), digest.size());
-            static constexpr char kHex[] = "0123456789abcdef";
-            key.push_back('-');
-            for (auto b : digest) {
-                key.push_back(kHex[b >> 4]);
-                key.push_back(kHex[b & 0x0fu]);
-            }
-            return key;
-        }
-    }
-
     auto provider_cache_paths(std::filesystem::path const& cache_root, std::string_view name, std::string_view url)
         -> std::tuple<std::filesystem::path, std::filesystem::path, std::filesystem::path> {
         auto dir = cache_root / "providers";
         auto stem = provider_cache_stem(name, canonical_provider_url(url));
         return {dir / (stem + ".sub"), dir / (stem + ".etag"), dir / (stem + ".userinfo")};
+    }
+
+    auto provider_cache_meta_path(std::filesystem::path const& cache_root, std::string_view name, std::string_view url)
+        -> std::filesystem::path {
+        return (cache_root / "providers") / (provider_cache_stem(name, canonical_provider_url(url)) + ".meta");
     }
 
     auto read_provider_cache(std::filesystem::path const& cache_root, std::string_view name, std::string_view url)
@@ -205,6 +196,8 @@ namespace cli {
         if (auto et = ::rulefile::read_regular_file((dir / (stem + ".etag")).string())) res.etag = std::move(*et);
         if (auto ui = ::rulefile::read_regular_file((dir / (stem + ".userinfo")).string()))
             res.userinfo = provider::parse_subscription_userinfo(*ui);
+        if (auto meta = ::rulefile::read_regular_file((dir / (stem + ".meta")).string()))
+            parse_provider_meta(*meta, res);
         return res;
     }
 
@@ -218,6 +211,9 @@ namespace cli {
         if (auto ok = write_file_0600(dir / (stem + ".url"), canon); !ok) return ok;
         if (auto ok = write_file_0600(dir / (stem + ".sub"), res.body); !ok) return ok;
         if (auto ok = write_file_0600(dir / (stem + ".etag"), res.etag); !ok) return ok;
+        auto meta = std::format("fetched_at={}\nclient={}\nformat={}\n",
+            res.fetched_at, res.http_client_sig, static_cast<unsigned>(res.format));
+        if (auto ok = write_file_0600(dir / (stem + ".meta"), meta); !ok) return ok;
         auto ui_p = dir / (stem + ".userinfo");
         if (res.userinfo) {
             if (auto ok = write_file_0600(ui_p, format_userinfo_file(*res.userinfo)); !ok) return ok;
@@ -228,50 +224,9 @@ namespace cli {
         return {};
     }
 
-    ProxyProviderManager::~ProxyProviderManager() { stop(); }
-
-    auto ProxyProviderManager::stop() noexcept -> void {
-        if (worker_.joinable()) {
-            worker_.request_stop();
-            wake_cv_.notify_all();
-            worker_.join();
-        }
-        http_pool_.reset();
-    }
-
-    auto ProxyProviderManager::load_entry(Entry& entry, config::Config const& manifest,
-        std::filesystem::path const& base_dir, bool offline_fallback, std::stop_token stop, void* http_pool)
-        -> std::expected<bool, std::string> {
-        std::string next_body, next_etag = entry.etag;
-        std::optional<provider::SubscriptionUserinfo> next_ui = entry.userinfo;
-        if (entry.spec.type == config::ProxyProviderType::file) {
-            std::filesystem::path src(entry.spec.path);
-            if (src.is_relative()) src = base_dir / src;
-            std::error_code ec;
-            auto mtime = std::filesystem::last_write_time(src, ec);
-            if (!ec && !entry.body.empty() && mtime == entry.file_mtime) return false;
-            auto content = ::rulefile::read_regular_file(src.string());
-            if (!content) return std::unexpected("proxy-provider '" + entry.spec.name + "': " + content.error());
-            next_body = std::move(*content);
-            entry.file_mtime = mtime;
-        } else {
-            auto fetched = fetch_managed_provider(manifest, entry.spec, entry.etag, offline_fallback, std::move(stop), http_pool);
-            if (!fetched) return std::unexpected("proxy-provider '" + entry.spec.name + "': " + fetched.error());
-            if (!fetched->etag.empty()) next_etag = fetched->etag;
-            if (fetched->userinfo) next_ui = fetched->userinfo;
-            if (fetched->unchanged && !entry.body.empty()) {
-                entry.etag = std::move(next_etag);
-                entry.userinfo = next_ui;
-                return false;
-            }
-            next_body = std::move(fetched->body);
-        }
-        if (next_body == entry.body && !entry.outbounds_kdl.empty()) {
-            entry.etag = std::move(next_etag);
-            entry.userinfo = next_ui;
-            return false;
-        }
-
+    auto ProxyProviderManager::materialize_entry(Entry& entry, config::Config const& manifest,
+        std::filesystem::path const& base_dir, std::string next_body, std::string next_etag,
+        std::optional<provider::SubscriptionUserinfo> next_ui) -> std::expected<void, std::string> {
         auto parsed = provider::parse_subscription(next_body, entry.spec.format);
         if (!parsed) return std::unexpected("proxy-provider '" + entry.spec.name + "': " + parsed.error());
         auto doc = std::move(*parsed);
@@ -317,15 +272,54 @@ namespace cli {
         }
         if (next_outbounds.empty())
             return std::unexpected("proxy-provider '" + entry.spec.name + "' yielded no valid Nexus outbounds");
-        for (auto const& [f, content] : all_staged_secrets) {
+        for (auto const& [f, content] : all_staged_secrets)
             if (auto ok = write_file_0600(f, content); !ok) return std::unexpected(ok.error());
-        }
 
         entry.body = std::move(next_body);
         entry.etag = std::move(next_etag);
         entry.userinfo = next_ui;
         entry.outbounds_kdl = std::move(next_outbounds);
         entry.warnings = std::move(doc.warnings);
+        return {};
+    }
+
+    auto ProxyProviderManager::load_entry(Entry& entry, config::Config const& manifest,
+        std::filesystem::path const& base_dir, bool offline_fallback, std::stop_token stop, void* http_pool)
+        -> std::expected<bool, std::string> {
+        std::string next_body, next_etag = entry.etag;
+        std::optional<provider::SubscriptionUserinfo> next_ui = entry.userinfo;
+        if (entry.spec.type == config::ProxyProviderType::file) {
+            std::filesystem::path src(entry.spec.path);
+            if (src.is_relative()) src = base_dir / src;
+            std::error_code ec;
+            auto mtime = std::filesystem::last_write_time(src, ec);
+            if (!ec && !entry.body.empty() && mtime == entry.file_mtime) return false;
+            auto content = ::rulefile::read_regular_file(src.string());
+            if (!content) return std::unexpected("proxy-provider '" + entry.spec.name + "': " + content.error());
+            next_body = std::move(*content);
+            entry.file_mtime = mtime;
+        } else {
+            auto fetched = fetch_managed_provider(manifest, entry.spec, entry.etag, offline_fallback, std::move(stop), http_pool);
+            if (!fetched) return std::unexpected("proxy-provider '" + entry.spec.name + "': " + fetched.error());
+            entry.fetched_at = fetched->fetched_at ? fetched->fetched_at : cli::current_unix_seconds();
+            entry.fetched_steady = std::chrono::steady_clock::now();
+            entry.client_sig = cli::http_client_signature(manifest, entry.spec.http_client);
+            if (!fetched->etag.empty()) next_etag = fetched->etag;
+            if (fetched->userinfo) next_ui = fetched->userinfo;
+            if (fetched->unchanged && !entry.body.empty()) {
+                entry.etag = std::move(next_etag);
+                entry.userinfo = next_ui;
+                return false;
+            }
+            next_body = std::move(fetched->body);
+        }
+        if (next_body == entry.body && !entry.outbounds_kdl.empty()) {
+            entry.etag = std::move(next_etag);
+            entry.userinfo = next_ui;
+            return false;
+        }
+        if (auto ok = materialize_entry(entry, manifest, base_dir, std::move(next_body), std::move(next_etag), next_ui); !ok)
+            return std::unexpected(std::move(ok.error()));
         return true;
     }
 
@@ -339,14 +333,76 @@ namespace cli {
             staged.expanded_kdl.assign(raw_kdl);
             return staged;
         }
+        std::vector<Entry> prior;
+        {
+            std::lock_guard lock(mutex_);
+            prior = entries_;
+        }
         auto bdir = base_directory_for(config_path);
         std::vector<Entry> next_entries;
         next_entries.reserve(staged.manifest_.proxy_providers.size());
         auto now = std::chrono::steady_clock::now();
+        auto now_unix = cli::current_unix_seconds();
         std::map<std::string, std::vector<std::pair<std::string, std::string>>> map;
         for (auto const& spec : staged.manifest_.proxy_providers) {
+            bool reused = false;
+            if (spec.type == config::ProxyProviderType::http) {
+                auto canon = canonical_provider_url(spec.url);
+                auto csig = cli::http_client_signature(staged.manifest_, spec.http_client);
+                auto pit = std::ranges::find_if(prior, [&](Entry const& e) { return e.spec.name == spec.name; });
+                if (pit != prior.end()) {
+                    bool const same_fetch = pit->spec.type == config::ProxyProviderType::http &&
+                        canonical_provider_url(pit->spec.url) == canon && pit->client_sig == csig &&
+                        pit->spec.format == spec.format && !pit->body.empty();
+                    if (same_fetch) {
+                        auto rem_unix = cli::compute_remaining_refresh_ms(pit->fetched_at, now_unix, spec.update_interval_ms);
+                        auto steady_elapsed_ms = (pit->fetched_steady != std::chrono::steady_clock::time_point{})
+                            ? std::chrono::duration_cast<std::chrono::milliseconds>(now - pit->fetched_steady).count() : 0;
+                        if (rem_unix && steady_elapsed_ms >= 0 &&
+                            static_cast<std::uint64_t>(steady_elapsed_ms) < spec.update_interval_ms) {
+                            Entry e = *pit;
+                            e.spec = spec;
+                            if (pit->spec.update_interval_ms != spec.update_interval_ms) {
+                                auto rem_ms = std::min<std::uint64_t>(*rem_unix,
+                                    static_cast<std::uint64_t>(spec.update_interval_ms) - static_cast<std::uint64_t>(steady_elapsed_ms));
+                                e.next_refresh = now + std::chrono::milliseconds(rem_ms);
+                            }
+                            if (pit->spec.filter != spec.filter || pit->spec.cache_dir != spec.cache_dir || e.outbounds_kdl.empty()) {
+                                if (auto ok = materialize_entry(e, staged.manifest_, bdir, pit->body, pit->etag, pit->userinfo); !ok)
+                                    return std::unexpected(std::move(ok.error()));
+                            }
+                            map.emplace(e.spec.name, e.outbounds_kdl);
+                            next_entries.push_back(std::move(e));
+                            reused = true;
+                        }
+                    }
+                } else if (prior.empty()) {
+                    auto cache_root = resolve_cache_root(staged.manifest_, spec);
+                    if (!cache_root.empty()) {
+                        auto cached = read_provider_cache(cache_root, spec.name, spec.url);
+                        if (cached && !cached->body.empty() && !cached->http_client_sig.empty() &&
+                            cached->http_client_sig == csig && cached->format == spec.format) {
+                            if (auto rem = cli::compute_remaining_refresh_ms(cached->fetched_at, now_unix, spec.update_interval_ms)) {
+                                Entry e{.spec = spec, .client_sig = csig, .fetched_at = cached->fetched_at};
+                                if (materialize_entry(e, staged.manifest_, bdir, std::move(cached->body),
+                                        std::move(cached->etag), cached->userinfo).has_value()) {
+                                    auto elapsed_ms = static_cast<std::uint64_t>(spec.update_interval_ms) - *rem;
+                                    e.fetched_steady = now - std::chrono::milliseconds(elapsed_ms);
+                                    e.next_refresh = now + std::chrono::milliseconds(*rem);
+                                    map.emplace(e.spec.name, e.outbounds_kdl);
+                                    next_entries.push_back(std::move(e));
+                                    reused = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (reused) continue;
             Entry e{.spec = spec, .next_refresh = now + std::chrono::milliseconds(spec.update_interval_ms)};
             if (auto ok = load_entry(e, staged.manifest_, bdir, offline_fallback); !ok) return std::unexpected(ok.error());
+            e.next_refresh = (e.fetched_steady != std::chrono::steady_clock::time_point{} ? e.fetched_steady : now) +
+                std::chrono::milliseconds(spec.update_interval_ms);
             map.emplace(e.spec.name, e.outbounds_kdl);
             next_entries.push_back(std::move(e));
         }
@@ -356,37 +412,6 @@ namespace cli {
         staged.entries_ = std::move(next_entries);
         staged.expanded_kdl = std::move(*expanded);
         return staged;
-    }
-
-    auto ProxyProviderManager::commit_candidate(StagedReload&& staged) -> void {
-        bool now_empty = staged.entries_.empty();
-        {
-            std::lock_guard lock(mutex_);
-            manifest_ = std::move(staged.manifest_);
-            base_dir_ = std::move(staged.base_dir_);
-            entries_ = std::move(staged.entries_);
-            ++generation_;
-        }
-        if (now_empty) stop();
-    }
-
-    auto ProxyProviderManager::prepare_initial(std::string_view raw_kdl, std::string_view config_path,
-        bool offline_fallback) -> std::expected<std::string, std::string> {
-        auto staged = prepare_candidate(raw_kdl, config_path, offline_fallback);
-        if (!staged) return std::unexpected(std::move(staged.error()));
-        auto out = std::move(staged->expanded_kdl);
-        commit_candidate(std::move(*staged));
-        return out;
-    }
-
-    auto ProxyProviderManager::expand_kdl(std::string_view raw_kdl) const -> std::expected<std::string, std::string> {
-        std::map<std::string, std::vector<std::pair<std::string, std::string>>> map;
-        {
-            std::lock_guard lock(mutex_);
-            if (entries_.empty()) return std::string(raw_kdl);
-            for (auto const& e : entries_) map.emplace(e.spec.name, e.outbounds_kdl);
-        }
-        return provider::expand_providers_in_kdl(raw_kdl, map);
     }
 
     auto ProxyProviderManager::sync_once(bool offline_fallback) -> std::expected<bool, std::string> {
@@ -411,27 +436,6 @@ namespace cli {
         std::lock_guard lock(mutex_);
         if (generation_ == gen_snap) entries_ = std::move(snap);
         return any;
-    }
-
-    auto ProxyProviderManager::summaries() const -> std::vector<ProviderSummary> {
-        std::lock_guard lock(mutex_);
-        std::vector<ProviderSummary> out;
-        out.reserve(entries_.size());
-        for (auto const& e : entries_)
-            out.push_back({e.spec.name, e.spec.type, e.outbounds_kdl.size(), e.etag, e.userinfo, e.warnings});
-        return out;
-    }
-
-    auto ProxyProviderManager::has_providers() const noexcept -> bool {
-        std::lock_guard lock(mutex_);
-        return !entries_.empty();
-    }
-
-    auto ProxyProviderManager::has_http_providers() const noexcept -> bool {
-        std::lock_guard lock(mutex_);
-        return std::ranges::any_of(entries_, [](Entry const& e) {
-            return e.spec.type == config::ProxyProviderType::http;
-        });
     }
 
     auto ProxyProviderManager::start_background(logging::Runtime& logs) -> void {
@@ -480,6 +484,8 @@ namespace cli {
                     } else {
                         entries_[idx].etag = std::move(copy.etag);
                         entries_[idx].userinfo = copy.userinfo;
+                        entries_[idx].fetched_at = copy.fetched_at;
+                        entries_[idx].fetched_steady = copy.fetched_steady;
                     }
                 }
                 if (any_changed) updated_.store(true, std::memory_order_release);

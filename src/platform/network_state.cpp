@@ -23,7 +23,6 @@ namespace platform::network {
 
         constexpr std::array groups{abi::RTNLGRP_LINK, abi::RTNLGRP_IPV4_IFADDR, abi::RTNLGRP_IPV6_IFADDR,
             abi::RTNLGRP_IPV4_ROUTE, abi::RTNLGRP_IPV6_ROUTE, abi::RTNLGRP_NEIGH};
-        constexpr std::size_t neighbor_limit = 4096;
 
         auto to_monitor_failure(nl::Failure const& failure) noexcept -> MonitorFailure {
             MonitorError code = MonitorError::system;
@@ -115,7 +114,7 @@ namespace platform::network {
             return {};
         }
 
-        auto read_neighbor(nl::Message message, Snapshot& snapshot, bool& overflow)
+        auto read_neighbor(nl::Message message, Snapshot& snapshot, bool& overflow, std::size_t limit)
             -> std::expected<void, nl::Failure> {
             auto header = nl::native<abi::ndmsg>(message.payload);
             if (message.header.nlmsg_type != abi::RTM_NEWNEIGH || !header) return nl::fail(nl::Error::protocol);
@@ -136,12 +135,7 @@ namespace platform::network {
                 return {};
             });
             if (!attributes) return attributes;
-            if (address && mac) {
-                if (snapshot.neighbors.size() == neighbor_limit) {
-                    overflow = true;
-                    snapshot.neighbors.clear();
-                } else snapshot.neighbors.push_back(neighbor);
-            }
+            if (address && mac) (void)append_neighbor(snapshot, neighbor, overflow, limit);
             return {};
         }
 
@@ -412,7 +406,7 @@ namespace platform::network {
             if (include_neighbors_) {
                 bool overflow = false;
                 auto neighbors = impl_->query_.dump(abi::RTM_GETNEIGH, abi::AF_UNSPEC, deadline,
-                    [&](nl::Message message) { return read_neighbor(message, *candidate, overflow); });
+                    [&](nl::Message message) { return read_neighbor(message, *candidate, overflow, neighbor_limit_); });
                 if (!neighbors) return std::unexpected(to_monitor_failure(neighbors.error()));
                 std::ranges::sort(candidate->neighbors, {}, neighbor_key);
                 set_gateway_macs(*candidate);

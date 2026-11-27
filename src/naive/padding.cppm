@@ -31,9 +31,27 @@ export namespace naive {
     // Builds "Basic <base64(user:pass)>".
     [[nodiscard]] auto make_basic_auth(std::string_view user, std::string_view pass) -> std::string;
 
+    // Non-owning flat open-addressing username hash index for O(1), zero-allocation Basic auth.
+    class UserIndex {
+        static constexpr std::uint32_t kEmpty = 0xffffffffu;
+        std::vector<std::uint32_t> buckets_;
+        std::uint64_t seed_ = 0;
+    public:
+        UserIndex() = default;
+        explicit UserIndex(std::span<UserCredential const> users);
+        [[nodiscard]] auto empty() const noexcept -> bool { return buckets_.empty(); }
+        [[nodiscard]] auto verify(std::span<UserCredential const> users,
+                                  std::span<std::uint8_t const> username,
+                                  std::span<std::uint8_t const> password) const noexcept
+            -> std::optional<std::string_view>;
+    };
+
     // Constant-time verification of Proxy-Authorization Basic header against credentials.
-    // Returns matched credential's config name on success.
-    [[nodiscard]] auto verify_basic_auth(std::string_view header, std::span<UserCredential const> users)
+    // Returns matched credential's config name on success. Zero heap allocation.
+    [[nodiscard]] auto verify_basic_auth(std::string_view header, std::span<UserCredential const> users) noexcept
+        -> std::optional<std::string_view>;
+    [[nodiscard]] auto verify_basic_auth(std::string_view header, std::span<UserCredential const> users,
+                                         UserIndex const& index) noexcept
         -> std::optional<std::string_view>;
 
     [[nodiscard]] auto parse_padding_type_request(std::string_view value) noexcept -> bool;

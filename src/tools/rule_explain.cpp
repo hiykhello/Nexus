@@ -54,7 +54,7 @@ namespace {
                 if (!data) return std::unexpected("DNS rule-set: "+data.error());
                 if (std::ranges::find(keys,key)==keys.end()) {
                     total+=data->size();
-                    if (total>8*1024*1024) return std::unexpected("DNS rule sets exceed 8 MiB total");
+                    if (total>rules::max_input_bytes) return std::unexpected("DNS rule sets exceed 256 MiB total");
                     keys.push_back(key);
                 }
                 auto fmt=cli::rule_input_format(ref.file.format);

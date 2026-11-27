@@ -9,7 +9,7 @@ namespace relay {
         std::span<config::PortRange const> port_ranges,std::uint32_t hop_interval_ms,std::uint32_t hop_interval_max_ms) -> std::expected<std::size_t,std::string> {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty()) return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_HY2_CLIENT
-        if (outbounds.size()>=256) return std::unexpected("too many tunnel outbounds");
+        if (outbounds.size()>=max_tunnel_outbounds) return std::unexpected("too many tunnel outbounds");
         if (bootstrap && (!dns_routing || *bootstrap>=dns_routing->resolver_count())) return std::unexpected("invalid bootstrap resolver");
         auto factory=make_hysteria2_factory(host,port,password_file,server_name,ca_file,exchange,bootstrap,timeout_ms,options,handshake_ms,idle_ms,native_bytes,udp,salamander_file,max_udp_payload_size,disable_path_mtu_discovery,send_bps,receive_bps,disable_compensation,fingerprint,lazy_tcp_response,ech,dns_routing.has_value(),windows,pins,port_ranges,hop_interval_ms,hop_interval_max_ms);
         if (!factory) return std::unexpected(factory.error());

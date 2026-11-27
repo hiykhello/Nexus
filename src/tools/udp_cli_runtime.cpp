@@ -56,9 +56,9 @@ namespace cli {
                 mmap = std::make_shared<rules::MmapMatcher const>(std::move(*opened));
             }
             if (mmap) {
-                auto n = mmap->exact_count() + mmap->suffix_count() + mmap->v4_count() + mmap->v6_count();
+                auto n = std::uint64_t(mmap->exact_count()) + mmap->suffix_count() + mmap->v4_count() + mmap->v6_count();
                 if (n > rules::max_rules - predicate_count) return std::unexpected("UDP routing: too many route predicates");
-                predicate_count += n;
+                predicate_count += static_cast<std::size_t>(n);
                 if (mmap->has_domain() || mmap->has_ip() || mmap->tail_beve_bytes() > 0)
                     routes.push_back({{}, route.outbound, i, std::move(mmap), route.file.ip_cidr_match_source});
                 continue;

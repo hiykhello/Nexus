@@ -24,6 +24,7 @@ export namespace dns {
         detail::PendingIndex<Pending> pending_;
         std::size_t refresh_count_ = 0;
         std::size_t capacity_;
+        std::size_t max_pending_;
         std::uint64_t stale_window_ms_;
         std::uint64_t generation_ = 1, now_ = 0, next_query_ = 0, min_evict_at_ = std::numeric_limits<std::uint64_t>::max();
         bool initialized_ = false;
@@ -35,6 +36,10 @@ export namespace dns {
         auto refresh_current(Pending const& pending) const -> bool;
         auto recompute_min_evict() noexcept -> void;
     public:
+        static constexpr std::size_t default_max_pending = 32768;
+        static constexpr std::size_t max_pending_limit = 1u << 20;
+        static constexpr std::size_t max_capacity = 65536;
+
         class Reader {
             std::optional<detail::BasicSnapshotState<true>::Reader> state_;
             friend class AddressCache;
@@ -45,17 +50,23 @@ export namespace dns {
             Reader(Reader&&) = default;
             auto operator=(Reader&&) -> Reader& = delete;
         };
-        // Zero disables insertion; at most 4096 entries, each separately bounded.
+        // Zero disables insertion; entries and pending queries are softly bounded.
         // A nonzero reader count selects the immutable snapshot implementation
         // for shared reads. Readers are synchronous and must not cross co_await.
         explicit AddressCache(std::size_t capacity, std::uint64_t stale_window_ms = 0, bool shared = false,
-                              std::size_t readers = 0)
-            : entries_(readers ? 0 : std::min<std::size_t>(capacity, 4096)),
-              capacity_(std::min<std::size_t>(capacity, 4096)), stale_window_ms_(stale_window_ms), shared_(shared) {
-            if (readers && (!shared_ || capacity_ > 256)) throw std::invalid_argument("invalid snapshot cache configuration");
-            if (readers) snapshot_ = std::make_unique<detail::BasicSnapshotState<true>>(capacity_, stale_window_ms_, readers);
+                              std::size_t readers = 0, std::size_t max_pending = default_max_pending)
+            : entries_(readers ? 0 : std::min<std::size_t>(capacity, max_capacity)),
+              capacity_(std::min<std::size_t>(capacity, max_capacity)),
+              max_pending_(std::min<std::size_t>(max_pending, max_pending_limit)),
+              stale_window_ms_(stale_window_ms), shared_(shared) {
+            if (readers && !shared_) throw std::invalid_argument("invalid snapshot cache configuration");
+            if (readers) snapshot_ = std::make_unique<detail::BasicSnapshotState<true>>(capacity_, stale_window_ms_, readers, max_pending_);
         }
-        // Register before each external query; at most 4096 outstanding.
+        [[nodiscard]] auto capacity() const noexcept -> std::size_t { return capacity_; }
+        [[nodiscard]] auto max_pending() const noexcept -> std::size_t {
+            return snapshot_ ? snapshot_->max_pending() : max_pending_;
+        }
+        // Register before each external query; bounded by max_pending().
         // Tokens belong to this instance and must be canceled on failure.
         [[nodiscard]] auto begin_query(CacheKey key) -> std::expected<CacheToken, CacheError>;
         // Reserve a publication token for an eligible stale entry. Empty means

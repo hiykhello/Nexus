@@ -24,30 +24,52 @@ namespace relay {
             if (root<2) return false;
             if (root<physical) return root-2<factories->size() && matches_chain(root-2);
             if (!dist) return false;
-            std::bitset<512> seen_group{};
-            std::array<std::size_t,256> stack{};
-            std::size_t sp=0;
-            stack[sp++]=root;
-            while (sp) {
-                auto idx=stack[--sp];
-                if (idx<2) continue;
-                if (idx<physical) {
-                    if (idx-2<factories->size() && matches_chain(idx-2)) return true;
-                    continue;
-                }
-                auto g=idx-physical;
-                if (g>=dist->groups.size() || g>=seen_group.size() || seen_group.test(g)) continue;
-                seen_group.set(g);
-                for (auto member : dist->groups[g]) {
-                    if (member<2) continue;
-                    if (member<physical) {
-                        if (member-2<factories->size() && matches_chain(member-2)) return true;
-                    } else if (sp<stack.size()) {
-                        stack[sp++]=member;
+            auto const n_groups=dist->groups.size();
+            auto const start_g=root-physical;
+            if (start_g>=n_groups) return false;
+            if (n_groups<=512) {
+                std::bitset<512> seen_group{};
+                std::array<std::size_t,512> stack{};
+                std::size_t sp=0;
+                seen_group.set(start_g);
+                stack[sp++]=start_g;
+                while (sp) {
+                    auto g=stack[--sp];
+                    for (auto member : dist->groups[g]) {
+                        if (member<2) continue;
+                        if (member<physical) {
+                            if (member-2<factories->size() && matches_chain(member-2)) return true;
+                        } else if (auto mg=member-physical; mg<n_groups && !seen_group.test(mg)) {
+                            seen_group.set(mg);
+                            stack[sp++]=mg;
+                        }
                     }
                 }
+                return false;
             }
-            return false;
+            try {
+                std::vector<std::uint8_t> seen_group(n_groups,0);
+                std::vector<std::size_t> stack;
+                stack.reserve(std::min<std::size_t>(n_groups,64));
+                seen_group[start_g]=1;
+                stack.push_back(start_g);
+                while (!stack.empty()) {
+                    auto g=stack.back();
+                    stack.pop_back();
+                    for (auto member : dist->groups[g]) {
+                        if (member<2) continue;
+                        if (member<physical) {
+                            if (member-2<factories->size() && matches_chain(member-2)) return true;
+                        } else if (auto mg=member-physical; mg<n_groups && !seen_group[mg]) {
+                            seen_group[mg]=1;
+                            stack.push_back(mg);
+                        }
+                    }
+                }
+                return false;
+            } catch (...) {
+                return true;
+            }
         };
         if (snapshot->dns_transports) {
             for (auto const& outbound : snapshot->dns_transports->outbounds)
@@ -156,19 +178,21 @@ namespace relay {
         if (outbound_contexts_started) return false;
         outbound_contexts_started=true;
         auto const& factories=borrowed_outbounds ? *borrowed_outbounds : outbounds;
-        if(factories.size()>outbound_context_order.size())return false;
-        outbound_context_count=0;std::array<std::uint8_t,256> marks{};
+        if (factories.size()>max_tunnel_outbounds) return false;
+        outbound_context_order.clear();
+        outbound_context_order.reserve(factories.size());
+        std::vector<std::uint8_t> marks(factories.size(),0);
         auto visit=[&](auto&& self,std::size_t index) -> bool {
             if(index>=factories.size() || marks[index]==1)return false;
             if(marks[index]==2)return true;
             marks[index]=1;
             if(factories[index].detour && !self(self,*factories[index].detour))return false;
-            marks[index]=2;outbound_context_order[outbound_context_count++]=static_cast<std::uint16_t>(index);return true;
+            marks[index]=2;outbound_context_order.push_back(static_cast<std::uint32_t>(index));return true;
         };
         for(std::size_t index=0;index<factories.size();++index)if(!visit(visit,index))return false;
         OutboundContext environment{context,dns.get(),local_dns.get(),&factories,&direct_tcp_options,this};
-        for(std::size_t i=0;i<outbound_context_count;++i) {
-            environment.factory_index=outbound_context_order[i];
+        for(auto idx : outbound_context_order) {
+            environment.factory_index=idx;
             auto const& factory=factories[environment.factory_index];
             if (!factory.start_context) continue;
             TunnelFactory const* detour=nullptr;
@@ -180,7 +204,7 @@ namespace relay {
     auto Server::stop_outbound_contexts() noexcept -> void {
         if (!outbound_contexts_started) return;
         auto const& factories=borrowed_outbounds ? *borrowed_outbounds : outbounds;
-        for(std::size_t i=outbound_context_count;i>0;--i) {
+        for(std::size_t i=outbound_context_order.size();i>0;--i) {
             auto const& factory=factories[outbound_context_order[i-1]];
             if(factory.stop_context)factory.stop_context(context);
             if(factory.quiesced_context) {
@@ -194,16 +218,16 @@ namespace relay {
     auto Server::reap_outbound_contexts() noexcept -> void {
         if (!outbound_contexts_started) return;
         auto const& factories=borrowed_outbounds ? *borrowed_outbounds : outbounds;
-        for(std::size_t i=0;i<outbound_context_count;++i) {
-            auto const& factory=factories[outbound_context_order[i]];
+        for(auto idx : outbound_context_order) {
+            auto const& factory=factories[idx];
             if(factory.reap_context)factory.reap_context(context);
         }
     }
     auto Server::outbound_contexts_quiesced() const noexcept -> bool {
         if (!outbound_contexts_started) return true;
         auto const& factories=borrowed_outbounds ? *borrowed_outbounds : outbounds;
-        for(std::size_t i=0;i<outbound_context_count;++i) {
-            auto const& factory=factories[outbound_context_order[i]];
+        for(auto idx : outbound_context_order) {
+            auto const& factory=factories[idx];
             if(factory.quiesced_context && !factory.quiesced_context(context)) return false;
         }
         return true;
@@ -211,10 +235,10 @@ namespace relay {
     auto Server::finish_outbound_contexts() noexcept -> void {
         if (!outbound_contexts_started) return;
         auto const& factories=borrowed_outbounds ? *borrowed_outbounds : outbounds;
-        for(std::size_t i=outbound_context_count;i>0;--i) {
+        for(std::size_t i=outbound_context_order.size();i>0;--i) {
             auto const& factory=factories[outbound_context_order[i-1]];
             if(factory.finish_context)factory.finish_context(context);
         }
-        outbound_context_count=0;outbound_contexts_started=false;
+        outbound_context_order.clear();outbound_contexts_started=false;
     }
 }

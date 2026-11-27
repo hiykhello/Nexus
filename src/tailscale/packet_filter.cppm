@@ -3,7 +3,7 @@ import std;
 
 export namespace tailscale::packet_filter {
     inline constexpr std::size_t max_json_bytes=4u*1024*1024;
-    inline constexpr std::size_t max_chunks=64,max_rules=512,max_addresses=8192,max_protocols=256,max_name_bytes=128;
+    inline constexpr std::size_t max_chunks=64,max_rules=65536,max_addresses=262144,max_protocols=256,max_name_bytes=128;
     enum class Error { json,schema,unsupported,limit,address,duplicate,allocation };
     // IPv4 occupies the first four bytes; IPv4-mapped IPv6 remains IPv6.
     struct Address {

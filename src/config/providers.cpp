@@ -50,19 +50,21 @@ namespace config {
         auto parse_filter_field(Node const& c, provider::ProviderFilter& f) -> std::expected<bool, std::string> {
             auto v = scalar(c);
             if (c.name == "include") {
-                if (!f.include_regex.empty() || !v || v->empty() || v->size() > 256)
+                if (!v || v->empty() || v->size() > 4096 || f.include_regexes.size() >= 256)
                     return error("invalid provider filter include regex");
-                f.include_regex = *v;
+                if (f.include_regex.empty()) f.include_regex = *v;
+                f.include_regexes.push_back(*v);
                 return true;
             }
             if (c.name == "exclude") {
-                if (!f.exclude_regex.empty() || !v || v->empty() || v->size() > 256)
+                if (!v || v->empty() || v->size() > 4096 || f.exclude_regexes.size() >= 256)
                     return error("invalid provider filter exclude regex");
-                f.exclude_regex = *v;
+                if (f.exclude_regex.empty()) f.exclude_regex = *v;
+                f.exclude_regexes.push_back(*v);
                 return true;
             }
             if (c.name == "tag-prefix") {
-                if (!f.tag_prefix.empty() || !v || v->size() > 32)
+                if (!f.tag_prefix.empty() || !v || v->size() > 128)
                     return error("invalid provider filter tag-prefix");
                 f.tag_prefix = *v;
                 return true;
@@ -206,25 +208,38 @@ namespace config {
     }
 
     auto validate_proxy_providers(Config& config) -> std::expected<void, std::string> {
-        for (std::size_t i = 0; i < config.proxy_providers.size(); ++i) {
-            auto& p = config.proxy_providers[i];
-            if (std::ranges::any_of(std::span(config.proxy_providers).first(i),
-                    [&](auto const& o) { return o.name == p.name; }))
+        std::unordered_set<std::string_view> seen_providers, http_names;
+        seen_providers.reserve(config.proxy_providers.size());
+        http_names.reserve(config.http_clients.size());
+        for (auto const& hc : config.http_clients) http_names.insert(hc.name);
+        for (auto& p : config.proxy_providers) {
+            if (!seen_providers.insert(p.name).second)
                 return error("duplicate proxy-provider name: " + p.name);
             if (p.type == ProxyProviderType::http) {
                 if (p.http_client.empty()) p.http_client = config.default_http_client;
-                if (p.http_client.empty() ||
-                    std::ranges::find(config.http_clients, p.http_client, &NamedHttpClient::name) == config.http_clients.end())
+                if (p.http_client.empty() || !http_names.contains(p.http_client))
                     return error("http proxy-provider requires http-client or routing default-http-client");
             }
-            if (!p.filter.include_regex.empty() && !rules::BoundedRegex::compile(p.filter.include_regex))
-                return error("invalid proxy-provider include regex: " + p.name);
-            if (!p.filter.exclude_regex.empty() && !rules::BoundedRegex::compile(p.filter.exclude_regex))
-                return error("invalid proxy-provider exclude regex: " + p.name);
+            if (!p.filter.include_regex.empty() && p.filter.include_regexes.empty()) {
+                if (!provider::compile_filter_regex(p.filter.include_regex))
+                    return error("invalid proxy-provider include regex: " + p.name);
+            }
+            for (auto const& pat : p.filter.include_regexes) {
+                if (!provider::compile_filter_regex(pat))
+                    return error("invalid proxy-provider include regex: " + p.name);
+            }
+            if (!p.filter.exclude_regex.empty() && p.filter.exclude_regexes.empty()) {
+                if (!provider::compile_filter_regex(p.filter.exclude_regex))
+                    return error("invalid proxy-provider exclude regex: " + p.name);
+            }
+            for (auto const& pat : p.filter.exclude_regexes) {
+                if (!provider::compile_filter_regex(pat))
+                    return error("invalid proxy-provider exclude regex: " + p.name);
+            }
         }
         for (auto const& sel : config.selectors) {
             for (auto const& pname : sel.use_providers) {
-                if (std::ranges::find(config.proxy_providers, pname, &ProxyProviderConfig::name) == config.proxy_providers.end())
+                if (!seen_providers.contains(pname))
                     return error("selector '" + sel.name + "' references unknown proxy-provider: " + pname);
             }
         }

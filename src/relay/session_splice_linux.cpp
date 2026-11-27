@@ -208,7 +208,11 @@ namespace relay {
             struct sigaction action{};
             if (::sigaction(SIGPIPE, nullptr, &action) < 0 || action.sa_handler != SIG_IGN) return false;
             splice_pipes.emplace(maximum);
-        } else splice_pipes.reset();
+            splice_max_idle_pipes = std::clamp<std::size_t>(maximum / 4, SplicePipePool::kMaxIdlePipes, 256);
+        } else {
+            splice_pipes.reset();
+            splice_max_idle_pipes = SplicePipePool::kMaxIdlePipes;
+        }
         return true;
     }
 

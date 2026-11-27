@@ -282,6 +282,8 @@ namespace rules {
     namespace {
         auto normalize_rules(RuleSet set,Normalization state) -> std::expected<RuleSet, Error> {
             if (set.version!=2) return invalid("unsupported rule schema version");
+            if (set.rules.size()>max_rules)
+                return std::unexpected(Error{ErrorCode::limit,"rule nesting or count exceeds limit"});
             for (auto& entry:set.rules) {
                 auto normalized=normalize(std::move(entry),1,state);
                 if (!normalized) return std::unexpected(std::move(normalized.error()));

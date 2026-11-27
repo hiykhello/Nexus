@@ -10,7 +10,7 @@ namespace config {
 
     auto add_http_client_header(Node const& field, NamedHttpClient& client, std::size_t& bytes) -> bool {
         if (field.tag || !field.properties.empty() || !field.children.empty() ||
-            field.arguments.size() != 2 || client.headers.size() == 16) return false;
+            field.arguments.size() != 2) return false;
         auto* name = kdl::string(field.arguments[0]);
         auto* value = kdl::string(field.arguments[1]);
         if (!name || !value || name->empty() || name->size() > 128 || value->size() > 1024 ||
@@ -33,7 +33,7 @@ namespace config {
 
         auto trimmed = http::trim_header_ows(*value);
         auto charge = normalized.size() + trimmed.size() + 32;
-        if (charge > 4096 - bytes) return false;
+        if (charge > 16384 - bytes) return false;
         bytes += charge;
         client.headers.emplace_back(std::move(normalized), trimmed);
         return true;
@@ -41,11 +41,14 @@ namespace config {
 
     auto parse_http_clients(Node const& group) -> std::expected<std::vector<NamedHttpClient>, std::string> {
         if (group.tag || !group.arguments.empty() || !group.properties.empty() ||
-            group.children.empty() || group.children.size() > 16) return error("invalid http-clients block");
+            group.children.empty() || group.children.size() > 4096) return error("invalid http-clients block");
         std::vector<NamedHttpClient> clients;
+        clients.reserve(group.children.size());
+        std::unordered_set<std::string_view> seen_names;
+        seen_names.reserve(group.children.size());
         for (auto const& node : group.children) {
             if (node.tag || !node.arguments.empty() || !node.properties.empty() || !valid_name(node.name) ||
-                std::ranges::find(clients, node.name, &NamedHttpClient::name) != clients.end())
+                !seen_names.insert(node.name).second)
                 return error("invalid or duplicate HTTP client name");
             NamedHttpClient client{.name = node.name};
             std::vector<std::string_view> fields;

@@ -279,15 +279,71 @@ export namespace config::desugar_detail {
             for (auto it = inherited_guards.rbegin(); it != inherited_guards.rend(); ++it)
                 r.children.insert(r.children.begin(), *it);
         }
-        if (program_out.size() >= 256) return error("expanded routing rules exceed 256 limit");
+        if (program_out.size() >= 65535u) return error("expanded routing rules exceed 65535 limit");
         canonicalize_rule_props(r);
         r.name = "rule";
         program_out.push_back(std::move(r));
         return {};
     }
 
+    inline auto is_rule_set_meta_field(std::string_view name) noexcept -> bool {
+        return name == "type" || name == "url" || name == "path" || name == "format" ||
+               name == "http-client" || name == "sha256" || name == "update-interval-ms";
+    }
+
+    inline auto desugar_rule_set_fields(Node& rule_set) -> std::expected<void, std::string> {
+        if (rule_set.children.empty()) return {};
+        std::vector<Node> kept;
+        kept.reserve(rule_set.children.size());
+        for (auto& child : rule_set.children) {
+            if (!is_rule_set_meta_field(child.name)) {
+                kept.push_back(std::move(child));
+                continue;
+            }
+            if (child.tag || !child.properties.empty() || !child.children.empty() ||
+                child.arguments.size() != 1)
+                return error("rule-set field " + child.name + " requires one value");
+            if (property(rule_set, child.name))
+                return error("duplicate rule-set field " + child.name);
+            rule_set.properties.push_back({std::move(child.name), std::move(child.arguments.front())});
+        }
+        rule_set.children = std::move(kept);
+        return {};
+    }
+
+    inline auto desugar_rulesets_block(Node& block, bool& seen, std::vector<Node>& out)
+        -> std::expected<void, std::string> {
+        if (seen || block.tag || !block.arguments.empty() || !block.properties.empty())
+            return error("invalid or duplicate " + block.name + " block");
+        seen = true;
+        for (auto& item : block.children) {
+            if (item.tag)
+                return error("tagged rule-set node in " + block.name);
+            if (item.arguments.empty()) {
+                if (item.name == "-")
+                    return error("rule-set entry - requires a name argument in " + block.name);
+                item.arguments.push_back({std::move(item.name), {}});
+                item.name = "rule-set";
+            } else if (item.arguments.size() == 1 &&
+                       (item.name == "remote" || item.name == "local" || item.name == "inline")) {
+                if (property(item, "type"))
+                    return error("typed rule-set in " + block.name + " cannot also specify type");
+                item.properties.push_back({"type", {std::move(item.name), {}}});
+                item.name = "rule-set";
+            } else if (item.name == "-" && item.arguments.size() == 1) {
+                item.name = "rule-set";
+            } else {
+                return error("invalid rule-set entry in " + block.name);
+            }
+            if (auto ok = desugar_rule_set_fields(item); !ok) return ok;
+            out.push_back(std::move(item));
+        }
+        return {};
+    }
+
     inline auto desugar_routing(Node& routing) -> std::expected<void, std::string> {
         bool rules_seen = false;
+        bool rulesets_seen = false;
         bool has_tcp_program = std::ranges::any_of(routing.children,
             [](Node const& c) { return c.name == "tcp-program"; });
         SubRuleMap sub_rules;
@@ -309,6 +365,15 @@ export namespace config::desugar_detail {
                 auto v = (child.properties.empty() && child.children.empty()) ? argument(child) : nullptr;
                 if (!v || !valid_name(*v)) return error("default requires one outbound name");
                 child.name = "default-outbound";
+                out_children.push_back(std::move(child));
+                continue;
+            }
+            if (child.name == "rulesets" || child.name == "rule-sets") {
+                if (auto ok = desugar_rulesets_block(child, rulesets_seen, out_children); !ok) return ok;
+                continue;
+            }
+            if (child.name == "rule-set") {
+                if (auto ok = desugar_rule_set_fields(child); !ok) return ok;
                 out_children.push_back(std::move(child));
                 continue;
             }

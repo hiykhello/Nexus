@@ -58,6 +58,7 @@ export namespace tuic {
         std::array<std::uint8_t, 16> client_uuid_{};
         std::string client_password_;
         std::span<UserCredential const> server_users_;
+        detail::UserIndex const* server_user_index_ = nullptr;
         std::array<std::optional<StreamState>, Streams> streams_{};
         std::deque<std::vector<std::uint8_t>> datagrams_{};
         std::uint16_t next_pkt_id_ = 1;
@@ -175,8 +176,9 @@ export namespace tuic {
         Application(Tls& tls, Hooks& hooks, std::array<std::uint8_t, 16> uuid, std::string password)
             : tls_(tls), hooks_(hooks), server_(false), client_uuid_(uuid), client_password_(std::move(password)) {}
 
-        Application(Tls& tls, Hooks& hooks, std::span<UserCredential const> users)
-            : tls_(tls), hooks_(hooks), server_(true), server_users_(users) {}
+        Application(Tls& tls, Hooks& hooks, std::span<UserCredential const> users,
+                    detail::UserIndex const* user_index = nullptr)
+            : tls_(tls), hooks_(hooks), server_(true), server_users_(users), server_user_index_(user_index) {}
 
         Application(Application const&) = delete;
         auto operator=(Application const&) -> Application& = delete;

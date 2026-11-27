@@ -57,7 +57,7 @@ namespace rules {
     }
 
     auto parse_domain_list(std::string_view input, bool lenient) -> std::expected<RuleSet, Error> {
-        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "domain list exceeds 32 MiB"});
+        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "domain list exceeds 256 MiB"});
         RuleSet set{{}, 2};
         bool seen_payload = false;
         while (!input.empty()) {
@@ -94,7 +94,7 @@ namespace rules {
     }
 
     auto parse_ipcidr_list(std::string_view input, bool lenient) -> std::expected<RuleSet, Error> {
-        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "IP CIDR list exceeds 32 MiB"});
+        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "IP CIDR list exceeds 256 MiB"});
         RuleSet set{{}, 2};
         bool seen_payload = false;
         while (!input.empty()) {
@@ -120,7 +120,7 @@ namespace rules {
     }
 
     auto parse_classical_list(std::string_view input, bool lenient) -> std::expected<RuleSet, Error> {
-        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "classical list exceeds 32 MiB"});
+        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "classical list exceeds 256 MiB"});
         RuleSet set{{}, 2};
         bool seen_payload = false;
         while (!input.empty()) {
@@ -179,7 +179,7 @@ namespace rules {
     }
 
     auto parse_adguard_list(std::string_view input, bool lenient) -> std::expected<RuleSet, Error> {
-        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "AdGuard filter exceeds 32 MiB"});
+        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "AdGuard filter exceeds 256 MiB"});
         std::vector<Rule> allow, block;
         std::unordered_set<std::string> seen;
         auto push_unique = [&](std::vector<Rule>& dst, Rule r) -> bool {

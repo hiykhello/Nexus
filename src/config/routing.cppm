@@ -184,7 +184,7 @@ export namespace config::routing_detail {
                 default_strategy_seen = true;
             } else if (child.name == "rule-set") {
                 auto parsed = parse_rule_set_spec(child);
-                if (!parsed || route.files.size() >= 256 ||
+                if (!parsed || route.files.size() >= max_tunnel_outbounds ||
                     std::ranges::any_of(route.files, [&](auto const& file) { return file.name == parsed->first; }))
                     return error(parsed ? "duplicate or too many rule-set entries" : parsed.error());
                 route.files.push_back({std::move(parsed->first), std::move(parsed->second)});
@@ -199,7 +199,7 @@ export namespace config::routing_detail {
                 auto ip_source = ip_source_value && !ip_source_value->tag ? std::get_if<bool>(&ip_source_value->data) : nullptr;
                 if (child.tag || !child.arguments.empty() || !child.children.empty() || child.properties.size() != 3 + bool(ip_source_value) ||
                     (ip_source_value && !ip_source) || !kind || *kind != "rule-set" || !value || !valid_name(*value) ||
-                    !outbound || !valid_name(*outbound) || route.rules.size() >= 256)
+                    !outbound || !valid_name(*outbound) || route.rules.size() >= max_tunnel_outbounds)
                     return error("invalid rule-set rule");
                 route.rules.push_back({*value, *outbound, ip_source && *ip_source});
             } else if (child.name == "tcp-program") {
@@ -259,7 +259,7 @@ export namespace config::routing_detail {
                     if (item.name != "rule" || item.tag || !item.arguments.empty() ||
                         item.properties.size() != expected_props ||
                         (ip_source_value && (!ip_source || !set)) || (no_drop_val && !no_drop_flag) ||
-                        (frag_val && !frag_flag) || (udp_ad_val && !udp_ad_flag) || program.rules.size() >= 256)
+                        (frag_val && !frag_flag) || (udp_ad_val && !udp_ad_flag) || program.rules.size() >= max_tunnel_outbounds)
                         return error("invalid tcp-program rule");
                     rules::RuleSet predicates{.version = 2};
                     for (auto const& operand : item.children) {

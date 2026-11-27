@@ -3,6 +3,7 @@ module relay:session_udp_alias_tunnel;
 import std;
 import capy;
 import corosio;
+import containers.lru_slab;
 import net.datagram_frame;
 import net.lazy_readers;
 import relay.request_backend;
@@ -24,9 +25,32 @@ namespace relay::session_udp_detail {
 #ifdef NEXUS_ENABLE_SOCKS_UDP
 #ifdef NEXUS_ENABLE_FAKEIP
     struct UotAliasTunnels {
-        static constexpr std::size_t limit = 16;
-        using Readers = net::LazyReaders<ordinary_udp_slots + limit>;
+        static constexpr std::size_t limit = alias_udp_slots;
+        using Readers = net::LazyReaders<0>;
         enum class Send { dropped, forwarded, retry };
+
+        struct AliasKey {
+            socks5::UdpPeer alias, target;
+            std::size_t outbound = 0;
+            auto operator==(AliasKey const&) const noexcept -> bool = default;
+        };
+
+        struct AliasKeyHash {
+            auto operator()(AliasKey const& k) const noexcept -> std::size_t {
+                std::uint64_t h = 14695981039346656037ull;
+                auto mix = [&](std::uint64_t v) noexcept { h = (h ^ v) * 1099511628211ull; };
+                auto mix_peer = [&](socks5::UdpPeer const& p) noexcept {
+                    mix((static_cast<std::uint64_t>(p.address_type) << 16) | p.port);
+                    std::uint64_t a = 0, b = 0;
+                    std::memcpy(&a, p.address.data(), 8); mix(a);
+                    if (p.address_type == 4) { std::memcpy(&b, p.address.data() + 8, 8); mix(b); }
+                };
+                mix(static_cast<std::uint64_t>(k.outbound));
+                mix_peer(k.alias);
+                mix_peer(k.target);
+                return static_cast<std::size_t>(h ^ (h >> 32));
+            }
+        };
 
         struct Relay {
             socks5::UdpPeer alias, target;
@@ -58,60 +82,91 @@ namespace relay::session_udp_detail {
         };
 
         struct Entry {
-            std::unique_ptr<Relay> relay;
+            std::shared_ptr<Relay> relay;
             capy::async_event ready;
         };
-        std::array<Entry, limit> entries;
+
+        containers::LruSlab<AliasKey, Entry, AliasKeyHash> slab_;
+        std::size_t reader_base_ = ordinary_udp_slots;
+
+        explicit UotAliasTunnels(std::size_t soft_cap = limit, std::size_t reader_base = ordinary_udp_slots) noexcept
+            : slab_(soft_cap), reader_base_(reader_base) {}
+
+        [[nodiscard]] auto size() const noexcept -> std::size_t { return slab_.size(); }
+        [[nodiscard]] auto soft_cap() const noexcept -> std::size_t { return slab_.soft_cap(); }
 
         auto cancel() noexcept -> void {
-            for (auto& entry : entries) {
+            slab_.for_each([](std::uint32_t, AliasKey const&, Entry& entry) noexcept {
                 if (entry.relay) entry.relay->cancel();
                 entry.ready.set();
-            }
+            });
         }
 
         auto expire(Clock::time_point now) noexcept -> void {
             using namespace std::chrono_literals;
-            for (auto& entry : entries) {
-                if (!entry.relay) continue;
+            slab_.for_each_lru_to_mru([&](std::uint32_t, AliasKey const&, Entry& entry) noexcept {
+                if (!entry.relay) return;
                 auto& relay = *entry.relay;
                 if (relay.deadline ? now >= *relay.deadline : now - relay.touched >= 60s)
                     relay.cancel();
-            }
+            });
         }
 
         auto send(Session& session, io::io_context& context, Readers& readers,
             socks5::UdpTunnelPacket const& packet, TunnelFactory const& factory) -> capy::task<Send> {
             auto const& alias = *packet.alias;
-            auto entry = std::ranges::find_if(entries, [&](Entry const& candidate) {
-                return candidate.relay && !candidate.relay->closing && candidate.relay->alias == alias.endpoint &&
-                    candidate.relay->target == packet.target && candidate.relay->outbound == packet.outbound;
-            });
-            if (entry == entries.end()) {
-                entry = std::ranges::find_if(entries, [](Entry const& candidate) { return !candidate.relay; });
-                if (entry == entries.end()) co_return Send::dropped;
-                entry->relay = std::make_unique<Relay>();
-                entry->relay->alias = alias.endpoint;
-                entry->relay->target = packet.target;
-                entry->relay->outbound = packet.outbound;
-                entry->relay->lease = alias.lease;
+            AliasKey key{alias.endpoint, packet.target, packet.outbound};
+            std::uint32_t slot_idx = 0;
+            if (auto hit = slab_.find_index_and_touch(key)) {
+                slot_idx = *hit;
+                auto& entry = slab_.slot_value(slot_idx);
+                if (!entry.relay || entry.relay->closing) {
+                    if (entry.relay && !entry.relay->deadline) entry.relay.reset();
+                    if (!entry.relay) {
+                        auto r = std::make_shared<Relay>();
+                        r->alias = alias.endpoint; r->target = packet.target;
+                        r->outbound = packet.outbound; r->lease = alias.lease;
+                        entry.relay = std::move(r);
+                    }
+                }
+            } else if (auto fresh = slab_.emplace(key)) {
+                slot_idx = *fresh;
+                auto r = std::make_shared<Relay>();
+                r->alias = alias.endpoint; r->target = packet.target;
+                r->outbound = packet.outbound; r->lease = alias.lease;
+                slab_.slot_value(slot_idx).relay = std::move(r);
+            } else {
+                auto recycled = slab_.rekey_lru(key, [](std::uint32_t, AliasKey const&, Entry& victim) noexcept {
+                    if (victim.relay) victim.relay->cancel();
+                    victim.relay.reset();
+                    victim.ready.clear();
+                });
+                if (!recycled) co_return Send::dropped;
+                slot_idx = *recycled;
+                auto r = std::make_shared<Relay>();
+                r->alias = alias.endpoint; r->target = packet.target;
+                r->outbound = packet.outbound; r->lease = alias.lease;
+                slab_.slot_value(slot_idx).relay = std::move(r);
             }
-            auto& relay = *entry->relay;
+            auto& entry = slab_.slot_value(slot_idx);
+            auto relay_ptr = entry.relay;
+            if (!relay_ptr) co_return Send::dropped;
+            auto& relay = *relay_ptr;
             auto until = packet.deadline;
             if (!relay.tunnel)
                 until = std::min(until, Clock::now() + std::chrono::milliseconds(factory.timeout_ms));
             relay.deadline = until;
             struct Finish {
                 Entry& entry;
+                std::shared_ptr<Relay> relay;
                 ~Finish() {
-                    auto& relay = *entry.relay;
-                    relay.deadline.reset();
-                    if (!relay.reader_requested || relay.reader_finished) {
-                        relay.cancel();
-                        entry.relay.reset();
+                    relay->deadline.reset();
+                    if (!relay->reader_requested || relay->reader_finished) {
+                        relay->cancel();
+                        if (entry.relay == relay) entry.relay.reset();
                     }
                 }
-            } finish{*entry};
+            } finish{entry, relay_ptr};
             auto active = [&] { return !session.closed && !relay.closing && Clock::now() < until; };
             if (!relay.tunnel) {
                 relay.tunnel = factory(session, context);
@@ -134,10 +189,9 @@ namespace relay::session_udp_detail {
                     co_return Send::dropped;
 #endif
                 }
-                auto index = static_cast<std::size_t>(entry - entries.begin()) + ordinary_udp_slots;
-                if (!readers.request(index)) co_return Send::dropped;
+                if (!readers.request(reader_base_ + slot_idx)) co_return Send::dropped;
                 relay.reader_requested = true;
-                entry->ready.set();
+                entry.ready.set();
             }
             if (!active()) co_return Send::dropped;
             auto credit = session.reserve_principal_datagram(true, packet.packet.data.size());
@@ -219,24 +273,25 @@ namespace relay::session_udp_detail {
 
         auto read(Session& session, socks5::UdpIngress& ingress, Readers& readers, std::size_t index)
             -> capy::task<capy::results<>> {
-            auto& entry = entries[index];
+            auto& entry = slab_.slot_value(static_cast<std::uint32_t>(index));
             while (!session.closed && !readers.stopped()) {
-                if (!entry.relay || entry.relay->reader_finished) {
+                auto relay = entry.relay;
+                if (!relay || !relay->reader_requested || relay->reader_finished) {
                     entry.ready.clear();
+                    if (entry.relay && entry.relay->reader_requested && !entry.relay->reader_finished) continue;
                     auto [error] = co_await entry.ready.wait();
                     if (error) session.close();
                     continue;
                 }
-                auto& relay = *entry.relay;
 #ifdef NEXUS_ENABLE_VLESS
-                if (relay.xudp_client) co_await read_xudp(session, ingress, relay);
+                if (relay->xudp_client) co_await read_xudp(session, ingress, *relay);
                 else
 #endif
-                    co_await uot_read_framed(session, ingress, relay.tunnel, relay.authorization, relay.framing,
-                        uot_address(relay.target), &relay.alias, &relay.closing, &relay.touched);
-                relay.cancel();
-                relay.reader_finished = true;
-                if (!relay.deadline) entry.relay.reset();
+                    co_await uot_read_framed(session, ingress, relay->tunnel, relay->authorization, relay->framing,
+                        uot_address(relay->target), &relay->alias, &relay->closing, &relay->touched);
+                relay->cancel();
+                relay->reader_finished = true;
+                if (!relay->deadline && entry.relay == relay) entry.relay.reset();
             }
             co_return capy::results<>{};
         }
@@ -261,22 +316,31 @@ namespace relay::session_udp_detail {
 #endif
 
     struct UotState {
-        std::array<std::unique_ptr<UotSlot>, routed_udp_slots> slots;
+        net::RoutedDatagramSlots<UotSlot, routed_udp_slots> routed;
         net::FixedDatagramSlots<UotSlot, socks5::UdpPeer, fixed_udp_slots> fixed;
-        auto slot_at(std::size_t index) -> UotSlot& {
-            if (index < routed_udp_slots) {
-                if (!slots[index]) slots[index] = std::make_unique<UotSlot>();
-                return *slots[index];
-            }
-            return fixed.slot(index - routed_udp_slots);
-        }
+        net::LazyReaders<0> readers;
 #ifdef NEXUS_ENABLE_FAKEIP
         std::unique_ptr<UotAliasTunnels> aliases;
-        UotAliasTunnels::Readers readers;
-#else
-        net::LazyReaders<ordinary_udp_slots> readers;
+        std::size_t alias_cap = alias_udp_slots;
 #endif
         std::optional<Clock::time_point> active_deadline;
+
+        explicit UotState(std::size_t routed_cap = routed_udp_slots, std::size_t fixed_cap = fixed_udp_slots,
+            [[maybe_unused]] std::size_t aliases_cap = alias_udp_slots) noexcept
+            : routed(routed_cap), fixed(fixed_cap),
+#ifdef NEXUS_ENABLE_FAKEIP
+              readers(routed_cap + fixed_cap + aliases_cap), alias_cap(aliases_cap)
+#else
+              readers(routed_cap + fixed_cap)
+#endif
+        {}
+
+        [[nodiscard]] auto ordinary_limit() const noexcept -> std::size_t { return routed.soft_cap() + fixed.soft_cap(); }
+
+        auto slot_at(std::size_t index) -> UotSlot& {
+            return index < routed.soft_cap() ? routed.slot(index) : fixed.slot(index - routed.soft_cap());
+        }
+
         auto cancel() noexcept -> void {
             readers.stop();
 #ifdef NEXUS_ENABLE_FAKEIP
@@ -289,8 +353,9 @@ namespace relay::session_udp_detail {
 #endif
                 if (slot.tunnel) slot.tunnel->cancel();
                 slot.readiness.set();
+                slot.reader_done.set();
             };
-            for (auto const& slot : slots) if (slot) close(*slot);
+            routed.for_each(close);
             fixed.for_each(close);
         }
     };

@@ -8,7 +8,7 @@ namespace relay {
         std::uint32_t timeout_ms,TcpSocketOptions options,bool fast_open,TlsFingerprint fingerprint,std::optional<std::uint16_t> record_size_limit,std::span<std::array<std::uint8_t,32> const> pins,std::optional<HttpUpgradeTransport> transport,std::optional<GrpcTransport> grpc,QuicEchOptions const& ech,config::OutboundTlsFragment const& tls_fragment,std::span<std::string const> alpn) -> std::expected<std::size_t,std::string> {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty()) return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_TROJAN
-        if (outbounds.size()>=256) return std::unexpected("too many tunnel outbounds");
+        if (outbounds.size()>=max_tunnel_outbounds) return std::unexpected("too many tunnel outbounds");
         if (bootstrap && (!dns_routing || *bootstrap>=dns_routing->resolver_count())) return std::unexpected("invalid bootstrap resolver");
         auto factory=make_trojan_factory(host,port,password_file,server_name,ca_file,exchange,bootstrap,timeout_ms,options,fast_open,fingerprint,record_size_limit,pins,std::move(transport),std::move(grpc),ech,dns_routing.has_value(),tls_fragment,alpn);
         if (!factory) return std::unexpected(factory.error());

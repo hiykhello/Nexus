@@ -118,6 +118,7 @@ namespace relay {
         std::string alpn_{"h3"};
         hysteria2::TransportOptions transport_;
         std::vector<naive::UserCredential> users_;
+        naive::UserIndex user_index_;
         std::optional<Credentials> http_creds_;
         bool is_naive_ = false, padding_ = false, connect_udp_ = false;
         std::uint16_t fallback_status_ = 404;
@@ -135,7 +136,7 @@ namespace relay {
                            bool is_naive, bool padding, bool connect_udp, std::uint16_t fallback_status)
             : server_(s), context_(s.executor_context()), credential_(std::move(cred)),
               atomic_credential_(std::move(atomic_cred)), alpn_(alpn.empty() ? "h3" : std::move(alpn)),
-              transport_(opts), users_(std::move(users)), http_creds_(std::move(http_creds)),
+              transport_(opts), users_(std::move(users)), user_index_(users_), http_creds_(std::move(http_creds)),
               is_naive_(is_naive), padding_(padding), connect_udp_(connect_udp), fallback_status_(fallback_status),
               socket_(context_) {}
 
@@ -181,7 +182,7 @@ namespace relay {
                 else if (naive::header_ci_equal(f.name, "padding-type-request")) pad_req = f.value;
             }
             if (is_naive_) {
-                auto matched_user = naive::verify_basic_auth(auth_hdr, users_);
+                auto matched_user = naive::verify_basic_auth(auth_hdr, users_, user_index_);
                 if (method != "CONNECT" || !protocol.empty() || !matched_user) {
                     co_await send_decoy(h, fallback_status_, until);
                     co_return;

@@ -11,6 +11,7 @@ module;
 module relay;
 import proxy.v4;
 import std;
+import containers.lru_slab;
 import net.udp_socket;
 import net.stream_datagrams;
 import relay.request_backend;
@@ -121,7 +122,7 @@ namespace relay {
     }
 
     class TransparentUdp {
-        static constexpr std::size_t flow_limit=128;
+        static constexpr std::size_t default_flow_limit = 4096;
         static constexpr std::size_t kRecvBatch=8;
         static constexpr std::size_t kCtrlSize=CMSG_SPACE(sizeof(sockaddr_in6))+CMSG_SPACE(sizeof(in6_pktinfo))+CMSG_SPACE(sizeof(int));
         Server& server_;
@@ -130,8 +131,7 @@ namespace relay {
         net::UdpEndpoint listen_;
         bool listen_any_=false;
         std::optional<std::uint32_t> mark_;
-        std::unordered_map<FlowKey,std::unique_ptr<Flow>,FlowKeyHash> flows_;
-        std::size_t dead_flows_=0;
+        containers::LruSlab<FlowKey,std::shared_ptr<Flow>,FlowKeyHash> flows_;
         std::unordered_map<std::uint32_t,std::array<char,IF_NAMESIZE>> ifname_cache_;
 #if !defined(__linux__)
         std::unique_ptr<std::uint8_t[]> payload_;
@@ -153,16 +153,16 @@ namespace relay {
         auto accept(net::UdpEndpoint const& client,TransparentDatagram const& incoming) -> Flow* {
             auto const& target=incoming.original_destination;
             FlowKey key{client,target,incoming.ingress_ifindex};
-            if (auto it=flows_.find(key); it!=flows_.end()) {
-                if (!it->second->session.closed) return it->second.get();
-                if (!it->second->active) { flows_.erase(it); if (dead_flows_) --dead_flows_; }
+            if (auto idx=flows_.find_index_and_touch(key)) {
+                auto& existing=flows_.slot_value(*idx);
+                if (!existing->session.closed) return existing.get();
+                if (!existing->active) flows_.erase(*idx);
                 else return nullptr;
             }
-            if (flows_.size()>=flow_limit) return nullptr;
             auto lease=server_.acquire_session();
             if (!lease) return nullptr;
             auto& context=server_.executor_context();
-            auto flow=std::make_unique<Flow>(context);
+            auto flow=std::make_shared<Flow>(context);
             server_.attach_session(flow->session,std::move(*lease));
             flow->route_target=net::stream_datagrams::peer_address(target);
             std::optional<bool> fakeip_alias;
@@ -204,27 +204,30 @@ namespace relay {
             flow->relays.emplace(flow->session,context,flow->incoming,policy,
                 Resolve{flow->session,context,client},net::DatagramFraming{},net::ProxyAddress{},client,std::move(router));
             auto* current=flow.get();
-            auto [it, inserted]=flows_.emplace(key,std::move(flow));
+            auto [slot_idx, inserted]=flows_.emplace_or_evict(key,
+                [](std::uint32_t,FlowKey const&,std::shared_ptr<Flow>& victim) noexcept {
+                    victim->session.close();
+                    if (victim->relays) victim->relays->cancel();
+                }, flow);
             if (!inserted) return nullptr;
+            auto on_done = [this, key, raw = current]() noexcept {
+                raw->session.close();
+                raw->active = false;
+                if (auto idx = flows_.find_index(key); idx && flows_.slot_value(*idx).get() == raw)
+                    flows_.erase(*idx);
+            };
             try {
-                capy::run_async(context.get_executor(),[this,current] {
-                    current->session.close();
-                    current->active=false;
-                    ++dead_flows_;
-                },[this,current](std::exception_ptr) noexcept {
-                    current->session.close();
-                    current->active=false;
-                    ++dead_flows_;
-                })(relay(*current));
+                capy::run_async(context.get_executor(), on_done,
+                    [on_done](std::exception_ptr) noexcept { on_done(); })(relay(std::move(flow)));
             } catch (...) {
-                flows_.erase(it);
+                flows_.erase(slot_idx);
                 throw;
             }
             return current;
         }
 
-        static auto relay(Flow& flow) -> capy::task<> {
-            (void)co_await capy::when_all(net::stream_datagrams::tasks(*flow.relays));
+        static auto relay(std::shared_ptr<Flow> flow) -> capy::task<> {
+            (void)co_await capy::when_all(net::stream_datagrams::tasks(*flow->relays));
         }
 
         auto dispatch_datagram(msghdr& header, std::uint8_t const* data, std::size_t length, bool ipv6, Clock::time_point now) -> void {
@@ -269,14 +272,12 @@ namespace relay {
         }
 
     public:
-        TransparentUdp(Server& server,std::optional<std::uint32_t> mark)
-            : server_(server),mark_(mark)
+        TransparentUdp(Server& server,std::optional<std::uint32_t> mark,std::size_t flow_limit=default_flow_limit)
+            : server_(server),mark_(mark),flows_(flow_limit)
 #if !defined(__linux__)
             ,payload_(std::make_unique_for_overwrite<std::uint8_t[]>(65536))
 #endif
-        {
-            flows_.reserve(flow_limit);
-        }
+        {}
         auto start(corosio::endpoint endpoint,bool reuse,config::ListenOptions const* listen = nullptr) -> std::error_code {
             listen_.family=endpoint.is_v6() ? 6 : 4;
             listen_.port=endpoint.port();
@@ -287,10 +288,6 @@ namespace relay {
             return socket_.bind(listen_,true,reuse,mark_,listen);
         }
         auto poll() -> std::error_code {
-            if (dead_flows_) {
-                std::erase_if(flows_,[](auto const& item) { return !item.second->active; });
-                dead_flows_=0;
-            }
             auto now=Clock::now();
             if (now-last_reap_>=1s) {
                 reply_cache_.reap_idle(now);
@@ -342,10 +339,11 @@ namespace relay {
         }
         auto stop() noexcept -> void {
             socket_.close();
-            for (auto& [key,flow] : flows_) {
+            flows_.for_each([](std::uint32_t,FlowKey const&,std::shared_ptr<Flow>& flow) noexcept {
                 flow->session.close();
-                flow->relays->cancel();
-            }
+                if (flow->relays) flow->relays->cancel();
+            });
+            flows_.clear();
             reply_cache_.clear();
         }
     };

@@ -125,22 +125,24 @@ namespace relay {
         std::span<std::pair<std::string, config::FallbackTarget> const> fallback_for_alpn,
         InboundTlsRuntime const& tls_rt)
         -> std::expected<InboundFactory, std::string> {
-        if (passwords.empty() || passwords.size() > 64 || (!names.empty() && names.size() != passwords.size()))
+        if (passwords.empty() || passwords.size() > max_tunnel_outbounds || (!names.empty() && names.size() != passwords.size()))
             return std::unexpected("invalid Trojan users");
         if (transport && grpc_cfg) return std::unexpected("Trojan inbound accepts at most one transport");
         if (fallback && (fallback->host.empty() || fallback->host.size() > 253 || !fallback->port))
             return std::unexpected("invalid Trojan fallback target");
-        if (fallback_for_alpn.size() > 16)
-            return std::unexpected("Trojan fallback-for-alpn accepts at most 16 entries");
-        for (std::size_t i = 0; i < fallback_for_alpn.size(); ++i) {
-            auto const& [alpn, target] = fallback_for_alpn[i];
+        if (fallback_for_alpn.size() > 1024)
+            return std::unexpected("Trojan fallback-for-alpn accepts at most 1024 entries");
+        std::unordered_set<std::string_view> seen_alpn;
+        seen_alpn.reserve(fallback_for_alpn.size());
+        for (auto const& [alpn, target] : fallback_for_alpn) {
             if (alpn.empty() || alpn.size() > 255 || target.host.empty() || target.host.size() > 253 || !target.port ||
-                std::ranges::any_of(fallback_for_alpn.first(i), [&](auto const& x) { return x.first == alpn; }))
+                !seen_alpn.insert(alpn).second)
                 return std::unexpected("invalid or duplicate Trojan fallback-for-alpn entry");
         }
-        for (std::size_t i = 0; i < names.size(); ++i)
-            if (names[i].empty() || names[i].size() > 255 || names[i].find('\0') != std::string::npos ||
-                std::ranges::contains(names.first(i), names[i]))
+        std::unordered_set<std::string_view> seen_names;
+        seen_names.reserve(names.size());
+        for (auto const& n : names)
+            if (n.empty() || n.size() > 255 || n.find('\0') != std::string::npos || !seen_names.insert(n).second)
                 return std::unexpected("invalid or duplicate Trojan user name");
         auto profile = std::make_unique<trojan_in::TrojanInboundProfile>();
         if (tls_rt.atomic_credential) {
@@ -169,13 +171,16 @@ namespace relay {
             if (!compiled) return std::unexpected(compiled.error());
             profile->grpc = std::move(*compiled);
         }
+        std::vector<trojan::PasswordKey> loaded_users;
+        loaded_users.reserve(passwords.size());
         for (auto const& path : passwords) {
             auto password = trojan::PasswordKey::load(path);
             if (!password) return std::unexpected(password.error());
-            if (trojan::authenticate(profile->users, password->view()))
-                return std::unexpected("duplicate Trojan password");
-            profile->users.push_back(std::move(*password));
+            loaded_users.push_back(std::move(*password));
         }
+        auto table = trojan::UserTable::create(std::move(loaded_users));
+        if (!table) return std::unexpected(std::move(table.error()));
+        profile->users = std::move(*table);
         profile->names.assign(names.begin(), names.end());
         return InboundFactory{[profile = std::move(profile)](Session& session, corosio::io_context& context,
             rules::RouteMatcher const& policy) {

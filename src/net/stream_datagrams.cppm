@@ -71,45 +71,31 @@ export namespace net::stream_datagrams {
             std::optional<Clock::time_point> active_deadline;
         };
         Session& session; io::io_context& context; Stream& incoming;
-        rules::RouteMatcher const& policy;
-        Resolver resolver;
-        OrderedRouter ordered;
-        UdpDirect direct;
-        DirectSocketWait direct_wake;
-        std::optional<UdpEndpoint> source;
-        DatagramFraming framing;
-        ProxyAddress destination;
-        static constexpr std::size_t ordinary_slots=128, fixed_slots=16;
-        std::array<std::unique_ptr<Slot>,ordinary_slots> slots;
+        rules::RouteMatcher const& policy; Resolver resolver; OrderedRouter ordered;
+        UdpDirect direct; DirectSocketWait direct_wake;
+        std::optional<UdpEndpoint> source; DatagramFraming framing; ProxyAddress destination;
+        static constexpr std::size_t ordinary_slots=4096, fixed_slots=512;
+        RoutedDatagramSlots<Slot,ordinary_slots> routed;
         FixedDatagramSlots<Slot,UdpEndpoint,fixed_slots> fixed;
-        LazyReaders<ordinary_slots+fixed_slots> readers;
-        std::deque<Packet> pending;
-        std::size_t pending_bytes=0;
-        bool resolving=false,canceled=false;
-        Clock::time_point deadline{};
-        Slot* forwarding=nullptr;
+        LazyReaders<0> readers;
+        std::deque<Packet> pending; std::size_t pending_bytes=0;
+        bool resolving=false,canceled=false; Clock::time_point deadline{}; Slot* forwarding=nullptr;
         capy::async_event pending_wake,space_wake,timeout_wake;
         Server(Session& owner,io::io_context& executor,Stream& stream,rules::RouteMatcher const& rules,Resolver resolve,
-            DatagramFraming format,ProxyAddress target={},std::optional<UdpEndpoint> peer={},OrderedRouter router={})
-            : session(owner),context(executor),incoming(stream),policy(rules),resolver(std::move(resolve)),ordered(std::move(router)),direct(rules,owner.direct_tcp_options ? &owner.direct_tcp_options->binding : nullptr),direct_wake(executor),source(peer),framing(format),destination(target) {}
-        auto slot_at(std::size_t index) -> Slot& {
-            if (index<ordinary_slots) { if (!slots[index]) slots[index]=std::make_unique<Slot>(); return *slots[index]; }
-            return fixed.slot(index-ordinary_slots);
-        }
+            DatagramFraming format,ProxyAddress target={},std::optional<UdpEndpoint> peer={},OrderedRouter router={},
+            std::size_t routed_cap=ordinary_slots,std::size_t fixed_cap=fixed_slots)
+            : session(owner),context(executor),incoming(stream),policy(rules),resolver(std::move(resolve)),ordered(std::move(router)),direct(rules,owner.direct_tcp_options ? &owner.direct_tcp_options->binding : nullptr),direct_wake(executor),source(peer),framing(format),destination(target),routed(routed_cap),fixed(fixed_cap),readers(routed_cap+fixed_cap) {}
+        auto slot_at(std::size_t index) -> Slot& { return index<routed.soft_cap() ? routed.slot(index) : fixed.slot(index-routed.soft_cap()); }
         auto notify_pending() noexcept -> void { pending_wake.set(); timeout_wake.set(); }
         auto wake_all() noexcept -> void {
             pending_wake.set(); space_wake.set(); timeout_wake.set(); direct_wake.notify();
             auto w=[](Slot& s) noexcept { s.readiness.set(); s.reader_done.set(); s.auth_wake.set(); };
-            for (auto const& s : slots) if (s) w(*s); fixed.for_each(w);
+            routed.for_each(w); fixed.for_each(w);
         }
         auto cancel() noexcept -> void {
             readers.stop(); direct_wake.stop(); wake_all();
-            auto close=[](Slot& slot) noexcept {
-                if (slot.client) slot.client->cancel(); else if (slot.tunnel) slot.tunnel->cancel();
-                slot.readiness.set();
-            };
-            for (auto const& s : slots) if (s) close(*s);
-            fixed.for_each(close);
+            auto close=[](Slot& slot) noexcept { if (slot.client) slot.client->cancel(); else if (slot.tunnel) slot.tunnel->cancel(); slot.readiness.set(); };
+            routed.for_each(close); fixed.for_each(close);
         }
         ~Server() { cancel(); direct.close(); }
     };
@@ -119,12 +105,22 @@ export namespace net::stream_datagrams {
                  Clock::time_point deadline) -> capy::task<bool> {
         if (!state.session.tunnel_factories || outbound>=state.session.tunnel_factories->size()) co_return false;
         auto const& factory=(*state.session.tunnel_factories)[outbound];
-        auto index=outbound*2+(!factory.packet_dual_family && target.family==6 ? 1 : 0);
-        if (state.session.closed || Clock::now()>=deadline || index>=State::ordinary_slots) co_return false;
+        if (state.session.closed || Clock::now()>=deadline) co_return false;
+        auto cancel_victim=[](typename State::Slot& v) noexcept {
+            v.rotating=true; v.ready=false; v.readiness.clear();
+            if (v.client) v.client->cancel(); else if (v.tunnel) v.tunnel->cancel();
+            v.auth_wake.set();
+        };
+        std::size_t index=0; bool evicted=false;
         if (factory.packet_fixed_peer) {
-            auto fixed=state.fixed.select(outbound,target);
-            if (!fixed) co_return false;
-            index=State::ordinary_slots+*fixed;
+            auto sel=state.fixed.select_or_evict(outbound,target,cancel_victim);
+            if (!sel) co_return false;
+            index=state.routed.soft_cap()+sel->index; evicted=sel->evicted;
+        } else {
+            auto key=(static_cast<std::uint64_t>(outbound) << 1) | (!factory.packet_dual_family && target.family==6 ? 1u : 0u);
+            auto sel=state.routed.select_or_evict(key,cancel_victim);
+            if (!sel) co_return false;
+            index=sel->index; evicted=sel->evicted;
         }
         auto& slot=state.slot_at(index);
         slot.active_deadline=deadline;state.forwarding=&slot;state.timeout_wake.set();
@@ -134,6 +130,20 @@ export namespace net::stream_datagrams {
             ~Guard() {slot.active_deadline.reset();state.forwarding=nullptr;}
         } guard{state,slot};
         auto expired=[&] {return Clock::now()>=*slot.active_deadline;};
+        auto drain_reader=[&]() -> capy::task<bool> {
+            while (!state.session.closed && !expired() && slot.reader_active) {
+                slot.reader_done.clear();
+                if (!slot.reader_active) break;
+                auto [error]=co_await io::timeout(slot.reader_done.wait(),*slot.active_deadline);
+                if (error && state.session.closed) break;
+            }
+            if (state.session.closed || expired()) { state.session.close(); state.cancel(); co_return false; }
+            co_return true;
+        };
+        if (evicted) {
+            if (!co_await drain_reader()) co_return false;
+            slot.client.reset(); slot.tunnel={}; slot.id=0; slot.authorization={}; slot.rotating=false;
+        }
         for (;;) {
             if(state.session.closed)co_return false;
             if(expired()) {state.session.close();state.cancel();co_return false;}
@@ -178,15 +188,7 @@ export namespace net::stream_datagrams {
                     if(expired()) {state.session.close();state.cancel();co_return false;}
                     if (!opened && opened.error()==xudp::ClientIoError::exhausted) {
                         slot.rotating=true; slot.ready=false; slot.readiness.clear(); slot.client->cancel();
-                        while (!state.session.closed && !expired() && slot.reader_active) {
-                            slot.reader_done.clear();
-                            if (!slot.reader_active) break;
-                            auto [error]=co_await io::timeout(slot.reader_done.wait(),*slot.active_deadline);
-                            if (error && state.session.closed) break;
-                        }
-                        if (state.session.closed || expired()) {
-                            state.session.close();state.cancel();co_return false;
-                        }
+                        if (!co_await drain_reader()) co_return false;
                         slot.client.reset(); slot.tunnel={}; continue;
                     }
                     if (!opened) { state.session.close(); co_return false; }
@@ -395,55 +397,49 @@ export namespace net::stream_datagrams {
                     auto [error]=co_await slot.readiness.wait();if(error)state.session.close();
                 }
                 if (state.session.closed || state.readers.stopped()) co_return capy::results<>{};
-                if (!slot.client) break;
                 slot.reader_active=true;
-                while (!state.session.closed && !slot.rotating) {
-                    auto reply=co_await slot.client->read();
-                    if (!reply) { if (!slot.rotating) state.session.close(); break; }
-                    if (reply->action==xudp::Incoming::ended) { if (reply->session==slot.id) slot.id=0; continue; }
-                    if (!reply->source || (reply->source->family!=xudp::Family::ipv4 && reply->source->family!=xudp::Family::ipv6)) { state.session.close(); break; }
-                    ProxyAddress source; source.family=reply->source->family==xudp::Family::ipv4 ? ProxyAddressFamily::ipv4 : ProxyAddressFamily::ipv6;
-                    source.length=reply->source->length; source.port=reply->source->port;
-                    std::copy_n(reply->source->bytes.begin(),source.length,source.bytes.begin());
-                    if (!co_await send_reply(state,source,reply->payload)) {
-                        state.session.close(); break;
+                if (slot.client) {
+                    while (!state.session.closed && !slot.rotating) {
+                        auto reply=co_await slot.client->read();
+                        if (!reply) { if (!slot.rotating) state.session.close(); break; }
+                        if (reply->action==xudp::Incoming::ended) { if (reply->session==slot.id) slot.id=0; continue; }
+                        if (!reply->source || (reply->source->family!=xudp::Family::ipv4 && reply->source->family!=xudp::Family::ipv6)) { state.session.close(); break; }
+                        ProxyAddress source; source.family=reply->source->family==xudp::Family::ipv4 ? ProxyAddressFamily::ipv4 : ProxyAddressFamily::ipv6;
+                        source.length=reply->source->length; source.port=reply->source->port;
+                        std::copy_n(reply->source->bytes.begin(),source.length,source.bytes.begin());
+                        if (!co_await send_reply(state,source,reply->payload)) { state.session.close(); break; }
+                    }
+                } else {
+                    auto peer=index<state.routed.soft_cap() ? ProxyAddress{} : peer_address(state.fixed.peer(index-state.routed.soft_cap()));
+                    DatagramDecoder decoder(slot.framing,peer);
+                    std::array<std::uint8_t,16384> bytes{};
+                    while (!state.session.closed && !slot.rotating) {
+                        auto n=co_await slot.tunnel->read(bytes);
+                        if (!n || !*n) { if (!slot.rotating) state.session.close(); break; }
+                        std::size_t offset=0;
+                        while (offset<*n && !state.session.closed && !slot.rotating) {
+                            auto fed=decoder.feed(std::span(bytes).subspan(offset,*n-offset)); offset+=fed.consumed;
+                            if (fed.status==DatagramStatus::incomplete) break;
+                            auto packet=decoder.packet();
+                            if (fed.status!=DatagramStatus::accepted || !packet || packet->destination.family==ProxyAddressFamily::domain) { state.session.close(); break; }
+                            UdpEndpoint source{packet->destination.family==ProxyAddressFamily::ipv4 ? std::uint8_t{4} : std::uint8_t{6},{},packet->destination.port};
+                            std::copy_n(packet->destination.bytes.begin(),packet->destination.length,source.address.begin()); bool reported=false;
+                            while (!state.session.closed && !slot.rotating && slot.authorization.classify(source)==UdpReplyAuthorization::pending) {
+                                if constexpr (requires { State::hooks::reply_pending(state); }) { if (!reported) { State::hooks::reply_pending(state); reported=true; } }
+                                slot.auth_wake.clear();
+                                if (slot.authorization.classify(source)!=UdpReplyAuthorization::pending) break;
+                                auto [error]=slot.active_deadline ? co_await io::timeout(slot.auth_wake.wait(),*slot.active_deadline) : co_await slot.auth_wake.wait();
+                                if (error && state.session.closed) break;
+                            }
+                            if (!state.session.closed && !slot.rotating && slot.authorization.accepts(source)) {
+                                if (!co_await send_reply(state,packet->destination,packet->payload)) { state.session.close(); break; }
+                            }
+                            (void)decoder.consume();
+                        }
                     }
                 }
                 slot.reader_active=false; slot.reader_done.set();
                 if (!slot.rotating || state.session.closed) { state.cancel(); co_return capy::results<>{}; }
-            }
-            auto peer=index<State::ordinary_slots ? ProxyAddress{} : peer_address(state.fixed.peer(index-State::ordinary_slots));
-            DatagramDecoder decoder(slot.framing,peer);
-            std::array<std::uint8_t,16384> bytes{};
-            while (!state.session.closed) {
-                auto n=co_await slot.tunnel->read(bytes);
-                if (!n || !*n) { state.session.close(); break; }
-                std::size_t offset=0;
-                while (offset<*n && !state.session.closed) {
-                    auto fed=decoder.feed(std::span(bytes).subspan(offset,*n-offset)); offset+=fed.consumed;
-                    if (fed.status==DatagramStatus::incomplete) break;
-                    auto packet=decoder.packet();
-                    if (fed.status!=DatagramStatus::accepted || !packet || packet->destination.family==ProxyAddressFamily::domain) { state.session.close(); break; }
-                    UdpEndpoint source{packet->destination.family==ProxyAddressFamily::ipv4 ? std::uint8_t{4} : std::uint8_t{6},{},packet->destination.port};
-                    std::copy_n(packet->destination.bytes.begin(),packet->destination.length,source.address.begin()); bool reported=false;
-                    while (!state.session.closed && slot.authorization.classify(source)==UdpReplyAuthorization::pending) {
-                        if constexpr (requires { State::hooks::reply_pending(state); }) {
-                            if (!reported) { State::hooks::reply_pending(state); reported=true; }
-                        }
-                        slot.auth_wake.clear();
-                        if (slot.authorization.classify(source)!=UdpReplyAuthorization::pending) break;
-                        auto [error]=slot.active_deadline
-                            ? co_await io::timeout(slot.auth_wake.wait(),*slot.active_deadline)
-                            : co_await slot.auth_wake.wait();
-                        if (error && state.session.closed) break;
-                    }
-                    if (!state.session.closed && slot.authorization.accepts(source)) {
-                        if (!co_await send_reply(state,packet->destination,packet->payload)) {
-                            state.session.close(); break;
-                        }
-                    }
-                    (void)decoder.consume();
-                }
             }
         } catch (...) { state.session.close(); state.cancel(); throw; }
         state.cancel(); co_return capy::results<>{};
@@ -473,13 +469,8 @@ export namespace net::stream_datagrams {
             }
         } else {
             while (!state.session.closed) {
-                if (state.forwarding && state.forwarding->active_deadline && Clock::now()>=*state.forwarding->active_deadline) {
-                    state.session.close();state.cancel();break;
-                }
-                if (state.resolving && !state.canceled && Clock::now()>=state.deadline) {
-                    state.canceled=true;
-                    if (state.session.cancel_dns) state.session.cancel_dns(state.session.dns_operation);
-                }
+                if (state.forwarding && state.forwarding->active_deadline && Clock::now()>=*state.forwarding->active_deadline) { state.session.close(); state.cancel(); break; }
+                if (state.resolving && !state.canceled && Clock::now()>=state.deadline) { state.canceled=true; if (state.session.cancel_dns) state.session.cancel_dns(state.session.dns_operation); }
                 auto [error]=co_await io::delay(5ms); if (error) state.session.close();
             }
         }

@@ -7,8 +7,18 @@ export namespace tailscale {
     // Tailscale outbounds. Eliminates single-worker contention by partitioning
     // ephemeral source-port ownership and tracking reverse 5-tuples per worker so
     // inbound replies always land in the exact originating worker's queue.
+    struct MultiWorkerMeshHubOptions {
+        static constexpr std::size_t default_outbound_cap = 2048;
+        static constexpr std::size_t default_worker_rx_cap = 1024;
+        static constexpr std::size_t default_max_tracked_flows = 65536;
+        std::size_t outbound_cap = default_outbound_cap;
+        std::size_t worker_rx_cap = default_worker_rx_cap;
+        std::size_t max_flows = default_max_tracked_flows;
+    };
+
     class MultiWorkerMeshHub {
     public:
+        using Options = MultiWorkerMeshHubOptions;
         struct Network {
             std::optional<std::array<std::uint8_t, 4>> ipv4;
             std::optional<std::array<std::uint8_t, 16>> ipv6;
@@ -39,25 +49,64 @@ export namespace tailscale {
             }
         };
 
+        static constexpr std::size_t default_outbound_cap = Options::default_outbound_cap;
+        static constexpr std::size_t default_worker_rx_cap = Options::default_worker_rx_cap;
+        static constexpr std::size_t default_max_tracked_flows = Options::default_max_tracked_flows;
+        static constexpr std::size_t max_queue_cap = 1u << 16;
+
+        class PacketRing {
+            std::vector<std::vector<std::uint8_t>> slots_;
+            std::size_t limit_ = 0, mask_ = 0, head_ = 0, count_ = 0;
+        public:
+            explicit PacketRing(std::size_t cap = 0) noexcept : limit_(cap) {}
+            auto set_limit(std::size_t cap) noexcept -> void { slots_.clear(); limit_ = cap; mask_ = head_ = count_ = 0; }
+            [[nodiscard]] auto limit() const noexcept -> std::size_t { return limit_; }
+            [[nodiscard]] auto ring_capacity() const noexcept -> std::size_t { return slots_.size(); }
+            [[nodiscard]] auto size() const noexcept -> std::size_t { return count_; }
+            [[nodiscard]] auto empty() const noexcept -> bool { return count_ == 0; }
+            auto clear() noexcept -> void {
+                for (std::size_t i = 0; i < count_; ++i) slots_[(head_ + i) & mask_].clear();
+                head_ = count_ = 0;
+            }
+            auto push(std::span<std::uint8_t const> pkt) -> bool {
+                if (count_ >= limit_) return false;
+                if (slots_.empty()) {
+                    auto sz = std::bit_ceil(std::max<std::size_t>(limit_, 2));
+                    slots_.resize(sz);
+                    mask_ = sz - 1;
+                }
+                auto& dst = slots_[(head_ + count_) & mask_];
+                dst.assign(pkt.begin(), pkt.end());
+                ++count_;
+                return true;
+            }
+            auto pop() -> std::optional<std::vector<std::uint8_t>> {
+                if (!count_) return std::nullopt;
+                auto pkt = std::move(slots_[head_]);
+                head_ = (head_ + 1) & mask_;
+                --count_;
+                return pkt;
+            }
+        };
+
         struct WorkerQueue {
-            std::deque<std::vector<std::uint8_t>> inbound;
+            PacketRing inbound;
             void (*wake_fn)(void*) noexcept = nullptr;
             void* wake_ctx = nullptr;
             bool registered = false;
         };
 
     private:
-        static constexpr std::size_t default_outbound_cap = 256;
-        static constexpr std::size_t default_worker_rx_cap = 128;
-        static constexpr std::size_t max_tracked_flows = 8192;
-
         mutable std::mutex mutex_;
         std::size_t worker_count_ = 1;
+        std::size_t outbound_cap_ = default_outbound_cap;
+        std::size_t worker_rx_cap_ = default_worker_rx_cap;
+        std::size_t max_tracked_flows_ = default_max_tracked_flows;
         std::vector<WorkerQueue> workers_;
         std::optional<Network> network_;
         std::optional<std::uint64_t> device_generation_;
         std::uint64_t revision_ = 0;
-        std::deque<std::vector<std::uint8_t>> outbound_;
+        PacketRing outbound_;
         std::unordered_map<FlowKey, std::size_t, FlowKeyHash> flow_owner_;
         std::deque<FlowKey> flow_order_;
         std::shared_ptr<magic_dns::Resolver> magic_dns_;
@@ -103,7 +152,7 @@ export namespace tailscale {
             auto [it, inserted] = flow_owner_.insert_or_assign(key, worker_id);
             if (!inserted) return;
             flow_order_.push_back(key);
-            while (flow_order_.size() > max_tracked_flows) {
+            while (flow_order_.size() > max_tracked_flows_) {
                 flow_owner_.erase(flow_order_.front());
                 flow_order_.pop_front();
             }
@@ -111,12 +160,22 @@ export namespace tailscale {
 
     public:
         explicit MultiWorkerMeshHub(std::size_t worker_count = 1,
-                                    std::shared_ptr<magic_dns::Resolver> resolver = {})
+                                    std::shared_ptr<magic_dns::Resolver> resolver = {},
+                                    Options options = {})
             : worker_count_(std::max<std::size_t>(1, worker_count)),
+              outbound_cap_(std::clamp<std::size_t>(options.outbound_cap, 1, max_queue_cap)),
+              worker_rx_cap_(std::clamp<std::size_t>(options.worker_rx_cap, 1, max_queue_cap)),
+              max_tracked_flows_(std::clamp<std::size_t>(options.max_flows, 1, 1u << 20)),
               workers_(worker_count_),
-              magic_dns_(resolver ? std::move(resolver) : std::make_shared<magic_dns::Resolver>()) {}
+              outbound_(outbound_cap_),
+              magic_dns_(resolver ? std::move(resolver) : std::make_shared<magic_dns::Resolver>()) {
+            for (auto& w : workers_) w.inbound.set_limit(worker_rx_cap_);
+        }
 
         [[nodiscard]] auto worker_count() const noexcept -> std::size_t { return worker_count_; }
+        [[nodiscard]] auto outbound_cap() const noexcept -> std::size_t { return outbound_cap_; }
+        [[nodiscard]] auto worker_rx_cap() const noexcept -> std::size_t { return worker_rx_cap_; }
+        [[nodiscard]] auto max_tracked_flows() const noexcept -> std::size_t { return max_tracked_flows_; }
 
         [[nodiscard]] auto magic_dns() const noexcept -> std::shared_ptr<magic_dns::Resolver> {
             return magic_dns_;
@@ -211,9 +270,8 @@ export namespace tailscale {
             std::lock_guard lock(mutex_);
             if (worker_id >= workers_.size() || !network_ || network_->revision != revision)
                 return false;
-            if (outbound_.size() >= default_outbound_cap) return false;
+            if (!outbound_.push(packet)) return false;
             if (auto flow = parse_flow(packet, true)) record_flow_locked(*flow, worker_id);
-            outbound_.emplace_back(packet.begin(), packet.end());
             if (tx_wake_fn_) tx_wake_fn_(tx_wake_ctx_);
             return true;
         }
@@ -221,10 +279,7 @@ export namespace tailscale {
         // Called by the Tailscale device I/O thread to drain outbound packets.
         [[nodiscard]] auto pop_outbound() -> std::optional<std::vector<std::uint8_t>> {
             std::lock_guard lock(mutex_);
-            if (outbound_.empty()) return std::nullopt;
-            auto pkt = std::move(outbound_.front());
-            outbound_.pop_front();
-            return pkt;
+            return outbound_.pop();
         }
 
         // Called by the Tailscale device I/O thread to route an inbound decrypted IP packet
@@ -243,8 +298,7 @@ export namespace tailscale {
             if (!target && worker_count_ == 1) target = 0;
             if (!target || *target >= workers_.size()) return false;
             auto& q = workers_[*target];
-            if (q.inbound.size() >= default_worker_rx_cap) return false;
-            q.inbound.emplace_back(packet.begin(), packet.end());
+            if (!q.inbound.push(packet)) return false;
             if (q.wake_fn) q.wake_fn(q.wake_ctx);
             return true;
         }
@@ -255,11 +309,7 @@ export namespace tailscale {
             std::lock_guard lock(mutex_);
             if (worker_id >= workers_.size() || !network_ || network_->revision != revision)
                 return std::nullopt;
-            auto& q = workers_[worker_id].inbound;
-            if (q.empty()) return std::nullopt;
-            auto pkt = std::move(q.front());
-            q.pop_front();
-            return pkt;
+            return workers_[worker_id].inbound.pop();
         }
     };
 }

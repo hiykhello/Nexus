@@ -30,17 +30,17 @@ namespace config {
                 seen_proto = true;
             } else if (child.name == "max-connections") {
                 auto v = integer(child);
-                if (seen_max_conn || !v || *v < 1 || *v > 64) return error("multiplex max-connections must be 1..64");
+                if (seen_max_conn || !v || *v < 1 || *v > 4096) return error("multiplex max-connections must be 1..4096");
                 cfg.max_connections = static_cast<std::uint32_t>(*v);
                 seen_max_conn = true;
             } else if (child.name == "min-streams") {
                 auto v = integer(child);
-                if (seen_min_streams || !v || *v < 1 || *v > 1024) return error("multiplex min-streams must be 1..1024");
+                if (seen_min_streams || !v || *v < 1 || *v > 65535) return error("multiplex min-streams must be 1..65535");
                 cfg.min_streams = static_cast<std::uint32_t>(*v);
                 seen_min_streams = true;
             } else if (child.name == "max-streams") {
                 auto v = integer(child);
-                if (seen_max_streams || !v || *v > 1024) return error("multiplex max-streams must be 0..1024");
+                if (seen_max_streams || !v || *v > 65535) return error("multiplex max-streams must be 0..65535");
                 cfg.max_streams = static_cast<std::uint32_t>(*v);
                 seen_max_streams = true;
             } else if (child.name == "padding") {

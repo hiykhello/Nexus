@@ -60,15 +60,20 @@ namespace config {
                 name.ends_with("-directory");
         }
 
-        auto collect_paths(Node const& node, std::vector<std::string>& paths) -> void {
+        auto collect_paths(Node const& node, std::vector<std::string>& paths,
+            bool in_rulesets = false, bool in_ruleset = false) -> void {
             if (node.name == "log") return;
             auto remember = [&](Value const& value) {
                 if (auto text = string(value); text && !text->empty()) paths.push_back(*text);
             };
-            if ((path_field(node.name) || node.name=="directory") && !node.arguments.empty()) remember(node.arguments.front());
+            bool is_ruleset = node.name == "rule-set" || in_rulesets;
+            if ((path_field(node.name) || node.name == "directory" || (in_ruleset && node.name == "path")) &&
+                !node.arguments.empty())
+                remember(node.arguments.front());
             for (auto const& [key, value] : node.properties)
-                if (path_field(key) || (node.name == "rule-set" && key == "path")) remember(value);
-            for (auto const& child : node.children) collect_paths(child, paths);
+                if (path_field(key) || (is_ruleset && key == "path")) remember(value);
+            bool child_rulesets = node.name == "rulesets" || node.name == "rule-sets";
+            for (auto const& child : node.children) collect_paths(child, paths, child_rulesets, is_ruleset);
         }
     }
 

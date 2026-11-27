@@ -20,11 +20,13 @@ class BasicSnapshotState {
     using Error=dns::CacheError;
     using Answer=dns::AddressAnswer;
     using Negative=dns::NegativeKind;
-    static constexpr std::size_t maximum=256,slots=Ordered ? maximum : 512;
+    static constexpr std::size_t max_capacity=65536,default_max_pending=32768,max_pending_limit=1u<<20;
+    static constexpr std::size_t npos=std::numeric_limits<std::size_t>::max();
     static constexpr std::uint32_t deleted_tag=2;
+    static constexpr auto compute_slots(std::size_t cap) noexcept -> std::size_t {
+        return Ordered ? cap : std::bit_ceil(std::max<std::size_t>(cap*2,16));
+    }
     struct Node {
-        // Only the serialized writer touches refs. Separate its cache line from
-        // the immutable data read through a protected snapshot.
         alignas(64) std::size_t refs=1;
         alignas(64) Key key;
         Answer answer;
@@ -35,38 +37,41 @@ class BasicSnapshotState {
             : key(std::move(k)),answer(std::move(a)),negative(n),expires(e),revision(r),order(o),hash(Ordered ? 0 : SnapshotKeyHash{}(key)) {}
     };
     struct Snapshot {
-        std::array<Node*,slots> values{};
-        std::array<std::uint32_t,Ordered ? 0 : slots> tags{};
+        std::vector<Node*> values;
+        std::vector<std::uint32_t> tags;
         std::size_t count=0,tombstones=0;
         std::uint64_t generation=1,now=0,next_order=0;
         bool initialized=false;
         Snapshot* next=nullptr;
     };
-    // Reserve the bounded pool up front, but initialize a slot only when a
-    // writer first needs it. Idle reader slots therefore do not touch pages.
     struct SnapshotPool {
         static_assert(std::is_nothrow_default_constructible_v<Snapshot>);
         std::allocator<Snapshot> allocator;
         Snapshot* storage;
-        std::size_t capacity,used=0;
-        explicit SnapshotPool(std::size_t count) : storage(allocator.allocate(count)),capacity(count) {}
+        std::size_t capacity,slot_count,used=0;
+        SnapshotPool(std::size_t count,std::size_t slots_per_snapshot)
+            : storage(allocator.allocate(count)),capacity(count),slot_count(slots_per_snapshot) {}
         SnapshotPool(SnapshotPool const&)=delete;
         ~SnapshotPool() {
             for (std::size_t i=0;i<used;++i) std::destroy_at(storage+i);
             allocator.deallocate(storage,capacity);
         }
-        auto create() noexcept -> Snapshot* {
+        auto create() -> Snapshot* {
             if (used==capacity) std::terminate();
-            return std::construct_at(storage+used++);
+            auto* snap=std::construct_at(storage+used++);
+            try { snap->values.assign(slot_count,nullptr); if constexpr (!Ordered) snap->tags.assign(slot_count,0); }
+            catch (...) { std::destroy_at(snap); --used; throw; }
+            return snap;
         }
         auto operator[](std::size_t index) noexcept -> Snapshot& { return storage[index]; }
     };
     struct alignas(64) Hazard { std::atomic<Snapshot*> pointer=nullptr; std::atomic<bool> claimed=false; };
     struct Pending { Key key; std::uint64_t query; std::optional<std::uint64_t> refresh_revision; };
-    std::size_t capacity_,reader_count_,pool_count_;
+    std::size_t capacity_,slot_count_,max_pending_,reader_count_,pool_count_;
     std::uint64_t stale_window_ms_,next_query_=0;
     std::unique_ptr<Hazard[]> hazards_;
     SnapshotPool pool_;
+    std::vector<Node*> compact_scratch_;
     Snapshot* free_=nullptr;
     Snapshot* retired_=nullptr;
     std::atomic<Snapshot*> current_;
@@ -75,17 +80,12 @@ class BasicSnapshotState {
     std::size_t refresh_count_=0;
 
     static auto checked_readers(std::size_t readers) -> std::size_t {
-        // Up to sixteen configured listeners with up to 256 workers each, plus
-        // the separately driven UDP executor in the command process.
         if (readers>16*256+1) throw std::out_of_range("too many readers");
         return readers;
     }
-
     static auto same(Key const& a,Key const& b) noexcept -> bool { return SnapshotKeyEqual{}(a,b); }
     static auto less(Key const& a,Key const& b) noexcept -> bool {
-        if (a.view!=b.view) return a.view<b.view;
-        if (a.type!=b.type) return a.type<b.type;
-        return a.name<b.name;
+        return a.view!=b.view ? a.view<b.view : (a.type!=b.type ? a.type<b.type : a.name<b.name);
     }
     static auto lower_bound(Snapshot const& snapshot,Key const& key) noexcept -> std::size_t {
         std::size_t first=0,last=snapshot.count;
@@ -95,9 +95,7 @@ class BasicSnapshotState {
         }
         return first;
     }
-    static auto normalize(Key& key) -> bool {
-        return (key.type==1 || key.type==28) && dns::canonicalize_name(key.name);
-    }
+    static auto normalize(Key& key) -> bool { return (key.type==1 || key.type==28) && dns::canonicalize_name(key.name); }
     static auto valid_answer(Answer const& answer,std::uint16_t type) -> bool {
         if (answer.addresses.empty() || answer.addresses.size()>128 || answer.chain.size()>16 ||
             answer.canonical_name.size()>254 || !answer.ttl) return false;
@@ -110,26 +108,32 @@ class BasicSnapshotState {
         return static_cast<std::uint32_t>(value^(value>>32)) | 1u;
     }
     static auto find(Snapshot const& snapshot,Key const& key) noexcept -> std::size_t {
+        if (snapshot.values.empty()) return npos;
         if constexpr (Ordered) {
             auto index=lower_bound(snapshot,key);
-            return index<snapshot.count && same(snapshot.values[index]->key,key) ? index : slots;
+            return index<snapshot.count && same(snapshot.values[index]->key,key) ? index : npos;
         } else {
-            auto hash=SnapshotKeyHash{}(key),start=hash%slots;
+            auto const cap=snapshot.values.size(),mask=cap-1;
+            auto hash=SnapshotKeyHash{}(key),start=hash&mask;
             auto wanted=tag(hash);
-            for (std::size_t probe=0;probe<slots;++probe) {
-                auto index=(start+probe)%slots;
-                if (!snapshot.tags[index]) return slots;
+            for (std::size_t probe=0;probe<cap;++probe) {
+                auto index=(start+probe)&mask;
+                if (!snapshot.tags[index]) return npos;
                 if (snapshot.tags[index]!=wanted) continue;
                 auto* node=snapshot.values[index];
                 if (node->hash==hash && same(node->key,key)) return index;
             }
-            return slots;
+            return npos;
         }
     }
     static auto drop(Node* node) noexcept -> void { if (--node->refs==0) delete node; }
     auto recycle(Snapshot* snapshot) noexcept -> void {
-        for (auto& node:snapshot->values) if (node) { drop(node); node=nullptr; }
-        snapshot->tags.fill(0);
+        if constexpr (Ordered) {
+            for (std::size_t i=0;i<snapshot->count;++i) { drop(snapshot->values[i]); snapshot->values[i]=nullptr; }
+        } else {
+            for (auto& node:snapshot->values) if (node) { drop(node); node=nullptr; }
+            std::ranges::fill(snapshot->tags,0u);
+        }
         snapshot->count=0; snapshot->tombstones=0; snapshot->generation=1; snapshot->now=0; snapshot->next_order=0; snapshot->initialized=false;
         snapshot->next=free_; free_=snapshot;
     }
@@ -143,18 +147,20 @@ class BasicSnapshotState {
             else { *link=snapshot->next; recycle(snapshot); }
         }
     }
-    auto acquire() noexcept -> Snapshot* {
+    auto acquire() -> Snapshot* {
         collect();
-        // At most one current snapshot and reader_count_ retired snapshots are
-        // protected. The pool has one further slot for the current writer.
         if (!free_) return pool_.create();
         auto* result=free_; free_=free_->next; result->next=nullptr; return result;
     }
-    auto clone(Snapshot const& source) noexcept -> Snapshot* {
+    auto clone(Snapshot const& source) -> Snapshot* {
         auto* result=acquire();
-        result->values=source.values;
-        result->tags=source.tags;
-        for (auto* node:result->values) if (node) ++node->refs;
+        if constexpr (Ordered) {
+            for (std::size_t i=0;i<source.count;++i) { result->values[i]=source.values[i]; ++result->values[i]->refs; }
+        } else {
+            std::ranges::copy(source.values,result->values.begin());
+            std::ranges::copy(source.tags,result->tags.begin());
+            for (auto* node:result->values) if (node) ++node->refs;
+        }
         result->count=source.count; result->tombstones=source.tombstones; result->generation=source.generation; result->now=source.now;
         result->next_order=source.next_order; result->initialized=source.initialized;
         return result;
@@ -169,16 +175,17 @@ class BasicSnapshotState {
             snapshot.tags[index]=deleted_tag; --snapshot.count; ++snapshot.tombstones;
         }
     }
-    static auto compact(Snapshot& snapshot) noexcept -> void {
-        // Only the unpublished writer-owned snapshot is changed. Keeping a
-        // tombstone until compaction preserves colliding probe chains.
+    auto compact(Snapshot& snapshot) noexcept -> void {
         if constexpr (!Ordered) {
-            auto nodes=snapshot.values;
-            snapshot.values.fill(nullptr); snapshot.tags.fill(0); snapshot.tombstones=0;
-            for (auto* node:nodes) if (node) {
-                auto start=node->hash%slots;
-                for (std::size_t probe=0;probe<slots;++probe) {
-                    auto index=(start+probe)%slots;
+            auto const cap=snapshot.values.size(),mask=cap-1;
+            std::ranges::copy(snapshot.values,compact_scratch_.begin());
+            std::ranges::fill(snapshot.values,nullptr);
+            std::ranges::fill(snapshot.tags,0u);
+            snapshot.tombstones=0;
+            for (auto* node:compact_scratch_) if (node) {
+                auto start=node->hash&mask;
+                for (std::size_t probe=0;probe<cap;++probe) {
+                    auto index=(start+probe)&mask;
                     if (!snapshot.values[index]) {
                         snapshot.values[index]=node; snapshot.tags[index]=tag(node->hash); break;
                     }
@@ -187,7 +194,7 @@ class BasicSnapshotState {
         }
     }
     auto commit(Snapshot* replacement) noexcept -> void {
-        if (replacement->tombstones>=128) compact(*replacement);
+        if constexpr (!Ordered) if (replacement->tombstones>=std::max<std::size_t>(4,slot_count_/4)) compact(*replacement);
         auto* old=current_.exchange(replacement);
         old->next=retired_; retired_=old; collect();
     }
@@ -205,7 +212,7 @@ class BasicSnapshotState {
     auto advance(Snapshot& snapshot,std::uint64_t now) -> std::expected<void,Error> {
         if (snapshot.initialized && now<snapshot.now) return std::unexpected(Error::time_reversed);
         snapshot.now=now; snapshot.initialized=true;
-        for (std::size_t i=0;i<slots;) {
+        for (std::size_t i=0;i<(Ordered ? snapshot.count : snapshot.values.size());) {
             auto* node=snapshot.values[i];
             if (node && now>=node->expires && (node->negative || now-node->expires>=stale_window_ms_)) {
                 erase_at(snapshot,i);
@@ -218,34 +225,35 @@ class BasicSnapshotState {
     auto refresh_current(Snapshot const& snapshot,Pending const& pending) const noexcept -> bool {
         if (!pending.refresh_revision) return true;
         auto index=find(snapshot,pending.key);
-        return index!=slots && !snapshot.values[index]->negative && snapshot.values[index]->revision==*pending.refresh_revision;
+        return index!=npos && !snapshot.values[index]->negative && snapshot.values[index]->revision==*pending.refresh_revision;
     }
     static auto remove(Snapshot& snapshot,Key const& key) noexcept -> void {
         auto index=find(snapshot,key);
-        if (index!=slots) erase_at(snapshot,index);
+        if (index!=npos) erase_at(snapshot,index);
     }
     auto install(Snapshot& snapshot,Key key,Answer answer,std::optional<Negative> negative,
                  std::uint64_t expires,std::uint64_t revision) -> std::expected<void,Error> {
         if (!compact_key_storage(key)) return std::unexpected(Error::invalid_key);
         auto existing=find(snapshot,key);
-        std::size_t victim=slots;
+        std::size_t victim=npos;
         std::uint64_t order;
-        if (existing!=slots) order=snapshot.values[existing]->order;
+        if (existing!=npos) order=snapshot.values[existing]->order;
         else if (snapshot.count==capacity_) {
-            for (std::size_t i=0;i<slots;++i) if (auto* node=snapshot.values[i]; node &&
-                (victim==slots || node->expires<snapshot.values[victim]->expires ||
+            auto const scan=Ordered ? snapshot.count : snapshot.values.size();
+            for (std::size_t i=0;i<scan;++i) if (auto* node=snapshot.values[i]; node &&
+                (victim==npos || node->expires<snapshot.values[victim]->expires ||
                  (node->expires==snapshot.values[victim]->expires && node->order<snapshot.values[victim]->order))) victim=i;
-            if (victim==slots) std::terminate();
+            if (victim==npos) std::terminate();
             order=snapshot.values[victim]->order;
         } else {
             if (snapshot.next_order==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(Error::generation_exhausted);
             order=snapshot.next_order+1;
         }
         auto node=std::make_unique<Node>(std::move(key),std::move(answer),negative,expires,revision,order);
-        if (existing!=slots) {
+        if (existing!=npos) {
             drop(snapshot.values[existing]); snapshot.values[existing]=node.release();
         } else {
-            if (victim!=slots) erase_at(snapshot,victim);
+            if (victim!=npos) erase_at(snapshot,victim);
             else snapshot.next_order=order;
             if constexpr (Ordered) {
                 auto index=lower_bound(snapshot,node->key);
@@ -253,12 +261,13 @@ class BasicSnapshotState {
                                    snapshot.values.begin()+snapshot.count+1);
                 snapshot.values[index]=node.release(); ++snapshot.count;
             } else {
-                auto start=node->hash%slots,index=slots;
-                for (std::size_t probe=0;probe<slots;++probe) {
-                    auto candidate=(start+probe)%slots;
+                auto const cap=snapshot.values.size(),mask=cap-1;
+                auto start=node->hash&mask,index=npos;
+                for (std::size_t probe=0;probe<cap;++probe) {
+                    auto candidate=(start+probe)&mask;
                     if (!snapshot.values[candidate]) { index=candidate; break; }
                 }
-                if (index==slots) std::terminate();
+                if (index==npos) std::terminate();
                 if (snapshot.tags[index]==deleted_tag) --snapshot.tombstones;
                 snapshot.tags[index]=tag(node->hash); snapshot.values[index]=node.release(); ++snapshot.count;
             }
@@ -303,22 +312,29 @@ public:
             }
         }
     };
-    explicit BasicSnapshotState(std::size_t capacity,std::uint64_t stale_window_ms,std::size_t readers)
-        : capacity_(std::min<std::size_t>(capacity,maximum)),reader_count_(checked_readers(readers)),pool_count_(reader_count_+2),
+    explicit BasicSnapshotState(std::size_t capacity,std::uint64_t stale_window_ms,std::size_t readers,
+                                std::size_t max_pending=default_max_pending)
+        : capacity_(std::min<std::size_t>(capacity,max_capacity)),slot_count_(compute_slots(capacity_)),
+          max_pending_(std::min<std::size_t>(max_pending,max_pending_limit)),
+          reader_count_(checked_readers(readers)),pool_count_(reader_count_+2),
           stale_window_ms_(stale_window_ms),hazards_(std::make_unique<Hazard[]>(reader_count_)),
-          pool_(pool_count_),current_(pool_.create()) {}
+          pool_(pool_count_,slot_count_),current_(pool_.create()) {
+        if constexpr (!Ordered) compact_scratch_.resize(slot_count_,nullptr);
+    }
     BasicSnapshotState(BasicSnapshotState const&)=delete;
     ~BasicSnapshotState() {
-        // No reader may outlive this object, including a reader between calls.
         for (std::size_t i=0;i<reader_count_;++i) if (hazards_[i].claimed.load()) std::terminate();
         for (std::size_t i=0;i<pool_.used;++i)
             for (auto*& node:pool_[i].values) if (node) { drop(node); node=nullptr; }
     }
+    [[nodiscard]] auto capacity() const noexcept -> std::size_t { return capacity_; }
+    [[nodiscard]] auto max_pending() const noexcept -> std::size_t { return max_pending_; }
     [[nodiscard]] auto reader(std::size_t index) -> Reader {
         if (index>=reader_count_) throw std::out_of_range("reader index");
         return Reader(*this,index);
     }
     [[nodiscard]] auto size() const -> std::size_t { std::lock_guard lock(mutex_); return current_.load()->count; }
+    [[nodiscard]] auto tombstones() const -> std::size_t { std::lock_guard lock(mutex_); return current_.load()->tombstones; }
 
     template<class Hook>
     [[nodiscard]] auto lookup_with_hook(Key key,std::uint64_t now,Reader& reader,Hook&& hook)
@@ -329,7 +345,7 @@ public:
         struct Release { Hazard& hazard; bool& busy; ~Release() { hazard.pointer.store(nullptr); busy=false; } } release{*reader.hazard_,reader.busy_};
         auto* snapshot=reader.protect();
         auto index=find(*snapshot,key);
-        if (index==slots) return std::optional<Answer>{};
+        if (index==npos) return std::optional<Answer>{};
         auto* node=snapshot->values[index];
         hook();
         now=ordered(now,*snapshot);
@@ -347,7 +363,7 @@ public:
         struct Release { Hazard& hazard; bool& busy; ~Release() { hazard.pointer.store(nullptr); busy=false; } } release{*reader.hazard_,reader.busy_};
         auto* snapshot=reader.protect();
         auto index=find(*snapshot,key);
-        if (index==slots) return std::optional<Negative>{};
+        if (index==npos) return std::optional<Negative>{};
         auto* node=snapshot->values[index]; now=ordered(now,*snapshot);
         if (!node->negative || now>=node->expires || (node->expires-now)/1000==0) return std::optional<Negative>{};
         return node->negative;
@@ -359,7 +375,7 @@ public:
         if (auto result=advance(*builder.snapshot,now); !result) return std::unexpected(result.error());
         builder.publish(); current=current_.load();
         auto index=find(*current,key);
-        if (index==slots) return std::optional<dns::StaleAddressAnswer>{};
+        if (index==npos) return std::optional<dns::StaleAddressAnswer>{};
         auto* node=current->values[index];
         if (node->negative || now<node->expires) return std::optional<dns::StaleAddressAnswer>{};
         auto age=now-node->expires;
@@ -371,7 +387,7 @@ public:
         if (!normalize(key)) return std::unexpected(Error::invalid_key);
         auto const hash=SnapshotKeyHash{}(key);
         std::lock_guard lock(mutex_);
-        if (pending_.size()==4096) return std::unexpected(Error::query_limit);
+        if (pending_.size()>=max_pending_) return std::unexpected(Error::query_limit);
         if (next_query_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(Error::generation_exhausted);
         if (!compact_key_storage(key)) return std::unexpected(Error::invalid_key);
         auto query=next_query_+1;
@@ -387,12 +403,12 @@ public:
         if (auto result=advance(*builder.snapshot,now); !result) return std::unexpected(result.error());
         builder.publish(); current=current_.load();
         auto index=find(*current,key);
-        if (index==slots) return std::optional<Token>{};
+        if (index==npos) return std::optional<Token>{};
         auto* node=current->values[index];
         if (node->negative || now<node->expires || stale_window_ms_-(now-node->expires)<1000) return std::optional<Token>{};
         if (pending_.has_key(hash,[&](Pending const& item) { return same(item.key,key); })) return std::optional<Token>{};
         if (refresh_count_>=maximum) return std::optional<Token>{};
-        if (pending_.size()==4096) return std::unexpected(Error::query_limit);
+        if (pending_.size()>=max_pending_) return std::unexpected(Error::query_limit);
         if (next_query_==std::numeric_limits<std::uint64_t>::max()) return std::unexpected(Error::generation_exhausted);
         if (!compact_key_storage(key)) return std::unexpected(Error::invalid_key);
         auto query=next_query_+1;
@@ -407,67 +423,54 @@ public:
         if (pending_.at(*pending).refresh_revision) --refresh_count_;
         pending_.erase(*pending); return {};
     }
-    [[nodiscard]] auto publish(Key key,Answer answer,std::uint64_t now,Token token) -> std::expected<void,Error> {
-        if (!normalize(key)) return std::unexpected(Error::invalid_key);
-        if (!valid_answer(answer,key.type)) return std::unexpected(Error::invalid_answer);
+private:
+    template<bool RunHook,class Apply>
+    auto commit_with(Key key,std::uint64_t now,Token token,bool need_capacity,std::optional<std::uint64_t> duration,
+                     Apply&& apply) -> std::expected<void,Error> {
         auto const hash=SnapshotKeyHash{}(key);
         std::lock_guard lock(mutex_); auto* current=current_.load(); now=ordered(now,*current);
         if (current->initialized && now<current->now) return std::unexpected(Error::time_reversed);
         if (token.generation!=current->generation) return std::unexpected(Error::stale_generation);
         auto pending=pending_.find_query(token.query);
         if (!pending || !same(pending_.at(*pending).key,key)) return std::unexpected(Error::stale_query);
-        if (!capacity_) return std::unexpected(Error::disabled);
-        auto duration=std::uint64_t(*answer.ttl)*1000;
-        if (duration>std::numeric_limits<std::uint64_t>::max()-now) return std::unexpected(Error::invalid_answer);
-        if (duration && !compact_answer_storage(answer)) return std::unexpected(Error::invalid_answer);
+        if (need_capacity && !capacity_) return std::unexpected(Error::disabled);
+        if (duration && *duration>std::numeric_limits<std::uint64_t>::max()-now) return std::unexpected(Error::invalid_answer);
         Builder builder{*this,clone(*current)};
         if (auto result=advance(*builder.snapshot,now); !result) return result;
 #ifdef DNS_SEMANTIC_TEST_HOOK
-        snapshot_test::after_advance_for_test();
+        if constexpr (RunHook) snapshot_test::after_advance_for_test();
 #endif
         if (!refresh_current(*builder.snapshot,pending_.at(*pending))) { builder.publish(); return std::unexpected(Error::stale_query); }
-        if (!duration) remove(*builder.snapshot,key);
-        else if (auto result=install(*builder.snapshot,key,std::move(answer),{},now+duration,token.query); !result) return result;
+        if (auto result=apply(*builder.snapshot,key,now); !result) return result;
         pending_.erase_key_if(hash,[&](std::uint64_t q,Pending const& item) { return q<=token.query && same(item.key,key); },
             [this](Pending const& item) { if (item.refresh_revision) --refresh_count_; });
         builder.publish(); return {};
+    }
+public:
+    [[nodiscard]] auto publish(Key key,Answer answer,std::uint64_t now,Token token) -> std::expected<void,Error> {
+        if (!normalize(key)) return std::unexpected(Error::invalid_key);
+        if (!valid_answer(answer,key.type)) return std::unexpected(Error::invalid_answer);
+        auto duration=std::uint64_t(*answer.ttl)*1000;
+        return commit_with<true>(std::move(key),now,token,true,duration,[&](Snapshot& s,Key const& k,std::uint64_t t) -> std::expected<void,Error> {
+            if (!duration) { remove(s,k); return {}; }
+            if (!compact_answer_storage(answer)) return std::unexpected(Error::invalid_answer);
+            return install(s,k,std::move(answer),{},t+duration,token.query);
+        });
     }
     [[nodiscard]] auto publish_negative(Key key,Negative kind,std::uint32_t ttl,std::uint64_t now,Token token)
         -> std::expected<void,Error> {
         if (!normalize(key)) return std::unexpected(Error::invalid_key);
-        auto const hash=SnapshotKeyHash{}(key);
-        std::lock_guard lock(mutex_); auto* current=current_.load(); now=ordered(now,*current);
-        if (current->initialized && now<current->now) return std::unexpected(Error::time_reversed);
-        if (token.generation!=current->generation) return std::unexpected(Error::stale_generation);
-        auto pending=pending_.find_query(token.query);
-        if (!pending || !same(pending_.at(*pending).key,key)) return std::unexpected(Error::stale_query);
-        if (!capacity_) return std::unexpected(Error::disabled);
         auto duration=std::uint64_t(ttl)*1000;
-        if (duration>std::numeric_limits<std::uint64_t>::max()-now) return std::unexpected(Error::invalid_answer);
-        Builder builder{*this,clone(*current)};
-        if (auto result=advance(*builder.snapshot,now); !result) return result;
-        if (!refresh_current(*builder.snapshot,pending_.at(*pending))) { builder.publish(); return std::unexpected(Error::stale_query); }
-        if (!duration) remove(*builder.snapshot,key);
-        else if (auto result=install(*builder.snapshot,key,{},kind,now+duration,token.query); !result) return result;
-        pending_.erase_key_if(hash,[&](std::uint64_t q,Pending const& item) { return q<=token.query && same(item.key,key); },
-            [this](Pending const& item) { if (item.refresh_revision) --refresh_count_; });
-        builder.publish(); return {};
+        return commit_with<false>(std::move(key),now,token,true,duration,[&](Snapshot& s,Key const& k,std::uint64_t t) -> std::expected<void,Error> {
+            if (!duration) { remove(s,k); return {}; }
+            return install(s,k,{},kind,t+duration,token.query);
+        });
     }
     [[nodiscard]] auto invalidate(Key key,std::uint64_t now,Token token) -> std::expected<void,Error> {
         if (!normalize(key)) return std::unexpected(Error::invalid_key);
-        auto const hash=SnapshotKeyHash{}(key);
-        std::lock_guard lock(mutex_); auto* current=current_.load(); now=ordered(now,*current);
-        if (current->initialized && now<current->now) return std::unexpected(Error::time_reversed);
-        if (token.generation!=current->generation) return std::unexpected(Error::stale_generation);
-        auto pending=pending_.find_query(token.query);
-        if (!pending || !same(pending_.at(*pending).key,key)) return std::unexpected(Error::stale_query);
-        Builder builder{*this,clone(*current)};
-        if (auto result=advance(*builder.snapshot,now); !result) return result;
-        if (!refresh_current(*builder.snapshot,pending_.at(*pending))) { builder.publish(); return std::unexpected(Error::stale_query); }
-        remove(*builder.snapshot,key);
-        pending_.erase_key_if(hash,[&](std::uint64_t q,Pending const& item) { return q<=token.query && same(item.key,key); },
-            [this](Pending const& item) { if (item.refresh_revision) --refresh_count_; });
-        builder.publish(); return {};
+        return commit_with<false>(std::move(key),now,token,false,std::nullopt,[](Snapshot& s,Key const& k,std::uint64_t) -> std::expected<void,Error> {
+            remove(s,k); return {};
+        });
     }
     [[nodiscard]] auto clear(std::uint64_t now) -> std::expected<void,Error> {
         std::lock_guard lock(mutex_); auto* current=current_.load(); now=ordered(now,*current);

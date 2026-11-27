@@ -470,7 +470,7 @@ namespace relay {
             retained_listeners.reserve(count);
             for (unsigned i=0;i<count;++i) {
                 auto worker=std::make_unique<Server>();
-                worker->splice_max_idle_pipes=std::max<std::size_t>(2,(SplicePipePool::kMaxIdlePipes*2)/count);
+                worker->splice_max_idle_pipes=std::max<std::size_t>(2,std::min<std::size_t>(state.splice_max_idle_pipes,(state.splice_max_idle_pipes*2)/count));
                 worker->inherit_routing(state,i,count);
                 int shared_fd=(previous && i<previous->retained_listeners.size()) ? previous->retained_listeners[i].fd : -1;
                 auto result=start_worker(*worker,shared_fd,true);

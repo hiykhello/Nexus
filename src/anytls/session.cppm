@@ -142,6 +142,14 @@ export namespace anytls {
             started_=true; co_return true;
         }
         auto start_server(std::span<PasswordKey const> users,IoClock::time_point deadline) -> capy::task<std::expected<std::size_t,SessionError>> {
+            co_return co_await start_server_impl([users](std::span<std::uint8_t const> k) noexcept { return authenticate(users,k); },deadline);
+        }
+        auto start_server(UserTable const& users,IoClock::time_point deadline) -> capy::task<std::expected<std::size_t,SessionError>> {
+            co_return co_await start_server_impl([&users](std::span<std::uint8_t const> k) noexcept { return users.authenticate(k); },deadline);
+        }
+    private:
+        template<class AuthFn>
+        auto start_server_impl(AuthFn auth,IoClock::time_point deadline) -> capy::task<std::expected<std::size_t,SessionError>> {
             if (client_ || started_ || closed_) co_return std::unexpected(SessionError::state);
             AuthenticationDecoder decoder;
             std::array<std::uint8_t,4096> input{};
@@ -153,13 +161,12 @@ export namespace anytls {
                 auto fed=decoder.feed(std::span(input).first(*received));
                 if (fed.status==Status::incomplete) continue;
                 auto key=decoder.key();
-                auto user=key ? authenticate(users,*key) : std::nullopt;
+                auto user=key ? auth(*key) : std::nullopt;
                 if (fed.status!=Status::accepted || !user) co_return failure(SessionError::authentication);
                 initial_.assign(input.begin()+fed.consumed,input.begin()+*received);
                 started_=true; co_return *user;
             }
         }
-    private:
         auto read_loop() -> capy::task<capy::results<>> {
             PartGuard guard{*this};
             FrameDecoder decoder;

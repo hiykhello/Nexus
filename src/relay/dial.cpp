@@ -137,9 +137,9 @@ namespace relay {
             std::error_code error;
             bool blocked = false;
             std::size_t next = 0;
-            // A node that exhausted its bootstrap/socket candidates cannot be
-            // repaired by another business address in this same request.
+            // Exhausted node cannot be repaired by another business address in this request.
             std::bitset<256> exhausted_tunnels;
+            std::vector<std::uint32_t> exhausted_overflow;
             if (session.meters_principal_bytes()) first={};
             auto const connect_deadline = std::min(limit,session.started + std::chrono::milliseconds(session.direct_connect_timeout_ms));
             if (session.direct_connect_timeout_ms>10000)
@@ -176,7 +176,7 @@ namespace relay {
                     if (matched->outbound==static_cast<std::size_t>(RouteAction::block)) { blocked=true; return false; }
                     if (matched->outbound>=static_cast<std::size_t>(RouteAction::vless)) {
                         auto index=matched->outbound-static_cast<std::size_t>(RouteAction::vless);
-                        if (index<exhausted_tunnels.size() && exhausted_tunnels[index]) return false;
+                        if (index<exhausted_tunnels.size() ? exhausted_tunnels[index] : std::ranges::contains(exhausted_overflow,static_cast<std::uint32_t>(index))) return false;
                         boundary=true; route=*matched; routed_destination=destination; return false;
                     }
                     route=*matched;
@@ -295,6 +295,7 @@ namespace relay {
                     if (connected_tunnel==TunnelConnectResult::failed) co_return 1;
                     session.tunnel={};
                     if (index<exhausted_tunnels.size()) exhausted_tunnels[index]=true;
+                    else if (!std::ranges::contains(exhausted_overflow,static_cast<std::uint32_t>(index))) exhausted_overflow.push_back(static_cast<std::uint32_t>(index));
                     if (error!=std::errc::timed_out) error=std::make_error_code(std::errc::host_unreachable);
                 }
             }

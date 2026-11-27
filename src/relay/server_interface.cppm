@@ -220,8 +220,7 @@ export namespace relay {
         std::vector<std::thread> threads;
         std::atomic_bool stopping{false}, failed{false};
         bool outbound_contexts_started = false;
-        std::array<std::uint16_t, 256> outbound_context_order{};
-        std::uint16_t outbound_context_count = 0;
+        std::vector<std::uint32_t> outbound_context_order;
         auto start_outbound_contexts() -> bool; auto stop_outbound_contexts() noexcept -> void;
         auto finish_outbound_contexts() noexcept -> void; auto reap_outbound_contexts() noexcept -> void;
         [[nodiscard]] auto outbound_contexts_quiesced() const noexcept -> bool;
@@ -230,7 +229,7 @@ export namespace relay {
         std::optional<RuntimeFailure> failure_state;
         auto record_failure(RuntimeFailure value) -> void;
         auto get_failure() const -> std::optional<RuntimeFailure>;
-        static constexpr std::size_t kMaxConcurrentProbes = 16;
+        static constexpr std::size_t kMaxConcurrentProbes = 1024;
         std::mutex probe_mutex;
         std::deque<std::shared_ptr<OutboundProbe>> pending_probes;
         std::atomic<std::size_t> active_probes{0};

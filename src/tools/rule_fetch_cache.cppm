@@ -2,6 +2,7 @@
 export module cli.rule_fetch_cache;
 import std;
 import cli.rule_fetch_url;
+import cli.route_files;
 import cli.route_files_nxmm;
 import config;
 import crypto;
@@ -196,5 +197,103 @@ export namespace cli::rule_fetch_detail {
                                           std::string_view body, std::uint64_t max_bytes = 64ull * 1024 * 1024) noexcept -> void {
         if (format == ::rules::InputFormat::srs && !cache_root.empty())
             cli::nxmm_detail::prewarm_srs_sidecar(cache_root, body, max_bytes);
+    }
+
+    inline auto lower_ascii_hex(std::string_view s) -> std::string {
+        std::string out(s);
+        for (auto& ch : out)
+            if (ch >= 'A' && ch <= 'Z') ch = static_cast<char>(ch - 'A' + 'a');
+        return out;
+    }
+
+    inline auto managed_ruleset_cache_key(Url const& url, ::rules::InputFormat format,
+        config::Config const& config, config::BlockRules const& spec) -> std::optional<::state::RulesetKey> {
+        using Format = ::rules::InputFormat;
+        ::state::RuleFormat type = ::state::RuleFormat::srs;
+        switch (format) {
+        case Format::kdl: type = ::state::RuleFormat::kdl; break;
+        case Format::beve: type = ::state::RuleFormat::beve; break;
+        case Format::srs: type = ::state::RuleFormat::srs; break;
+        case Format::nxmm: type = ::state::RuleFormat::nxmm; break;
+        case Format::json: type = ::state::RuleFormat::json; break;
+        case Format::domain_list: type = ::state::RuleFormat::domain_list; break;
+        case Format::ipcidr_list: type = ::state::RuleFormat::ipcidr_list; break;
+        case Format::classical: type = ::state::RuleFormat::classical; break;
+        case Format::adguard: type = ::state::RuleFormat::adguard; break;
+        }
+        constexpr unsigned parser_version = 1;
+        auto csig = cli::http_client_signature(config, spec.http_client);
+        auto scope = rule_digest(std::format("v2\n{}\n{}", csig, lower_ascii_hex(spec.sha256)));
+        auto canonical = canonical_url(url);
+        if (!scope || canonical.empty()) return {};
+        ::state::RulesetKey key{std::move(canonical), type, parser_version};
+        std::ranges::copy(std::as_bytes(std::span(*scope)), key.scope.begin());
+        return key;
+    }
+
+    struct ManagedRulesetCacheState {
+        std::optional<::state::RulesetCache> disk_cache;
+        std::optional<::state::RulesetKey> key;
+        ::state::RulesetLookup cached{};
+    };
+
+    inline auto lookup_managed_ruleset_cache(config::Config const& config, Url const& url,
+        ::rules::InputFormat format, config::BlockRules const& spec,
+        std::optional<std::array<std::uint8_t, 32>> const& pin) -> ManagedRulesetCacheState {
+        ManagedRulesetCacheState st{};
+        if (!config.state || config.state->cache_directory.empty()) return st;
+        if (!::state::ensure_private_directory(config.state->cache_directory)) return st;
+        ::state::RulesetCacheLimits limits{};
+        limits.max_bytes = config.state->ruleset_cache_max_bytes;
+        st.disk_cache.emplace(config.state->cache_directory, limits);
+        st.key = managed_ruleset_cache_key(url, format, config, spec);
+        if (!st.key) return st;
+        if (auto hit = st.disk_cache->lookup(*st.key); hit) {
+            st.cached = std::move(*hit);
+            if (st.cached.hit && (!validate_download(st.cached.hit->body, format, pin) ||
+                !cli::verify_remote_ruleset_sha256(spec, st.cached.hit->body))) {
+                (void)st.disk_cache->discard(*st.key, st.cached.clear_epoch, st.cached.hit->metadata.content_blake3);
+                st.cached.hit.reset();
+            }
+        }
+        return st;
+    }
+
+    inline auto store_managed_ruleset_cache(ManagedRulesetCacheState& st, config::Config const& config,
+        ::rules::InputFormat format, config::BlockRules const& spec, std::string_view target,
+        std::string_view tag, std::string_view last_modified, std::string_view body) -> std::uint64_t {
+        auto now = epoch_seconds();
+        if (!st.disk_cache || !st.key || body.empty()) return now;
+        auto interval_s = std::max<std::uint64_t>(1, (std::uint64_t{spec.update_interval_ms} + 999u) / 1000u);
+        ::state::RulesetMetadata meta{
+            .etag = std::string(tag),
+            .last_modified = std::string(last_modified),
+            .response_target = std::string(target),
+            .fetched_at = now,
+            .expires_at = now + interval_s,
+        };
+        (void)st.disk_cache->store(*st.key, st.cached.clear_epoch, std::move(meta), body);
+        prewarm_srs_cache_sidecar(config.state->cache_directory, format, body, config.state->ruleset_cache_max_bytes);
+        return now;
+    }
+
+    inline auto probe_fresh_managed_ruleset_cache_impl(config::Config const& config, std::string_view,
+        config::BlockRules const& spec, std::uint64_t now_unix) -> std::optional<cli::FreshRulesetCacheHit> {
+        if (!config.state || config.state->cache_directory.empty()) return std::nullopt;
+        auto url = parse_url(spec.url);
+        if (!url) return std::nullopt;
+        auto format = cli::rule_input_format(spec.format);
+        std::optional<std::array<std::uint8_t, 32>> pin;
+        if (!spec.sha256.empty()) {
+            pin = parse_sha256(spec.sha256);
+            if (!pin) return std::nullopt;
+        }
+        auto st = lookup_managed_ruleset_cache(config, *url, format, spec, pin);
+        if (!st.cached.hit || st.cached.hit->body.empty()) return std::nullopt;
+        auto rem = cli::compute_remaining_refresh_ms(st.cached.hit->metadata.fetched_at, now_unix, spec.update_interval_ms);
+        if (!rem) return std::nullopt;
+        return cli::FreshRulesetCacheHit{
+            std::move(st.cached.hit->body), std::move(st.cached.hit->metadata.etag),
+            st.cached.hit->metadata.fetched_at, *rem};
     }
 }

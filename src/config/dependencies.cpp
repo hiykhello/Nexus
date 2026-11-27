@@ -4,10 +4,48 @@ import platform.ip_address;
 import rules;
 
 namespace config {
+    static auto populate_physical_index(Config& config,std::string_view direct,std::optional<std::string> const& block) -> void {
+        config.physical_index.clear();
+        config.physical_index.reserve(1 + std::size_t{block.has_value()} + config.tunnel_count());
+        config.physical_index.emplace(std::string(direct), std::uint32_t{0});
+        if (block) config.physical_index.emplace(*block, std::uint32_t{1});
+        std::uint32_t idx = 2;
+        auto add = [&](auto const& entries) {
+            for (auto const& e : entries) config.physical_index.emplace(e.name, idx++);
+        };
+        add(config.vless_outbounds); add(config.shadowsocks_outbounds); add(config.trojan_outbounds);
+        add(config.anytls_outbounds); add(config.hysteria2_outbounds); add(config.snell_outbounds);
+        add(config.shadowtls_outbounds); add(config.tuic_outbounds); add(config.masque_outbounds);
+        add(config.wireguard_outbounds); add(config.ssh_outbounds); add(config.naive_outbounds);
+        add(config.openvpn_outbounds); add(config.openconnect_outbounds);
+        add(config.tailscale_outbounds); add(config.tcp_proxy_outbounds);
+    }
+
+    static auto populate_selector_index(Config& config) -> void {
+        config.selector_index.clear();
+        config.selector_index.reserve(config.selectors.size());
+        for (std::uint32_t i = 0; i < config.selectors.size(); ++i)
+            config.selector_index.emplace(config.selectors[i].name, i);
+    }
+
+    static auto find_selector(Config const& config, std::string_view name) noexcept -> OutboundSelector const* {
+        if (!config.selectors.empty() && config.selector_index.size() == config.selectors.size()) {
+            auto it = config.selector_index.find(name);
+            return it == config.selector_index.end() ? nullptr : &config.selectors[it->second];
+        }
+        auto group = std::ranges::find(config.selectors, name, &OutboundSelector::name);
+        return group == config.selectors.end() ? nullptr : &*group;
+    }
+
     static auto physical_outbound_index(Config const& config,std::string_view direct,std::optional<std::string> const& block,std::string_view name)
         -> std::optional<std::size_t> {
         if (name==direct) return 0;
         if (block && name==*block) return 1;
+        auto expected = 1 + std::size_t{block.has_value()} + config.tunnel_count();
+        if (config.physical_index.size() == expected && config.physical_index.contains(direct)) {
+            auto it = config.physical_index.find(name);
+            return it == config.physical_index.end() ? std::nullopt : std::optional<std::size_t>{it->second};
+        }
         auto found=std::ranges::find(config.vless_outbounds,name,&NamedVlessOutbound::name);
         if (found!=config.vless_outbounds.end()) return static_cast<std::size_t>(found-config.vless_outbounds.begin())+2;
         auto ss=std::ranges::find(config.shadowsocks_outbounds,name,&NamedShadowsocksOutbound::name);
@@ -49,8 +87,8 @@ namespace config {
     }
 
     auto selected_outbound(Config const& config,std::string_view name) noexcept -> std::string_view {
-        auto group=std::ranges::find(config.selectors,name,&OutboundSelector::name);
-        return group==config.selectors.end() ? name : std::string_view(group->selected_leaf);
+        auto const* group=find_selector(config,name);
+        return !group ? name : std::string_view(group->selected_leaf);
     }
 
     auto outbound_index(Config const& config,std::string_view direct,std::optional<std::string> const& block,
@@ -65,9 +103,9 @@ namespace config {
     namespace {
         auto distribution_index(Config const& config,std::string_view direct,
             std::optional<std::string> const& block,std::string_view name) -> std::optional<std::size_t> {
-            auto group=std::ranges::find(config.selectors,name,&OutboundSelector::name);
-            if (group!=config.selectors.end() && group->uses_balance)
-                return config.tunnel_count()+2+static_cast<std::size_t>(group-config.selectors.begin());
+            auto const* group=find_selector(config,name);
+            if (group && group->uses_balance)
+                return config.tunnel_count()+2+static_cast<std::size_t>(group-config.selectors.data());
             return outbound_index(config,direct,block,name);
         }
 
@@ -98,18 +136,21 @@ namespace config {
 
     auto bind_outbound_selectors(Config& config,std::string_view direct,std::optional<std::string> const& block)
         -> std::expected<void,std::string> {
+        populate_physical_index(config,direct,block);
+        config.selector_index.clear();
+        config.selector_index.reserve(config.selectors.size());
+        for (std::uint32_t index=0;index<config.selectors.size();++index) {
+            auto const& selector=config.selectors[index];
+            if (config.physical_index.contains(selector.name) ||
+                !config.selector_index.emplace(selector.name,index).second)
+                return std::unexpected("outbound names must be unique");
+        }
         std::vector<policy::DependencyEdge> edges;
         for (std::size_t index=0;index<config.selectors.size();++index) {
-            auto const& selector=config.selectors[index];
-            if (physical_outbound_index(config,direct,block,selector.name) ||
-                std::ranges::any_of(std::span(config.selectors).first(index),[&](auto const& previous) {
-                    return previous.name==selector.name;
-                })) return std::unexpected("outbound names must be unique");
-            for (auto const& member : selector.members) {
-                auto group=std::ranges::find(config.selectors,member,&OutboundSelector::name);
-                if (group!=config.selectors.end())
-                    edges.push_back({index,static_cast<std::size_t>(group-config.selectors.begin())});
-                else if (!physical_outbound_index(config,direct,block,member))
+            for (auto const& member : config.selectors[index].members) {
+                if (auto it=config.selector_index.find(member); it!=config.selector_index.end())
+                    edges.push_back({index,it->second});
+                else if (!config.physical_index.contains(member))
                     return std::unexpected("unknown selector member: "+member);
             }
         }
@@ -120,8 +161,8 @@ namespace config {
             selector.selected_leaf=selector.selected.empty() ? std::string_view{} : selected_outbound(config,selector.selected);
             auto has_member=[&](bool OutboundSelector::*flag) {
                 return std::ranges::any_of(selector.members,[&](auto const& name) {
-                    auto member=std::ranges::find(config.selectors,name,&OutboundSelector::name);
-                    return member!=config.selectors.end() && (*member).*flag;
+                    auto const* member=find_selector(config,name);
+                    return member && (*member).*flag;
                 });
             };
             auto probes=selector.mode==OutboundGroupMode::fallback || selector.mode==OutboundGroupMode::url_test;
@@ -138,8 +179,8 @@ namespace config {
             return std::unexpected("selector definitions require restart");
         auto next=running;
         for (auto& selector : next.selectors) {
-            auto wanted=std::ranges::find(requested.selectors,selector.name,&OutboundSelector::name);
-            if (wanted==requested.selectors.end() || wanted->members!=selector.members ||
+            auto const* wanted=find_selector(requested,selector.name);
+            if (!wanted || wanted->members!=selector.members ||
                 wanted->mode!=selector.mode || wanted->probe!=selector.probe)
                 return std::unexpected("selector definitions require restart");
             selector.selected=wanted->selected;
@@ -186,11 +227,13 @@ namespace config {
 
     auto bind_outbound_dependencies(Config& config,std::string_view direct,std::optional<std::string> const& block)
         -> std::expected<void,std::string> {
+        populate_physical_index(config,direct,block);
+        populate_selector_index(config);
         auto group_base=config.tunnel_count()+2;
         auto count=group_base+config.selectors.size();
         auto declared=[&](std::string_view name) -> std::optional<std::size_t> {
-            auto group=std::ranges::find(config.selectors,name,&OutboundSelector::name);
-            if (group!=config.selectors.end()) return group_base+static_cast<std::size_t>(group-config.selectors.begin());
+            if (auto it=config.selector_index.find(name); it!=config.selector_index.end())
+                return group_base+it->second;
             return physical_outbound_index(config,direct,block,name);
         };
         std::vector<policy::DependencyEdge> dependencies;
@@ -199,8 +242,8 @@ namespace config {
                 dependencies.push_back({group_base+index,*declared(member)});
         auto bind=[&](auto& outbound,std::size_t index) -> bool {
             if (outbound.detour) {
-                auto group=std::ranges::find(config.selectors,*outbound.detour,&OutboundSelector::name);
-                if (group!=config.selectors.end() && (group->uses_probe || group->uses_balance)) return false;
+                auto const* group=find_selector(config,*outbound.detour);
+                if (group && (group->uses_probe || group->uses_balance)) return false;
                 auto target=outbound_index(config,direct,block,*outbound.detour);
                 if (!target || *target==1) return false;
                 if (outbound.tcp_options.configured()) return false;

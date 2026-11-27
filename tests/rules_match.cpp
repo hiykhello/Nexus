@@ -191,10 +191,12 @@ rule type="ip-cidr" value="::/0"
             auto r_single = pm->match(single_compat);
             check(r_single && *r_single == std::optional<std::size_t>(0), "legacy single process_path remains backwards compatible");
 
-            std::vector<std::string> too_many(65, "/usr/bin/a");
-            MatchInput m_over{};
-            m_over.process_paths = std::span<std::string const>(too_many);
-            check(!pm->match(m_over), "more than 64 process_paths rejected");
+            std::vector<std::string> many_paths(130, "/usr/bin/a");
+            many_paths.back() = "/usr/bin/curl";
+            MatchInput m_many{};
+            m_many.process_paths = std::span<std::string const>(many_paths);
+            auto r_many = pm->match(m_many);
+            check(r_many && *r_many == std::optional<std::size_t>(0), "more than 64 process_paths matches final entry without truncation");
         }
 
         std::vector<ProgramRule> prog_rules{

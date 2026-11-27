@@ -353,7 +353,7 @@ namespace rules {
     }
 
     auto parse_json_ruleset(std::string_view input, bool lenient) -> std::expected<RuleSet, Error> {
-        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "JSON rule-set exceeds 32 MiB"});
+        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "JSON rule-set exceeds 256 MiB"});
         JsonParser p{input, 0};
         RuleSet set{{}, 2};
         std::size_t nodes = 0;

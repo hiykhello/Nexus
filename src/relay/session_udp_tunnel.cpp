@@ -38,7 +38,7 @@ namespace relay::session_udp_detail {
                     auto outbound = packet->outbound - 2;
                     auto sent = UotAliasTunnels::Send::dropped;
                     if (session.tunnel_factories && outbound < session.tunnel_factories->size()) {
-                        if (!state.aliases) state.aliases = std::make_unique<UotAliasTunnels>();
+                        if (!state.aliases) state.aliases = std::make_unique<UotAliasTunnels>(state.alias_cap, state.ordinary_limit());
                         sent = co_await state.aliases->send(session, context, state.readers, *packet,
                             (*session.tunnel_factories)[outbound]);
                     }
@@ -61,15 +61,40 @@ namespace relay::session_udp_detail {
                     ingress.complete_tunnel(); continue;
                 }
                 auto const& factory = (*session.tunnel_factories)[outbound];
-                auto index = outbound * 2 + (!factory.packet_dual_family && packet->target.address_type == 4 ? 1 : 0);
-                if (index >= routed_udp_slots) { ingress.complete_tunnel(); continue; }
                 auto target = packet->target;
+                auto cancel_victim = [](UotSlot& v) noexcept {
+                    v.rotating = true; v.ready = false; v.readiness.clear();
+#ifdef NEXUS_ENABLE_VLESS
+                    if (v.xudp_client) v.xudp_client->cancel();
+                    else
+#endif
+                    if (v.tunnel) v.tunnel->cancel();
+                };
+                std::size_t index = 0; bool evicted = false;
                 if (factory.packet_fixed_peer) {
-                    auto fixed = state.fixed.select(outbound, target);
-                    if (!fixed) { ingress.complete_tunnel(); continue; }
-                    index = routed_udp_slots + *fixed;
+                    auto sel = state.fixed.select_or_evict(outbound, target, cancel_victim);
+                    if (!sel) { ingress.complete_tunnel(); continue; }
+                    index = state.routed.soft_cap() + sel->index; evicted = sel->evicted;
+                } else {
+                    auto key = (static_cast<std::uint64_t>(outbound) << 1) | (!factory.packet_dual_family && target.address_type == 4 ? 1u : 0u);
+                    auto sel = state.routed.select_or_evict(key, cancel_victim);
+                    if (!sel) { ingress.complete_tunnel(); continue; }
+                    index = sel->index; evicted = sel->evicted;
                 }
                 auto& slot = state.slot_at(index);
+                if (evicted) {
+                    while (!session.closed && slot.reader_active && Clock::now() < *state.active_deadline) {
+                        slot.reader_done.clear();
+                        if (!slot.reader_active) break;
+                        auto [error] = co_await io::timeout(slot.reader_done.wait(), *state.active_deadline);
+                        if (error && session.closed) break;
+                    }
+                    if (session.closed || Clock::now() >= *state.active_deadline) { session.close(); break; }
+#ifdef NEXUS_ENABLE_VLESS
+                    slot.xudp_client.reset(); slot.xudp_session = 0;
+#endif
+                    slot.tunnel = {}; slot.authorization = {}; slot.rotating = false;
+                }
                 if (!slot.tunnel) {
                     state.active_deadline = std::min(*state.active_deadline, Clock::now() + std::chrono::milliseconds(factory.timeout_ms));
                     ingress.wake();
@@ -96,9 +121,7 @@ namespace relay::session_udp_detail {
                             if (!request || Clock::now() >= *state.active_deadline || !co_await slot.tunnel->send(*request) || session.closed || Clock::now() >= *state.active_deadline) { session.close(); break; }
                         }
                     }
-#ifdef NEXUS_ENABLE_VLESS
-                    slot.xudp_rotating = false;
-#endif
+                    slot.rotating = false;
                     slot.ready = true;
                     if (!state.readers.request(index)) { session.close(); state.cancel(); break; }
                     slot.readiness.set();
@@ -121,9 +144,12 @@ namespace relay::session_udp_detail {
                         if (!id && id.error() == xudp::ClientIoError::exhausted) {
                             // The reader may be suspended inside the old client. Cancel it,
                             // wait until it has left, then destroy the client before its tunnel.
-                            slot.xudp_rotating = true; slot.ready = false; slot.readiness.clear(); slot.xudp_client->cancel();
-                            while (!session.closed && slot.xudp_reader_active && Clock::now() < *state.active_deadline) {
-                                auto [error] = co_await io::delay(1ms); if (error) session.close();
+                            slot.rotating = true; slot.ready = false; slot.readiness.clear(); slot.xudp_client->cancel();
+                            while (!session.closed && slot.reader_active && Clock::now() < *state.active_deadline) {
+                                slot.reader_done.clear();
+                                if (!slot.reader_active) break;
+                                auto [error] = co_await io::timeout(slot.reader_done.wait(), *state.active_deadline);
+                                if (error && session.closed) break;
                             }
                             if (session.closed || Clock::now() >= *state.active_deadline) { session.close(); break; }
                             slot.xudp_client.reset(); slot.tunnel = {};
@@ -183,48 +209,45 @@ namespace relay::session_udp_detail {
         using namespace std::chrono_literals;
         try {
 #ifdef NEXUS_ENABLE_FAKEIP
-            if (index >= ordinary_udp_slots)
-                co_return co_await state.aliases->read(session, ingress, state.readers, index - ordinary_udp_slots);
+            if (index >= state.ordinary_limit())
+                co_return co_await state.aliases->read(session, ingress, state.readers, index - state.ordinary_limit());
 #endif
             auto& slot = state.slot_at(index);
-#ifdef NEXUS_ENABLE_VLESS
             for (;;) {
                 while (!session.closed && !state.readers.stopped() && !slot.ready) {
                     auto [error] = co_await slot.readiness.wait(); if (error) session.close();
                 }
                 if (session.closed || state.readers.stopped()) co_return capy::results<>{};
-                if (!slot.xudp_client) break;
-                slot.xudp_reader_active = true;
-                while (!session.closed && !slot.xudp_rotating) {
-                    auto reply = co_await slot.xudp_client->read();
-                    if (!reply) { if (!slot.xudp_rotating) session.close(); break; }
-                    if (reply->action == xudp::Incoming::ended) {
-                        if (reply->session == slot.xudp_session) slot.xudp_session = 0;
-                        continue;
+                slot.reader_active = true;
+#ifdef NEXUS_ENABLE_VLESS
+                if (slot.xudp_client) {
+                    while (!session.closed && !slot.rotating) {
+                        auto reply = co_await slot.xudp_client->read();
+                        if (!reply) { if (!slot.rotating) session.close(); break; }
+                        if (reply->action == xudp::Incoming::ended) {
+                            if (reply->session == slot.xudp_session) slot.xudp_session = 0;
+                            continue;
+                        }
+                        if (!reply->source || (reply->source->family != xudp::Family::ipv4 && reply->source->family != xudp::Family::ipv6)) { session.close(); break; }
+                        socks5::UdpPeer source{reply->source->family == xudp::Family::ipv4 ? std::uint8_t{1} : std::uint8_t{4}, {}, reply->source->port};
+                        std::copy_n(reply->source->bytes.begin(), reply->source->length, source.address.begin());
+                        for (;;) {
+                            auto queued = ingress.queue_tunnel_reply(source, reply->payload);
+                            if (!queued) { session.close(); break; }
+                            if (*queued != socks5::UdpReplyStatus::busy) break;
+                            auto [error] = co_await io::delay(1ms); if (error || session.closed) { session.close(); break; }
+                        }
                     }
-                    if (!reply->source || (reply->source->family != xudp::Family::ipv4 && reply->source->family != xudp::Family::ipv6)) { session.close(); break; }
-                    socks5::UdpPeer source{reply->source->family == xudp::Family::ipv4 ? std::uint8_t{1} : std::uint8_t{4}, {}, reply->source->port};
-                    std::copy_n(reply->source->bytes.begin(), reply->source->length, source.address.begin());
-                    for (;;) {
-                        auto queued = ingress.queue_tunnel_reply(source, reply->payload);
-                        if (!queued) { session.close(); break; }
-                        if (*queued != socks5::UdpReplyStatus::busy) break;
-                        auto [error] = co_await io::delay(1ms); if (error || session.closed) { session.close(); break; }
-                    }
-                }
-                slot.xudp_reader_active = false;
-                if (!slot.xudp_rotating || session.closed) co_return capy::results<>{};
-            }
-#else
-            while (!session.closed && !state.readers.stopped() && !slot.ready) {
-                auto [error] = co_await slot.readiness.wait(); if (error) session.close();
-            }
+                } else
 #endif
-            if (session.closed || state.readers.stopped()) co_return capy::results<>{};
-            auto peer = index < routed_udp_slots ? net::ProxyAddress{} : uot_address(state.fixed.peer(index - routed_udp_slots));
-            co_await uot_read_framed(session, ingress, slot.tunnel, slot.authorization, slot.framing, peer);
-            session.close();
-            co_return capy::results<>{};
+                {
+                    auto peer = index < state.routed.soft_cap() ? net::ProxyAddress{} : uot_address(state.fixed.peer(index - state.routed.soft_cap()));
+                    co_await uot_read_framed(session, ingress, slot.tunnel, slot.authorization, slot.framing, peer, nullptr, &slot.rotating);
+                    if (!slot.rotating) session.close();
+                }
+                slot.reader_active = false; slot.reader_done.set();
+                if (!slot.rotating || session.closed) co_return capy::results<>{};
+            }
         } catch (...) { session.close(); throw; }
     }
 #endif

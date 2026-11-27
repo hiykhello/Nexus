@@ -38,6 +38,7 @@ export namespace trojan::detail {
     class Inbound {
         Stream stream_;
         std::span<PasswordKey const> users_;
+        UserTable const* user_table_ = nullptr;
         std::array<std::uint8_t,4096> buffer_{};
         std::size_t unread_off_=0, unread_end_=0;
         bool started_=false;
@@ -62,8 +63,12 @@ export namespace trojan::detail {
     public:
         Inbound(tls::detail::ApplicationConnection<Socket>& connection,std::span<PasswordKey const> users)
             requires (!std::is_reference_v<Stream>) : stream_(connection),users_(users) {}
+        Inbound(tls::detail::ApplicationConnection<Socket>& connection,UserTable const& table)
+            requires (!std::is_reference_v<Stream>) : stream_(connection),users_(table.users()),user_table_(&table) {}
         Inbound(Stream stream,std::span<PasswordKey const> users)
             requires std::is_reference_v<Stream> : stream_(stream),users_(users) {}
+        Inbound(Stream stream,UserTable const& table)
+            requires std::is_reference_v<Stream> : stream_(stream),users_(table.users()),user_table_(&table) {}
         ~Inbound() { crypto::cleanse(buffer_); }
         auto stream() noexcept -> auto& { return stream_; }
         auto read_request(tls::detail::ApplicationDeadline deadline={}) -> capy::task<std::optional<AcceptedRequest>> {
@@ -85,7 +90,7 @@ export namespace trojan::detail {
                 }
                 if (fed.status!=Status::accepted) co_return std::nullopt;
                 auto const* header=decoder.request();
-                auto user=header ? authenticate(users_,header->key) : std::nullopt;
+                auto user=header ? (user_table_ ? user_table_->authenticate(header->key) : authenticate(users_,header->key)) : std::nullopt;
                 if (!user) co_return std::nullopt;
                 auto accepted=AcceptedRequest{header->request,*user};
                 if (fed.consumed < *received) {

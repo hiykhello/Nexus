@@ -120,7 +120,7 @@ namespace config {
                 cfg.padding = *v;
             } else if (child.name == "extra-header") {
                 if (child.tag || !child.properties.empty() || !child.children.empty() ||
-                    child.arguments.size() != 2 || cfg.extra_headers.size() >= 16)
+                    child.arguments.size() != 2)
                     return error("invalid NaiveProxy extra-header");
                 auto name = child.arguments[0].tag ? nullptr : std::get_if<std::string>(&child.arguments[0].data);
                 auto val = child.arguments[1].tag ? nullptr : std::get_if<std::string>(&child.arguments[1].data);
@@ -131,11 +131,14 @@ namespace config {
                 if (forbidden_naive_header(lowered) ||
                     std::ranges::any_of(cfg.extra_headers, [&](auto const& h) { return h.first == lowered; }))
                     return error("forbidden or duplicate NaiveProxy extra-header");
+                std::size_t hbytes = lowered.size() + val->size() + 32;
+                for (auto const& h : cfg.extra_headers) hbytes += h.first.size() + h.second.size() + 32;
+                if (hbytes > 16384) return error("NaiveProxy extra-header exceeds total byte limit");
                 cfg.extra_headers.emplace_back(std::move(lowered), *val);
             } else if (child.name == "max-sessions") {
                 auto v = integer(child);
-                if (std::exchange(max_seen, true) || !v || *v < 1 || *v > 64)
-                    return error("NaiveProxy max-sessions must be 1..64");
+                if (std::exchange(max_seen, true) || !v || *v < 1 || *v > 4096)
+                    return error("NaiveProxy max-sessions must be 1..4096");
                 cfg.max_sessions = static_cast<std::size_t>(*v);
             } else if (child.name == "connect-timeout-ms") {
                 auto v = connect_timeout(child);
@@ -228,6 +231,9 @@ namespace config {
             } else if (child.name == "authentication") {
                 if (std::exchange(auth_seen, true) || child.tag || !child.arguments.empty() || !child.properties.empty())
                     return error("invalid NaiveProxy authentication");
+                std::unordered_set<std::string_view> seen_names;
+                std::unordered_set<std::string> seen_logins;
+                seen_names.reserve(child.children.size()); seen_logins.reserve(child.children.size());
                 for (auto const& u : child.children) {
                     auto uname = argument(u);
                     auto login = text_property(u, "username");
@@ -236,10 +242,8 @@ namespace config {
                     std::size_t expected_props = 1 + static_cast<std::size_t>(login != nullptr);
                     if (u.name != "user" || !uname || !valid_name(*uname) || !valid_naive_user(effective) ||
                         !pfile || !absolute_path(*pfile) || u.properties.size() != expected_props ||
-                        !u.children.empty() || cfg.users.size() >= 64 ||
-                        std::ranges::any_of(cfg.users, [&](auto const& x) {
-                            return x.name == *uname || x.username == effective;
-                        }))
+                        !u.children.empty() || cfg.users.size() >= max_tunnel_outbounds ||
+                        !seen_names.insert(*uname).second || !seen_logins.insert(effective).second)
                         return error("invalid or duplicate NaiveProxy user");
                     cfg.users.push_back({*uname, std::move(effective), *pfile});
                 }

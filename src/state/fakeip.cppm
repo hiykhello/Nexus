@@ -26,8 +26,10 @@ export namespace state {
         explicit FakeIpStore(std::unique_ptr<Impl> owner) noexcept;
     public:
         ~FakeIpStore();
-        [[nodiscard]] static auto open(std::filesystem::path const& root, FakeIpScope scope, CrashMode mode)
+        [[nodiscard]] static auto open(std::filesystem::path const& root, FakeIpScope scope, CrashMode mode,
+            std::optional<std::size_t> wal_limit = std::nullopt)
             -> std::expected<std::unique_ptr<FakeIpStore>, StateError>;
+        [[nodiscard]] auto wal_limit() const noexcept -> std::size_t;
         // Called while attaching the runtime pool, before the first allocation.
         [[nodiscard]] auto visit_recovered(functional::function_ref<bool(FakeIpRow const&)> visit) const -> bool;
         [[nodiscard]] auto assign(std::string_view canonical, std::uint64_t view)

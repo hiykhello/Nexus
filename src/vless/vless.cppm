@@ -37,12 +37,27 @@ export namespace vless {
     [[nodiscard]] auto encode_response() noexcept -> std::array<std::uint8_t,2>;
 
     using UserId = std::array<std::uint8_t,16>;
+    inline constexpr std::uint32_t max_users = 65535u;
+    // Immutable flat open-addressing hash table for O(1), zero-allocation UUID authentication.
+    class UserTable {
+        static constexpr std::uint32_t kEmpty = 0xffffffffu;
+        std::vector<UserId> users_;
+        std::vector<std::uint32_t> buckets_;
+        std::uint64_t seed_ = 0;
+        UserTable(std::vector<UserId> users, std::vector<std::uint32_t> buckets, std::uint64_t seed) noexcept
+            : users_(std::move(users)), buckets_(std::move(buckets)), seed_(seed) {}
+    public:
+        [[nodiscard]] static auto create(std::span<UserId const> users)
+            -> std::expected<std::shared_ptr<UserTable const>,std::string>;
+        [[nodiscard]] auto find(UserId const& identity) const noexcept -> std::optional<std::size_t>;
+        [[nodiscard]] auto size() const noexcept -> std::size_t { return users_.size(); }
+    };
     enum class ServerStatus { reading, dialing, established, rejected };
     struct ServerStep { ServerStatus status; std::size_t consumed; };
     // One authenticated request. The caller owns transport, deadline and
     // bytes after consumed. UDP and Mux require explicit opt-in.
     class ServerHandshake {
-        std::vector<UserId> users_;
+        std::shared_ptr<UserTable const> users_;
         // 278-byte maximal TCP header plus the 255-byte addon limit.
         std::array<std::uint8_t,533> header_{};
         std::size_t length_=0;
@@ -50,12 +65,14 @@ export namespace vless {
         ServerStatus status_=ServerStatus::reading;
         std::optional<TcpRequest> request_;
         std::optional<UserId> mux_user_;
-        explicit ServerHandshake(std::vector<UserId> users, bool vision);
+        explicit ServerHandshake(std::shared_ptr<UserTable const> users, bool vision) noexcept;
     public:
         [[nodiscard]] static auto create(std::span<UserId const> users) -> std::expected<ServerHandshake,std::string>;
+        [[nodiscard]] static auto create_shared(std::shared_ptr<UserTable const> users) -> std::expected<ServerHandshake,std::string>;
         // Opt in only when the caller implements Vision over an authenticated
         // transport. A successful handshake requires the Vision addon.
         [[nodiscard]] static auto create_vision(std::span<UserId const> users) -> std::expected<ServerHandshake,std::string>;
+        [[nodiscard]] static auto create_vision_shared(std::shared_ptr<UserTable const> users) -> std::expected<ServerHandshake,std::string>;
         // Call before feeding bytes only when the owner implements the Mux stream.
         [[nodiscard]] auto allow_mux() noexcept -> bool;
         [[nodiscard]] auto allow_udp() noexcept -> bool;

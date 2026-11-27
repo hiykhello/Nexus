@@ -63,15 +63,20 @@ namespace rulefile {
         };
     }
 
-    auto read_regular_file(std::string_view path) -> std::expected<std::string, std::string> {
+    auto read_regular_file(std::string_view path, std::size_t max_bytes) -> std::expected<std::string, std::string> {
         if (path.find('\0') != std::string_view::npos) return std::unexpected("invalid input path");
+        if (max_bytes == 0) max_bytes = max_file_bytes;
         std::string name(path);
         Fd input(::open(name.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK));
         if (input.get() < 0) return system_error("open input");
         struct stat info{};
         if (::fstat(input.get(), &info) < 0) return system_error("inspect input");
         if (!S_ISREG(info.st_mode)) return std::unexpected("input must be a regular file");
-        if (info.st_size > max_file_bytes) return std::unexpected("input exceeds 32 MiB");
+        auto too_large = [&]() {
+            return std::unexpected(max_bytes == max_file_bytes ? std::string("input exceeds 32 MiB")
+                : std::format("input exceeds {} bytes", max_bytes));
+        };
+        if (info.st_size < 0 || static_cast<std::uint64_t>(info.st_size) > max_bytes) return too_large();
         std::string data;
         char buffer[8192];
         for (;;) {
@@ -81,8 +86,7 @@ namespace rulefile {
                 if (errno == EINTR) continue;
                 return system_error("read input");
             }
-            if (static_cast<std::size_t>(n) > max_file_bytes - data.size())
-                return std::unexpected("input exceeds 32 MiB");
+            if (static_cast<std::size_t>(n) > max_bytes - data.size()) return too_large();
             data.append(buffer, static_cast<std::size_t>(n));
         }
     }
@@ -105,8 +109,9 @@ namespace rulefile {
         return *this;
     }
 
-    auto map_regular_file(std::string_view path) -> std::expected<MappedFile, std::string> {
+    auto map_regular_file(std::string_view path, std::size_t max_bytes) -> std::expected<MappedFile, std::string> {
         if (path.find('\0') != std::string_view::npos) return std::unexpected("invalid input path");
+        if (max_bytes == 0) max_bytes = max_mapped_file_bytes;
         std::string name(path);
         int raw_fd = -1;
         for (int tries = 0; tries < 16; ++tries) {
@@ -118,8 +123,8 @@ namespace rulefile {
         struct stat info{};
         if (::fstat(input.get(), &info) < 0) return system_error("inspect mapped file");
         if (!S_ISREG(info.st_mode)) return std::unexpected("mapped input must be a regular file");
-        if (info.st_size <= 0 || static_cast<std::uint64_t>(info.st_size) > max_file_bytes)
-            return std::unexpected("mapped file size must be 1..33554432 bytes");
+        if (info.st_size <= 0 || static_cast<std::uint64_t>(info.st_size) > max_bytes)
+            return std::unexpected(std::format("mapped file size must be 1..{} bytes", max_bytes));
         auto len = static_cast<std::size_t>(info.st_size);
         // Copy into anonymous private pages + PROT_READ so external in-place truncation never raises SIGBUS.
         void* ptr = ::mmap(nullptr, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);

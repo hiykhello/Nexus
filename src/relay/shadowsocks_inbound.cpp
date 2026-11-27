@@ -88,6 +88,7 @@ namespace relay {
         struct IdentityProfile {
             std::vector<std::uint8_t> key;
             std::vector<shadowsocks::detail::TcpIdentityUser> users;
+            shadowsocks::detail::IdentityTable user_index;
             std::vector<std::string> names;
             explicit IdentityProfile(std::span<std::uint8_t const> identity) : key(identity.begin(),identity.end()) {}
             ~IdentityProfile() {crypto::cleanse(key);}
@@ -100,7 +101,7 @@ namespace relay {
             std::lock_guard lock(mutex);
             for (auto const& profile : profiles)
                 if (crypto::constant_time_equal(profile->key,key)) return profile.get();
-            if (profiles.size()>=1024) return std::unexpected("Shadowsocks 2022 inbound key limit reached");
+            if (profiles.size()>=max_tunnel_outbounds) return std::unexpected("Shadowsocks 2022 inbound key limit reached");
             auto profile=std::make_unique<Profile>(key);
             auto* result=profile.get();
             profiles.push_back(std::move(profile)); return result;
@@ -205,8 +206,9 @@ namespace relay {
             } else if (identity) {
                 users = identity->users;
             }
+            auto const* user_index = (!use_dynamic && identity) ? &identity->user_index : nullptr;
             auto request=co_await shadowsocks::detail::receive_request(session.client,key,replay,
-                                                                        session.started+std::chrono::seconds(10),users,method);
+                                                                        session.started+std::chrono::seconds(10),users,method,user_index);
             if (!request || session.closed) {
                 if (!session.closed && !request && request.error()==shadowsocks::detail::ServerReadError::invalid_request)
                     (void)shadowsocks::detail::prepare_probe_reset(session.client.native_handle());
@@ -301,20 +303,26 @@ namespace relay {
             return std::unexpected("ChaCha20 requires a 32-byte key and has no identity headers");
         auto method=cipher==ShadowsocksCipher::chacha20 ? shadowsocks::CipherMethod::chacha20 : shadowsocks::CipherMethod::aes;
         if (!users.empty()) {
-            if (users.size()>32) return std::unexpected("too many Shadowsocks users");
+            if (users.size()>max_tunnel_outbounds) return std::unexpected("too many Shadowsocks users");
             auto profile=std::make_unique<IdentityProfile>(key);
+            profile->users.reserve(users.size());
+            profile->names.reserve(users.size());
+            std::unordered_set<std::string_view> seen_names;
+            seen_names.reserve(users.size());
+            std::set<shadowsocks::IdentityBlock> seen_hashes;
             for (auto const& user:users) {
                 if (user.name.empty() || user.name.size()>255 || user.key.size()!=key.size() ||
-                    std::ranges::find(profile->names,user.name)!=profile->names.end() ||
+                    !seen_names.insert(user.name).second ||
                     crypto::constant_time_equal(key,user.key)) return std::unexpected("invalid Shadowsocks user");
                 auto hash=shadowsocks::identity_hash(user.key);
-                if (std::ranges::find(profile->users,hash,&shadowsocks::detail::TcpIdentityUser::hash)!=profile->users.end())
+                if (!seen_hashes.insert(hash).second)
                     return std::unexpected("duplicate Shadowsocks user key");
                 auto owner=shared_profile(user.key);
                 if (!owner) return std::unexpected(owner.error());
                 profile->users.push_back({(*owner)->key,&(*owner)->replay,hash});
                 profile->names.emplace_back(user.name);
             }
+            profile->user_index = shadowsocks::detail::IdentityTable(profile->users);
             return InboundFactory([profile=std::move(profile),multiplex=std::move(multiplex)](Session& session,io::io_context& context,rules::RouteMatcher const& policy) {
                 return serve(session,context,policy,profile->key,nullptr,shadowsocks::CipherMethod::aes,profile.get(),multiplex);
             });

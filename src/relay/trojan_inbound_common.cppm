@@ -25,7 +25,7 @@ namespace relay::trojan_in {
         std::shared_ptr<tls::AtomicServerCredential> atomic_credential;
         std::vector<std::string> alpn;
         std::shared_ptr<tls::EchServerKeys const> ech_keys;
-        std::vector<trojan::PasswordKey> users;
+        trojan::UserTable users;
         std::vector<std::string> names;
         std::optional<httpupgrade::Profile> transport;
         std::optional<transport_detail::GrpcSettings> grpc;

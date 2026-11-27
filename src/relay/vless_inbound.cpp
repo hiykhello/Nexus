@@ -314,9 +314,10 @@ namespace relay {
         if (transport && (vision || reality_config)) return std::unexpected("HTTPUpgrade requires ordinary VLESS TLS");
         if (vision && multiplex && multiplex->enabled) return std::unexpected("VLESS Vision cannot be combined with multiplex");
         if (!names.empty() && names.size()!=users.size()) return std::unexpected("VLESS user names do not match UUIDs");
-        for (std::size_t i=0;i<names.size();++i) {
-            if (names[i].empty() || names[i].size()>255 || names[i].find('\0')!=std::string::npos ||
-                std::find(names.begin(),names.begin()+i,names[i])!=names.begin()+i)
+        std::unordered_set<std::string_view> seen_names;
+        seen_names.reserve(names.size());
+        for (auto const& n : names) {
+            if (n.empty() || n.size()>255 || n.find('\0')!=std::string::npos || !seen_names.insert(n).second)
                 return std::unexpected("invalid or duplicate VLESS user name");
         }
         auto profile=reality_config ? vless::ServerProfile::load_users(users)

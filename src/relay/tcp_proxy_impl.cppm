@@ -298,7 +298,7 @@ namespace relay::tcp_proxy_detail {
             return std::unexpected("stop the server before changing the outbound");
         if (config.protocol == config::TcpProxyProtocol::http_connect && config.http_version != config::HttpProxyVersion::h1) {
 #ifdef NEXUS_ENABLE_NAIVE
-            if (outbounds.size() >= 256) return std::unexpected("too many tunnel outbounds");
+            if (outbounds.size() >= max_tunnel_outbounds) return std::unexpected("too many tunnel outbounds");
             if (config.bootstrap_index && (!dns_routing || *config.bootstrap_index >= dns_routing->resolver_count()))
                 return std::unexpected("invalid TCP proxy bootstrap resolver");
             auto factory = make_http_modern_factory(config, dns_routing.has_value());
@@ -312,7 +312,7 @@ namespace relay::tcp_proxy_detail {
             return std::unexpected("HTTP/2 and HTTP/3 proxy outbounds require naive build feature");
 #endif
         }
-        if (outbounds.size() >= 256 || config.host.empty() || config.host.size() > 253 || !config.port ||
+        if (outbounds.size() >= max_tunnel_outbounds || config.host.empty() || config.host.size() > 253 || !config.port ||
             !config.connect_timeout_ms || config.connect_timeout_ms > 3600000 || !config.tcp_options.valid())
             return std::unexpected("invalid TCP proxy outbound options");
         if (config.bootstrap_index && (!dns_routing || *config.bootstrap_index >= dns_routing->resolver_count()))

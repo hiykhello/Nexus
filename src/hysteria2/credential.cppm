@@ -54,4 +54,48 @@ export namespace hysteria2 {
         for(std::size_t i=0;i<users.size();++i)if(crypto::constant_time_equal(users[i].bytes(),bytes))selected=i;
         return selected;
     }
+
+    // Non-owning flat open-addressing hash index for O(1), zero-allocation, constant-time Hysteria2 auth.
+    class PasswordIndex {
+        static constexpr std::uint32_t kEmpty = 0xffffffffu;
+        std::vector<std::uint32_t> buckets_;
+        std::uint64_t seed_ = 0;
+
+        static auto hash_bytes(std::span<std::uint8_t const> data, std::uint64_t seed) noexcept -> std::uint64_t {
+            std::uint64_t h = seed ^ 0xcbf29ce484222325ULL;
+            for (auto b : data) { h ^= b; h *= 0x100000001b3ULL; }
+            h ^= h >> 30; h *= 0xbf58476d1ce4e5b9ULL;
+            h ^= h >> 27; h *= 0x94d049bb133111ebULL;
+            return h ^ (h >> 31);
+        }
+    public:
+        PasswordIndex() = default;
+        explicit PasswordIndex(std::span<Password const> users) {
+            if (users.empty()) return;
+            seed_ = 0x517cc1b727220a95ULL;
+            (void)crypto::random_bytes(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(&seed_), sizeof(seed_)));
+            std::size_t cap = 4;
+            while (cap < users.size() * 2) cap <<= 1;
+            buckets_.assign(cap, kEmpty);
+            std::size_t const mask = cap - 1;
+            for (std::size_t i = 0; i < users.size(); ++i) {
+                auto slot = static_cast<std::size_t>(hash_bytes(users[i].bytes(), seed_)) & mask;
+                while (buckets_[slot] != kEmpty) slot = (slot + 1) & mask;
+                buckets_[slot] = static_cast<std::uint32_t>(i);
+            }
+        }
+        [[nodiscard]] auto authenticate(std::span<Password const> users, std::string_view credential) const noexcept
+            -> std::optional<std::size_t> {
+            if (buckets_.empty() || users.empty()) return std::nullopt;
+            auto bytes = std::span(reinterpret_cast<std::uint8_t const*>(credential.data()), credential.size());
+            std::size_t const mask = buckets_.size() - 1;
+            auto slot = static_cast<std::size_t>(hash_bytes(bytes, seed_)) & mask;
+            while (buckets_[slot] != kEmpty) {
+                auto const idx = buckets_[slot];
+                if (idx < users.size() && crypto::constant_time_equal(users[idx].bytes(), bytes)) return idx;
+                slot = (slot + 1) & mask;
+            }
+            return std::nullopt;
+        }
+    };
 }

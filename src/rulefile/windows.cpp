@@ -97,8 +97,9 @@ namespace rulefile {
         }
     }
 
-    auto read_regular_file(std::string_view path) -> std::expected<std::string, std::string> {
+    auto read_regular_file(std::string_view path, std::size_t max_bytes) -> std::expected<std::string, std::string> {
         if (path.find('\0') != std::string_view::npos) return std::unexpected("invalid input path");
+        if (max_bytes == 0) max_bytes = max_file_bytes;
         std::filesystem::path p{std::string(path)};
         if (auto sym = platform::is_reparse_or_symlink(p); sym && *sym)
             return std::unexpected("input must be a regular file");
@@ -108,16 +109,18 @@ namespace rulefile {
         if (!is_regular_non_reparse(input.value)) return std::unexpected("input must be a regular file");
         LARGE_INTEGER sz{};
         if (!::GetFileSizeEx(input.value, &sz)) return win_error("inspect input");
-        if (sz.QuadPart > static_cast<LONGLONG>(max_file_bytes))
-            return std::unexpected("input exceeds 32 MiB");
+        auto too_large = [&]() {
+            return std::unexpected(max_bytes == max_file_bytes ? std::string("input exceeds 32 MiB")
+                : std::format("input exceeds {} bytes", max_bytes));
+        };
+        if (sz.QuadPart < 0 || static_cast<std::uint64_t>(sz.QuadPart) > max_bytes) return too_large();
         std::string data;
         char buffer[8192];
         for (;;) {
             DWORD n = 0;
             if (!::ReadFile(input.value, buffer, sizeof(buffer), &n, nullptr)) return win_error("read input");
             if (n == 0) return data;
-            if (static_cast<std::size_t>(n) > max_file_bytes - data.size())
-                return std::unexpected("input exceeds 32 MiB");
+            if (static_cast<std::size_t>(n) > max_bytes - data.size()) return too_large();
             data.append(buffer, static_cast<std::size_t>(n));
         }
     }
@@ -142,8 +145,9 @@ namespace rulefile {
         return *this;
     }
 
-    auto map_regular_file(std::string_view path) -> std::expected<MappedFile, std::string> {
+    auto map_regular_file(std::string_view path, std::size_t max_bytes) -> std::expected<MappedFile, std::string> {
         if (path.find('\0') != std::string_view::npos) return std::unexpected("invalid input path");
+        if (max_bytes == 0) max_bytes = max_mapped_file_bytes;
         std::filesystem::path p{std::string(path)};
         if (auto sym = platform::is_reparse_or_symlink(p); sym && *sym)
             return std::unexpected("mapped input must be a regular file");
@@ -153,8 +157,8 @@ namespace rulefile {
         if (!is_regular_non_reparse(input.value)) return std::unexpected("mapped input must be a regular file");
         LARGE_INTEGER sz{};
         if (!::GetFileSizeEx(input.value, &sz)) return win_error("inspect mapped file");
-        if (sz.QuadPart <= 0 || sz.QuadPart > static_cast<LONGLONG>(max_file_bytes))
-            return std::unexpected("mapped file size must be 1..33554432 bytes");
+        if (sz.QuadPart <= 0 || static_cast<std::uint64_t>(sz.QuadPart) > max_bytes)
+            return std::unexpected(std::format("mapped file size must be 1..{} bytes", max_bytes));
         WinHandle mapping(::CreateFileMappingW(input.value, nullptr, PAGE_READONLY, 0, 0, nullptr));
         if (!mapping.value) return win_error("create file mapping");
         void* view = ::MapViewOfFile(mapping.value, FILE_MAP_READ, 0, 0, 0);

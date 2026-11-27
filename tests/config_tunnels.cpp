@@ -296,13 +296,13 @@ routing { default-outbound "edge"; }
         many = replace(many, "rules {", "rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\"" + name + "\"");
     }
     if (auto parsed = config::parse_kdl(many); !parsed || parsed->vless_outbounds.size() != 17) return 1;
-    auto too_many = vless_config;
+    auto scale_257 = vless_config;
     for (int i = 2; i <= 257; ++i) {
         auto name = "edge" + std::to_string(i);
-        too_many = add_outbound(too_many, replace(vless_node, "\"edge\"", "\"" + name + "\""));
-        too_many = replace(too_many, "rules {", "rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\"" + name + "\"");
+        scale_257 = add_outbound(scale_257, replace(vless_node, "\"edge\"", "\"" + name + "\""));
+        scale_257 = replace(scale_257, "rules {", "rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\"" + name + "\"");
     }
-    if (config::parse_kdl(too_many)) return 1;
+    if (auto parsed = config::parse_kdl(scale_257); !parsed || parsed->vless_outbounds.size() != 257) return 1;
 
     for (auto const& [input, description] : std::vector<std::pair<std::string, std::string>>{
         {replace(vless_config, "verify #true", "verify #false"), "disabled TLS verification"},

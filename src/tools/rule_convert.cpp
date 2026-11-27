@@ -30,14 +30,14 @@ namespace {
             while (std::cin.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) || std::cin.gcount() > 0) {
                 auto n = static_cast<std::size_t>(std::cin.gcount());
                 if (n > ::rules::max_input_bytes - data.size())
-                    return std::unexpected("stdin input exceeds 32 MiB");
+                    return std::unexpected("stdin input exceeds 256 MiB");
                 data.append(chunk.data(), n);
                 if (std::cin.eof()) break;
             }
             if (std::cin.bad()) return std::unexpected("failed reading stdin");
             return data;
         }
-        return ::rulefile::read_regular_file(path);
+        return ::rulefile::read_regular_file(path, ::rules::max_input_bytes);
     }
 
     auto write_target(std::string_view path, std::string_view output, bool overwrite) -> std::expected<void, std::string> {

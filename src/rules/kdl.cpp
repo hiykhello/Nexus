@@ -35,7 +35,7 @@ namespace rules {
     }
 
     auto parse_kdl(std::string_view input) -> std::expected<RuleSet, Error> {
-        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "KDL input exceeds 32 MiB"});
+        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "KDL input exceeds 256 MiB"});
         auto document = g::read_kdl<g::KdlDocument>(input);
         if (!document) return std::unexpected(Error{ErrorCode::syntax, g::format_error(document.error(), input)});
         bool version_seen = false, kind_seen = false;
@@ -62,6 +62,20 @@ namespace rules {
     }
 
     auto write_kdl(RuleSet const& set) -> std::expected<std::string, Error> {
+        if (set.rules.size() > max_rules)
+            return std::unexpected(Error{ErrorCode::limit, "rule nesting or count exceeds limit"});
+        std::size_t min_bytes = 32;
+        auto estimate = [&](auto&& self, Rule const& r, unsigned depth) -> bool {
+            if (depth > max_rule_depth) return true;
+            std::size_t add = 12u + r.type.size() + r.value.size();
+            if (add > max_input_bytes - min_bytes) return false;
+            min_bytes += add;
+            for (auto const& c : r.children) if (!self(self, c, depth + 1)) return false;
+            return true;
+        };
+        for (auto const& r : set.rules)
+            if (!estimate(estimate, r, 1))
+                return std::unexpected(Error{ErrorCode::limit, "KDL output exceeds 256 MiB"});
         auto normalized=normalize_set(set);
         if (!normalized) return std::unexpected(std::move(normalized.error()));
         g::KdlDocument document;
@@ -81,7 +95,7 @@ namespace rules {
         for (auto const& entry:normalized->rules) document.push_back(encode_rule(encode_rule,entry));
         auto encoded = g::write_kdl(document);
         if (!encoded) return std::unexpected(Error{ErrorCode::syntax, "could not encode KDL"});
-        if (encoded->size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "KDL output exceeds 32 MiB"});
+        if (encoded->size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "KDL output exceeds 256 MiB"});
         return *std::move(encoded);
     }
 }

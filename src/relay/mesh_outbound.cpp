@@ -123,7 +123,7 @@ namespace relay {
     }
 
     auto Server::add_mesh(MeshLink link, std::uint16_t mtu) -> std::expected<std::size_t,std::string> {
-        if(!link || mtu<1280 || mtu>1500 || outbounds.size()>=256 || running)
+        if(!link || mtu<1280 || mtu>1500 || outbounds.size()>=max_tunnel_outbounds || running)
             return std::unexpected("invalid Tailscale outbound or routing state");
         auto profile=std::make_shared<MeshProfile>(std::move(link),mtu);
         TunnelFactory factory{

@@ -69,7 +69,7 @@ namespace config {
         }
         auto parse_alpn_fallback_entry(Node const& node,std::string_view alpn_raw,std::size_t target_idx,
             std::vector<std::pair<std::string,FallbackTarget>>& out) -> std::expected<void,std::string> {
-            if (out.size()>=16 || alpn_raw.empty() || alpn_raw.size()>255 ||
+            if (out.size()>=1024 || alpn_raw.empty() || alpn_raw.size()>255 ||
                 !std::ranges::all_of(alpn_raw,[](unsigned char c) { return c>=33 && c<=126; }) ||
                 std::ranges::any_of(out,[&](auto const& kv) { return kv.first==alpn_raw; }))
                 return error("invalid or duplicate Trojan fallback-for-alpn");
@@ -107,10 +107,12 @@ namespace config {
                 result.port=static_cast<std::uint16_t>(*port);listen=true;
             } else if (child.name=="authentication") {
                 if (auth || child.tag || !child.arguments.empty() || !child.properties.empty()) return error("invalid "+label+" authentication");
+                std::unordered_set<std::string_view> seen_tags;
+                seen_tags.reserve(child.children.size());
                 for (auto const& user:child.children) {
                     auto tag=argument(user),file=string_property(user,"password-file");
                     if (user.name!="user" || !tag || !name(*tag) || !file || !path(*file) || user.properties.size()!=1 ||
-                        !user.children.empty() || config.users.size()>=64 || std::ranges::any_of(config.users,[&](auto const& item) { return item.name==*tag; }))
+                        !user.children.empty() || config.users.size()>=max_tunnel_outbounds || !seen_tags.insert(*tag).second)
                         return error("invalid or duplicate "+label+" user");
                     config.users.push_back({*tag,*file});
                 }

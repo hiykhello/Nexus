@@ -3,6 +3,7 @@ import std;
 
 export namespace rulefile {
     inline constexpr std::size_t max_file_bytes = 33554432;
+    inline constexpr std::size_t max_mapped_file_bytes = 268435456;
 
     // Read-only memory-mapped regular file; unmaps on destruction.
     class MappedFile {
@@ -10,7 +11,7 @@ export namespace rulefile {
         std::size_t size_ = 0;
         std::uintptr_t handle_ = 0;
         MappedFile(void* data, std::size_t size, std::uintptr_t handle = 0) noexcept;
-        friend auto map_regular_file(std::string_view path) -> std::expected<MappedFile, std::string>;
+        friend auto map_regular_file(std::string_view path, std::size_t max_bytes) -> std::expected<MappedFile, std::string>;
     public:
         MappedFile() = default;
         ~MappedFile();
@@ -27,7 +28,8 @@ export namespace rulefile {
         [[nodiscard]] auto size() const noexcept -> std::size_t { return size_; }
         [[nodiscard]] auto empty() const noexcept -> bool { return size_ == 0; }
     };
-    [[nodiscard]] auto map_regular_file(std::string_view path) -> std::expected<MappedFile, std::string>;
+    [[nodiscard]] auto map_regular_file(std::string_view path,
+        std::size_t max_bytes = max_mapped_file_bytes) -> std::expected<MappedFile, std::string>;
 
     // Binary private file storage; erases the whole allocation on destruction.
     class PrivateFile {
@@ -46,7 +48,8 @@ export namespace rulefile {
     // Absolute path, final component not a symlink, owned by current user, no
     // group/other or special permissions; binary content limited to 1 MiB.
     [[nodiscard]] auto read_private_file(std::string_view path) -> std::expected<PrivateFile,std::string>;
-    [[nodiscard]] auto read_regular_file(std::string_view path) -> std::expected<std::string, std::string>;
+    [[nodiscard]] auto read_regular_file(std::string_view path,
+        std::size_t max_bytes = max_file_bytes) -> std::expected<std::string, std::string>;
     // Reads a private, owner-controlled ASCII secret from an absolute path.
     [[nodiscard]] auto read_password_file(std::string_view path) -> std::expected<std::string, std::string>;
     [[nodiscard]] auto publish_new_file(std::string_view path, std::string_view data) -> std::expected<void, std::string>;

@@ -122,8 +122,12 @@ namespace rules {
         return {a, b};
     }
 
-    auto MmapMatcher::init_and_validate() -> std::expected<void, std::string> {
-        if (buf_.size() < kNxmmHeaderSize || buf_.size() > max_input_bytes)
+    auto MmapMatcher::init_and_validate(std::size_t max_bytes, std::uint32_t max_rule_count) -> std::expected<void, std::string> {
+        static_assert(max_rules == 4000000u && max_input_bytes == 268435456u);
+        auto limit_bytes = max_bytes == 0 ? std::size_t(max_input_bytes)
+            : std::min<std::size_t>(max_bytes, std::numeric_limits<std::uint32_t>::max());
+        auto limit_rules = max_rule_count == 0 ? std::uint32_t(max_rules) : max_rule_count;
+        if (buf_.size() < kNxmmHeaderSize || buf_.size() > limit_bytes)
             return std::unexpected("invalid NXMM file size");
         if (std::string_view(reinterpret_cast<char const*>(buf_.data()), 8) != kNxmmMagic)
             return std::unexpected("invalid NXMM magic header");
@@ -149,7 +153,7 @@ namespace rules {
         std::uint64_t v6_bytes = std::uint64_t(v6_count_) * 32u;
         std::uint64_t total = std::uint64_t(kNxmmHeaderSize) + exact_bytes + suffix_bytes + v4_bytes + v6_bytes +
             arena_bytes_ + tail_beve_bytes_;
-        if (total != total_size || std::uint64_t(exact_count_) + suffix_count_ + v4_count_ + v6_count_ > max_rules)
+        if (total != total_size || std::uint64_t(exact_count_) + suffix_count_ + v4_count_ + v6_count_ > limit_rules)
             return std::unexpected("corrupt NXMM section bounds");
         if (fnv1a64(buf_.subspan(kNxmmHeaderSize)) != expected_crc)
             return std::unexpected("NXMM checksum verification failed");
@@ -164,7 +168,7 @@ namespace rules {
         auto check_domains = [&](std::size_t off, std::uint32_t count) -> std::expected<void, std::string> {
             std::string_view prev;
             for (std::uint32_t i = 0; i < count; ++i) {
-                auto* p = buf_.data() + off + i * 8;
+                auto* p = buf_.data() + off + static_cast<std::size_t>(i) * 8u;
                 std::uint32_t soff = read_u32(p), slen = read_u32(p + 4);
                 if (slen == 0 || slen > 253 || std::uint64_t(soff) + slen > arena_bytes_)
                     return std::unexpected("invalid NXMM domain span");
@@ -194,32 +198,36 @@ namespace rules {
         return {};
     }
 
-    auto MmapMatcher::from_mapped(std::shared_ptr<rulefile::MappedFile const> mapped)
-        -> std::expected<MmapMatcher, std::string> {
+    auto MmapMatcher::from_mapped(std::shared_ptr<rulefile::MappedFile const> mapped,
+        std::size_t max_bytes, std::uint32_t max_rule_count) -> std::expected<MmapMatcher, std::string> {
         if (!mapped || mapped->empty()) return std::unexpected("empty mapped file");
         MmapMatcher out;
         out.buf_ = mapped->bytes();
         out.owner_ = std::move(mapped);
-        if (auto ok = out.init_and_validate(); !ok) return std::unexpected(ok.error());
+        if (auto ok = out.init_and_validate(max_bytes, max_rule_count); !ok) return std::unexpected(ok.error());
         return out;
     }
 
-    auto MmapMatcher::open_file(std::string_view path) -> std::expected<MmapMatcher, std::string> {
+    auto MmapMatcher::open_file(std::string_view path, std::size_t max_bytes,
+        std::uint32_t max_rule_count) -> std::expected<MmapMatcher, std::string> {
         if (path.empty() || path.find('\0') != std::string_view::npos)
             return std::unexpected("invalid NXMM path");
-        auto mapped = rulefile::map_regular_file(path);
+        auto limit_bytes = max_bytes == 0 ? std::size_t(max_input_bytes)
+            : std::min<std::size_t>(max_bytes, std::numeric_limits<std::uint32_t>::max());
+        auto mapped = rulefile::map_regular_file(path, limit_bytes);
         if (!mapped) return std::unexpected(mapped.error());
-        if (mapped->size() < kNxmmHeaderSize || mapped->size() > max_input_bytes)
+        if (mapped->size() < kNxmmHeaderSize || mapped->size() > limit_bytes)
             return std::unexpected("invalid NXMM file size");
-        return from_mapped(std::make_shared<rulefile::MappedFile>(std::move(*mapped)));
+        return from_mapped(std::make_shared<rulefile::MappedFile>(std::move(*mapped)), limit_bytes, max_rule_count);
     }
 
-    auto MmapMatcher::open_bytes(std::string bytes) -> std::expected<MmapMatcher, std::string> {
+    auto MmapMatcher::open_bytes(std::string bytes, std::size_t max_bytes,
+        std::uint32_t max_rule_count) -> std::expected<MmapMatcher, std::string> {
         auto owned = std::make_shared<std::string>(std::move(bytes));
         MmapMatcher out;
         out.buf_ = {reinterpret_cast<std::uint8_t const*>(owned->data()), owned->size()};
         out.owner_ = std::move(owned);
-        if (auto ok = out.init_and_validate(); !ok) return std::unexpected(ok.error());
+        if (auto ok = out.init_and_validate(max_bytes, max_rule_count); !ok) return std::unexpected(ok.error());
         return out;
     }
 
@@ -293,7 +301,11 @@ namespace rules {
         return false;
     }
 
-    auto compile_nxmm(RuleSet const& set, bool ip_cidr_match_source) -> std::expected<std::string, Error> {
+    auto compile_nxmm(RuleSet const& set, bool ip_cidr_match_source, std::size_t max_bytes) -> std::expected<std::string, Error> {
+        if (set.rules.size() > max_rules)
+            return std::unexpected(Error{ErrorCode::limit, "rule nesting or count exceeds limit"});
+        auto limit_bytes = max_bytes == 0 ? std::size_t(max_input_bytes)
+            : std::min<std::size_t>(max_bytes, std::numeric_limits<std::uint32_t>::max());
         auto normalized = normalize_set(set);
         if (!normalized) return std::unexpected(std::move(normalized.error()));
 
@@ -349,10 +361,14 @@ namespace rules {
         exact_refs.reserve(exact.size());
         suffix_refs.reserve(suffix.size());
         for (auto const& s : exact) {
+            if (arena.size() > limit_bytes || s.size() > limit_bytes - arena.size())
+                return std::unexpected(Error{ErrorCode::limit, "NXMM output exceeds budget"});
             exact_refs.emplace_back(static_cast<std::uint32_t>(arena.size()), static_cast<std::uint32_t>(s.size()));
             arena.append(s);
         }
         for (auto const& s : suffix) {
+            if (arena.size() > limit_bytes || s.size() > limit_bytes - arena.size())
+                return std::unexpected(Error{ErrorCode::limit, "NXMM output exceeds budget"});
             suffix_refs.emplace_back(static_cast<std::uint32_t>(arena.size()), static_cast<std::uint32_t>(s.size()));
             arena.append(s);
         }
@@ -368,8 +384,8 @@ namespace rules {
         body.append(tail_beve);
 
         std::uint64_t total_size = kNxmmHeaderSize + body.size();
-        if (total_size > max_input_bytes)
-            return std::unexpected(Error{ErrorCode::limit, "NXMM output exceeds 32 MiB"});
+        if (total_size > limit_bytes)
+            return std::unexpected(Error{ErrorCode::limit, "NXMM output exceeds budget"});
         std::uint64_t crc = fnv1a64({reinterpret_cast<std::uint8_t const*>(body.data()), body.size()});
 
         std::string out;
@@ -392,7 +408,8 @@ namespace rules {
 
     auto nxmm_to_ruleset(MmapMatcher const& mm) -> std::expected<RuleSet, Error> {
         RuleSet set{{}, 2};
-        set.rules.reserve(mm.exact_count() + mm.suffix_count() + mm.v4_count() + mm.v6_count());
+        std::uint64_t reserve_count = std::uint64_t(mm.exact_count()) + mm.suffix_count() + mm.v4_count() + mm.v6_count();
+        set.rules.reserve(static_cast<std::size_t>(reserve_count));
         for (std::uint32_t i = 0; i < mm.exact_count(); ++i)
             set.rules.push_back({"domain", std::string(mm.exact_at(i)), {}});
         for (std::uint32_t i = 0; i < mm.suffix_count(); ++i)

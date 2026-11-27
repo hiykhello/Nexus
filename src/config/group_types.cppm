@@ -14,7 +14,7 @@ export namespace config {
         std::string url;
         OutboundProbeMode mode = OutboundProbeMode::http;
         std::uint32_t interval_ms = 300000, timeout_ms = 5000, tolerance_ms = 0, idle_timeout_ms = 0;
-        std::uint8_t probe_concurrency = 4;
+        std::uint16_t probe_concurrency = 4;
         std::vector<OutboundStatusRange> expected_status;
         std::string ca_file;
         std::string server_name;

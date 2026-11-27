@@ -24,6 +24,54 @@ export namespace shadowsocks::detail {
         ReplayTable* replay;
         IdentityBlock hash;
     };
+    // Non-owning flat open-addressing hash index over TcpIdentityUser::hash for O(1), zero-alloc auth.
+    class IdentityTable {
+        static constexpr std::uint32_t kEmpty = 0xffffffffu;
+        std::vector<std::uint32_t> buckets_;
+        std::uint64_t seed_ = 0;
+
+        static auto splitmix64(std::uint64_t x) noexcept -> std::uint64_t {
+            x += 0x9e3779b97f4a7c15ULL;
+            x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+            x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+            return x ^ (x >> 31);
+        }
+        static auto hash_id(IdentityBlock const& id, std::uint64_t seed) noexcept -> std::uint64_t {
+            std::uint64_t lo = 0, hi = 0;
+            std::memcpy(&lo, id.data(), 8);
+            std::memcpy(&hi, id.data() + 8, 8);
+            return splitmix64(lo ^ seed) ^ splitmix64(hi ^ (seed * 0x9e3779b97f4a7c15ULL + 1u));
+        }
+    public:
+        IdentityTable() = default;
+        explicit IdentityTable(std::span<TcpIdentityUser const> users) {
+            if (users.empty()) return;
+            seed_ = 0x517cc1b727220a95ULL;
+            (void)crypto::random_bytes(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(&seed_), sizeof(seed_)));
+            std::size_t cap = 4;
+            while (cap < users.size() * 2) cap <<= 1;
+            buckets_.assign(cap, kEmpty);
+            std::size_t const mask = cap - 1;
+            for (std::size_t i = 0; i < users.size(); ++i) {
+                auto slot = static_cast<std::size_t>(hash_id(users[i].hash, seed_)) & mask;
+                while (buckets_[slot] != kEmpty) slot = (slot + 1) & mask;
+                buckets_[slot] = static_cast<std::uint32_t>(i);
+            }
+        }
+        [[nodiscard]] auto find(std::span<TcpIdentityUser const> users, IdentityBlock const& hash) const noexcept
+            -> std::optional<std::size_t> {
+            if (buckets_.empty() || users.empty()) return std::nullopt;
+            std::size_t const mask = buckets_.size() - 1;
+            auto slot = static_cast<std::size_t>(hash_id(hash, seed_)) & mask;
+            while (buckets_[slot] != kEmpty) {
+                auto const idx = buckets_[slot];
+                if (idx < users.size() && crypto::constant_time_equal(hash, users[idx].hash)) return idx;
+                slot = (slot + 1) & mask;
+            }
+            return std::nullopt;
+        }
+        [[nodiscard]] auto empty() const noexcept -> bool { return buckets_.empty(); }
+    };
     struct AcceptedRequest {
         ChunkCipher cipher;
         std::vector<std::uint8_t> salt;
@@ -36,7 +84,7 @@ export namespace shadowsocks::detail {
     template<class Socket>
     auto receive_request(Socket& socket, std::span<std::uint8_t const> psk, ReplayTable* replay,
                          std::chrono::steady_clock::time_point deadline,std::span<TcpIdentityUser const> users,
-                         CipherMethod method=CipherMethod::aes)
+                         CipherMethod method=CipherMethod::aes, IdentityTable const* user_index=nullptr)
         -> capy::task<std::expected<AcceptedRequest,ServerReadError>> {
         struct Guard { Socket& socket; bool done=false; ~Guard() { if (!done) socket.cancel(); } } guard{socket};
         if (psk.size()!=16 && psk.size()!=32) co_return std::unexpected(ServerReadError::invalid_input);
@@ -54,8 +102,12 @@ export namespace shadowsocks::detail {
             if (n < psk.size()+16) co_return std::unexpected(ServerReadError::invalid_request);
             auto hash=tcp_identity(psk,input_bytes.first(psk.size()),input_bytes.subspan(psk.size()).first<16>(),false);
             if (!hash) co_return std::unexpected(ServerReadError::invalid_request);
-            for (std::size_t index=0;index<users.size();++index)
-                if (crypto::constant_time_equal(*hash,users[index].hash)) user=index;
+            if (user_index && !user_index->empty()) {
+                user = user_index->find(users, *hash);
+            } else {
+                for (std::size_t index=0;index<users.size();++index)
+                    if (crypto::constant_time_equal(*hash,users[index].hash)) user=index;
+            }
             if (!user) co_return std::unexpected(ServerReadError::invalid_request);
             psk=users[*user].key;
             replay=users[*user].replay;

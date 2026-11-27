@@ -137,13 +137,15 @@ export namespace cli::nxmm_detail {
     // transparently fall back to in-memory RuleSet parsing.
     [[nodiscard]] inline auto try_mmap_srs_sidecar(std::filesystem::path const& cache_dir,
         std::string_view srs_bytes, bool ip_cidr_match_source,
-        std::uint64_t max_bytes = 64ull * 1024 * 1024,
+        std::uint64_t max_bytes = rules::max_input_bytes,
         std::span<std::filesystem::path const> pinned = {}) -> std::shared_ptr<rules::MmapMatcher const> {
         if (cache_dir.empty() || srs_bytes.empty()) return {};
+        auto map_budget = static_cast<std::size_t>(std::min<std::uint64_t>(
+            std::max<std::uint64_t>(rules::max_input_bytes, max_bytes), std::numeric_limits<std::uint32_t>::max()));
         auto path = sidecar_path(cache_dir, srs_bytes, ip_cidr_match_source);
         std::vector<std::filesystem::path> keep(pinned.begin(), pinned.end());
         keep.push_back(path);
-        if (auto existing = rules::MmapMatcher::open_file(path.string()); existing && verify_mmap_usable(*existing)) {
+        if (auto existing = rules::MmapMatcher::open_file(path.string(), map_budget); existing && verify_mmap_usable(*existing)) {
             std::error_code ec;
             std::filesystem::last_write_time(path, std::filesystem::file_time_type::clock::now(), ec);
             prune_nxmm_sidecars(cache_dir, max_bytes, keep);
@@ -151,19 +153,19 @@ export namespace cli::nxmm_detail {
         }
         auto parsed = rules::parse_rule_input(srs_bytes, rules::InputFormat::srs, ip_cidr_match_source);
         if (!parsed || parsed->rules.empty()) return {};
-        auto nxmm = rules::compile_nxmm(*parsed, ip_cidr_match_source);
+        auto nxmm = rules::compile_nxmm(*parsed, ip_cidr_match_source, map_budget);
         if (!nxmm) return {};
-        auto check = rules::MmapMatcher::open_bytes(*nxmm);
+        auto check = rules::MmapMatcher::open_bytes(*nxmm, map_budget);
         if (!check || !verify_mmap_usable(*check)) return {};
         if (!write_sidecar_atomic(path, *nxmm)) return {};
         prune_nxmm_sidecars(cache_dir, max_bytes, keep);
-        auto mapped = rules::MmapMatcher::open_file(path.string());
+        auto mapped = rules::MmapMatcher::open_file(path.string(), map_budget);
         if (!mapped || !verify_mmap_usable(*mapped)) return {};
         return std::make_shared<rules::MmapMatcher const>(std::move(*mapped));
     }
 
     inline auto prewarm_srs_sidecar(std::filesystem::path const& cache_dir, std::string_view srs_bytes,
-        std::uint64_t max_bytes = 64ull * 1024 * 1024) noexcept -> void {
+        std::uint64_t max_bytes = rules::max_input_bytes) noexcept -> void {
         try { (void)try_mmap_srs_sidecar(cache_dir, srs_bytes, false, max_bytes); } catch (...) {}
     }
 

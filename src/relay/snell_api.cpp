@@ -8,7 +8,7 @@ namespace relay {
         std::optional<std::size_t> bootstrap,std::uint32_t timeout,TcpSocketOptions options,bool fast_open,bool http_obfs,std::string_view obfs_host,std::string_view obfs_uri,bool reuse)->std::expected<std::size_t,std::string> {
         if(running||(listener && listener->is_open())||!sessions.empty()||!workers.empty())return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_SNELL
-        if(outbounds.size()>=256)return std::unexpected("too many tunnel outbounds");
+        if(outbounds.size()>=max_tunnel_outbounds)return std::unexpected("too many tunnel outbounds");
         if(bootstrap&&(!dns_routing||*bootstrap>=dns_routing->resolver_count()))return std::unexpected("invalid bootstrap resolver");
         auto factory=make_snell_factory(host,port,psk,user,bootstrap,timeout,options,fast_open,http_obfs,obfs_host,obfs_uri,reuse);if(!factory)return std::unexpected(factory.error());
         auto index=outbounds.size()+2;outbounds.push_back(std::move(*factory));

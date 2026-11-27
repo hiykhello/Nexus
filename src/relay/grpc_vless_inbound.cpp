@@ -184,8 +184,10 @@ namespace relay {
         std::span<std::string const> names,GrpcTransport transport,InboundTlsRuntime const& tls_rt) -> std::expected<InboundFactory,std::string> {
         namespace v=grpc_vless_inbound;
         if (!names.empty() && names.size()!=users.size()) return std::unexpected("VLESS user names do not match UUIDs");
-        for (std::size_t i=0;i<names.size();++i) if (names[i].empty() || names[i].size()>255 || names[i].contains('\0') ||
-            std::find(names.begin(),names.begin()+i,names[i])!=names.begin()+i) return std::unexpected("invalid or duplicate VLESS user name");
+        std::unordered_set<std::string_view> seen_names;
+        seen_names.reserve(names.size());
+        for (auto const& n : names) if (n.empty() || n.size()>255 || n.contains('\0') || !seen_names.insert(n).second)
+            return std::unexpected("invalid or duplicate VLESS user name");
         if (transport.response_policy!=GrpcTransport::ResponsePolicy::standard || transport.authority.empty()) return std::unexpected("invalid gRPC inbound policy/authority");
         auto profile=tls_rt.atomic_credential
             ? vless::ServerProfile::load_dynamic(std::static_pointer_cast<tls::AtomicServerCredential>(tls_rt.atomic_credential),users)

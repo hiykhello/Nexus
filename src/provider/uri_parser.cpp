@@ -247,23 +247,35 @@ namespace provider {
 
     auto apply_filter(std::vector<ParsedProxy>& proxies, ProviderFilter const& filter)
         -> std::expected<void, std::string> {
-        std::optional<rules::BoundedRegex> inc, exc;
-        if (!filter.include_regex.empty()) {
-            auto r = rules::BoundedRegex::compile(filter.include_regex);
-            if (!r) return std::unexpected("invalid provider include filter regex");
-            inc = std::move(*r);
-        }
-        if (!filter.exclude_regex.empty()) {
-            auto r = rules::BoundedRegex::compile(filter.exclude_regex);
-            if (!r) return std::unexpected("invalid provider exclude filter regex");
-            exc = std::move(*r);
-        }
+        std::vector<rules::BoundedRegex> inc_list, exc_list;
+        auto add_patterns = [](std::string_view single, std::span<std::string const> many,
+                               std::vector<rules::BoundedRegex>& dst, std::string_view label)
+            -> std::expected<void, std::string> {
+            auto push = [&](std::string_view pat) -> std::expected<void, std::string> {
+                if (pat.empty()) return {};
+                auto compiled = compile_filter_regex(pat);
+                if (!compiled) return std::unexpected("invalid provider " + std::string(label) + " filter regex");
+                for (auto& re : *compiled) dst.push_back(std::move(re));
+                return {};
+            };
+            if (!many.empty()) {
+                for (auto const& pat : many) if (auto ok = push(pat); !ok) return ok;
+            } else if (!single.empty()) {
+                if (auto ok = push(single); !ok) return ok;
+            }
+            return {};
+        };
+        if (auto ok = add_patterns(filter.include_regex, filter.include_regexes, inc_list, "include"); !ok) return ok;
+        if (auto ok = add_patterns(filter.exclude_regex, filter.exclude_regexes, exc_list, "exclude"); !ok) return ok;
         std::vector<ParsedProxy> kept;
-        std::set<std::string> used_tags;
+        std::unordered_set<std::string> used_tags;
         kept.reserve(proxies.size());
+        used_tags.reserve(proxies.size());
         for (auto& p : proxies) {
-            if (inc && !inc->search(p.tag)) continue;
-            if (exc && exc->search(p.tag)) continue;
+            if (!inc_list.empty() &&
+                !std::ranges::any_of(inc_list, [&](auto const& re) { return re.search(p.tag); })) continue;
+            if (!exc_list.empty() &&
+                std::ranges::any_of(exc_list, [&](auto const& re) { return re.search(p.tag); })) continue;
             std::string raw_tag = filter.tag_prefix + p.tag;
             std::string base = sanitize_tag(raw_tag, "proxy-node");
             std::string unique = base;

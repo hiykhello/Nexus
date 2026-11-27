@@ -123,21 +123,15 @@ namespace rules {
             std::ranges::copy(bytes, prepared.source_address.begin());
         }
         if (input.default_interface_addresses) {
-            if (input.default_interface_addresses->size() > 64)
-                return std::unexpected(Error{ErrorCode::invalid_query, "too many default interface addresses"});
             for (auto const& addr : *input.default_interface_addresses)
                 if (addr.size != 4 && addr.size != 16)
                     return std::unexpected(Error{ErrorCode::invalid_query, "invalid default interface address"});
         }
         if (input.network_interface_addresses) {
-            if (input.network_interface_addresses->size() > 64)
-                return std::unexpected(Error{ErrorCode::invalid_query, "too many network interface addresses"});
             for (auto const& item : *input.network_interface_addresses)
                 if (item.type > NetworkType::other || (item.address.size != 4 && item.address.size != 16))
                     return std::unexpected(Error{ErrorCode::invalid_query, "invalid network interface address"});
         }
-        if (input.process_paths && input.process_paths->size() > 64)
-            return std::unexpected(Error{ErrorCode::invalid_query, "too many process paths"});
         if (input.source_port && !*input.source_port)
             return std::unexpected(Error{ErrorCode::invalid_query, "invalid source port"});
         if (input.port && !*input.port)

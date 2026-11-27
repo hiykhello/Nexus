@@ -48,7 +48,7 @@ namespace config {
         auto parse_sni_target(Node const& node, std::string_view sni_raw, std::size_t target_arg_idx,
                               std::vector<std::pair<std::string, FallbackTarget>>& out)
             -> std::expected<void, std::string> {
-            if (node.tag || !node.children.empty() || out.size() >= 64)
+            if (node.tag || !node.children.empty() || out.size() >= 4096)
                 return error("invalid or excessive ShadowTLS handshake-for-server-name entry");
             auto sni = lower_ascii(sni_raw);
             if (!dns_hostname(sni) || dns_ipv4(sni))
@@ -160,11 +160,13 @@ namespace config {
             } else if (child.name == "authentication") {
                 if (auth || child.tag || !child.arguments.empty() || !child.properties.empty())
                     return error("invalid ShadowTLS authentication");
+                std::unordered_set<std::string_view> seen_users;
+                seen_users.reserve(child.children.size());
                 for (auto const& u : child.children) {
                     auto uname = argument(u), pfile = text_property(u, "password-file");
                     if (u.name != "user" || !uname || !valid_name(*uname) || !pfile || !absolute_path(*pfile) ||
-                        u.properties.size() != 1 || !u.children.empty() || cfg.users.size() >= 64 ||
-                        std::ranges::any_of(cfg.users, [&](auto const& x) { return x.username == *uname; }))
+                        u.properties.size() != 1 || !u.children.empty() || cfg.users.size() >= max_tunnel_outbounds ||
+                        !seen_users.insert(*uname).second)
                         return error("invalid or duplicate ShadowTLS user");
                     cfg.users.push_back({*uname, *pfile});
                 }
@@ -213,11 +215,13 @@ namespace config {
             } else if (child.name == "authentication") {
                 if (auth || child.tag || !child.arguments.empty() || !child.properties.empty())
                     return error("invalid TUIC authentication");
+                std::unordered_set<std::string_view> seen_users;
+                seen_users.reserve(child.children.size());
                 for (auto const& u : child.children) {
                     auto uname = argument(u), ufile = text_property(u, "uuid-file"), pfile = text_property(u, "password-file");
                     if (u.name != "user" || !uname || !valid_name(*uname) || !ufile || !absolute_path(*ufile) ||
                         !pfile || !absolute_path(*pfile) || u.properties.size() != 2 || !u.children.empty() ||
-                        cfg.users.size() >= 64 || std::ranges::any_of(cfg.users, [&](auto const& x) { return x.name == *uname; }))
+                        cfg.users.size() >= max_tunnel_outbounds || !seen_users.insert(*uname).second)
                         return error("invalid or duplicate TUIC user");
                     cfg.users.push_back({*uname, *ufile, *pfile});
                 }

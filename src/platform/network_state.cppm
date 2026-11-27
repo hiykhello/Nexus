@@ -100,6 +100,22 @@ export namespace platform::network {
             -> std::vector<std::pair<std::array<std::uint8_t, 16>, std::uint8_t>>;
     };
 
+    inline constexpr std::size_t default_neighbor_limit = 65536;
+    inline constexpr std::size_t max_neighbor_limit = 1u << 20;
+
+    inline auto append_neighbor(Snapshot& snapshot, Neighbor neighbor, bool& overflow,
+                                std::size_t limit = default_neighbor_limit) -> bool {
+        if (overflow) return false;
+        auto effective = std::clamp<std::size_t>(limit, 1, max_neighbor_limit);
+        if (snapshot.neighbors.size() >= effective) {
+            overflow = true;
+            snapshot.neighbors.clear();
+            return false;
+        }
+        snapshot.neighbors.push_back(neighbor);
+        return true;
+    }
+
     // Control-thread owner of one network state observer. Consumers retain an
     // immutable snapshot. A detected change or overrun invalidates the live
     // view until a complete, consistent readback succeeds.
@@ -108,6 +124,7 @@ export namespace platform::network {
         std::unique_ptr<Impl> impl_;
         utility::atomic_shared_ptr<Snapshot const> live_;
         std::uint64_t generation_ = 0;
+        std::size_t neighbor_limit_ = default_neighbor_limit;
         bool include_neighbors_ = false;
 
         auto invalidate() noexcept -> void { live_.store({}, std::memory_order_release); }
@@ -119,6 +136,10 @@ export namespace platform::network {
 
         [[nodiscard]] auto started() const noexcept -> bool;
         auto enable_neighbors() noexcept -> void;
+        auto set_neighbor_limit(std::size_t limit) noexcept -> void {
+            neighbor_limit_ = std::clamp<std::size_t>(limit, 1, max_neighbor_limit);
+        }
+        [[nodiscard]] auto neighbor_limit() const noexcept -> std::size_t { return neighbor_limit_; }
         [[nodiscard]] auto start(Clock::time_point deadline) -> std::expected<void, MonitorFailure>;
         [[nodiscard]] auto poll(Clock::time_point deadline) -> std::expected<bool, MonitorFailure>;
         [[nodiscard]] auto refresh(Clock::time_point deadline) -> std::expected<void, MonitorFailure>;

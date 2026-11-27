@@ -171,18 +171,85 @@ namespace vless {
         return {HeaderStatus::accepted,2};
     }
     auto encode_response() noexcept -> std::array<std::uint8_t,2> { return {0,0}; }
-    ServerHandshake::ServerHandshake(std::vector<UserId> users, bool vision) : users_(std::move(users)), vision_(vision) {}
+    namespace {
+        auto splitmix64(std::uint64_t x) noexcept -> std::uint64_t {
+            x += 0x9e3779b97f4a7c15ULL;
+            x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+            x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+            return x ^ (x >> 31);
+        }
+        auto hash_user_id(UserId const& id, std::uint64_t seed) noexcept -> std::uint64_t {
+            std::uint64_t lo = 0, hi = 0;
+            std::memcpy(&lo, id.data(), 8);
+            std::memcpy(&hi, id.data() + 8, 8);
+            return splitmix64(lo ^ seed) ^ splitmix64(hi ^ (seed * 0x9e3779b97f4a7c15ULL + 1u));
+        }
+        auto ct_equal_uuid(UserId const& a, UserId const& b) noexcept -> bool {
+            unsigned diff = 0;
+            for (std::size_t i = 0; i < 16; ++i) diff |= static_cast<unsigned>(a[i] ^ b[i]);
+            return diff == 0;
+        }
+        auto make_table_seed() noexcept -> std::uint64_t {
+            std::uint64_t seed = static_cast<std::uint64_t>(
+                std::chrono::steady_clock::now().time_since_epoch().count());
+            try {
+                std::random_device rd;
+                seed ^= (static_cast<std::uint64_t>(rd()) << 32) | static_cast<std::uint64_t>(rd());
+            } catch (...) {}
+            return splitmix64(seed);
+        }
+    }
+    auto UserTable::create(std::span<UserId const> users)
+        -> std::expected<std::shared_ptr<UserTable const>,std::string> {
+        if (users.empty() || users.size() > max_users)
+            return std::unexpected("VLESS requires 1..65535 users");
+        std::size_t cap = 4;
+        while (cap < users.size() * 2) cap <<= 1;
+        auto const seed = make_table_seed();
+        std::vector<std::uint32_t> buckets(cap, kEmpty);
+        std::size_t const mask = cap - 1;
+        for (std::size_t i = 0; i < users.size(); ++i) {
+            auto slot = static_cast<std::size_t>(hash_user_id(users[i], seed)) & mask;
+            while (buckets[slot] != kEmpty) {
+                if (ct_equal_uuid(users[buckets[slot]], users[i]))
+                    return std::unexpected("duplicate VLESS user");
+                slot = (slot + 1) & mask;
+            }
+            buckets[slot] = static_cast<std::uint32_t>(i);
+        }
+        return std::shared_ptr<UserTable const>(
+            new UserTable(std::vector<UserId>(users.begin(), users.end()), std::move(buckets), seed));
+    }
+    auto UserTable::find(UserId const& identity) const noexcept -> std::optional<std::size_t> {
+        if (buckets_.empty()) return std::nullopt;
+        std::size_t const mask = buckets_.size() - 1;
+        auto slot = static_cast<std::size_t>(hash_user_id(identity, seed_)) & mask;
+        while (buckets_[slot] != kEmpty) {
+            auto const idx = buckets_[slot];
+            if (ct_equal_uuid(users_[idx], identity)) return idx;
+            slot = (slot + 1) & mask;
+        }
+        return std::nullopt;
+    }
+    ServerHandshake::ServerHandshake(std::shared_ptr<UserTable const> users, bool vision) noexcept
+        : users_(std::move(users)), vision_(vision) {}
     auto ServerHandshake::create(std::span<UserId const> users) -> std::expected<ServerHandshake,std::string> {
-        if (users.empty() || users.size()>64) return std::unexpected("VLESS requires 1..64 users");
-        for (std::size_t i=0;i<users.size();++i)
-            for (std::size_t j=0;j<i;++j)
-                if (users[i]==users[j]) return std::unexpected("duplicate VLESS user");
-        return ServerHandshake(std::vector<UserId>(users.begin(),users.end()),false);
+        auto table = UserTable::create(users);
+        if (!table) return std::unexpected(std::move(table.error()));
+        return ServerHandshake(std::move(*table), false);
+    }
+    auto ServerHandshake::create_shared(std::shared_ptr<UserTable const> users) -> std::expected<ServerHandshake,std::string> {
+        if (!users || users->size() == 0) return std::unexpected("VLESS requires 1..65535 users");
+        return ServerHandshake(std::move(users), false);
     }
     auto ServerHandshake::create_vision(std::span<UserId const> users) -> std::expected<ServerHandshake,std::string> {
         auto result=create(users);
         if (result) result->vision_=true;
         return result;
+    }
+    auto ServerHandshake::create_vision_shared(std::shared_ptr<UserTable const> users) -> std::expected<ServerHandshake,std::string> {
+        if (!users || users->size() == 0) return std::unexpected("VLESS requires 1..65535 users");
+        return ServerHandshake(std::move(users), true);
     }
     auto ServerHandshake::allow_mux() noexcept -> bool {
         if (status_!=ServerStatus::reading || length_) return false;
@@ -204,13 +271,7 @@ namespace vless {
             else mux.status=HeaderStatus::unsupported;
             if (parsed.status==HeaderStatus::accepted || mux.status==HeaderStatus::accepted) {
                 auto const& identity=parsed.status==HeaderStatus::accepted ? parsed.request->user : *mux.user;
-                unsigned any=0;
-                for (auto const& user : users_) {
-                    unsigned different=0;
-                    for (std::size_t i=0;i<user.size();++i) different |= user[i]^identity[i];
-                    any |= static_cast<unsigned>(different==0);
-                }
-                if (!any) status_=ServerStatus::rejected;
+                if (!users_ || !users_->find(identity)) status_=ServerStatus::rejected;
                 else {
                     if (parsed.status==HeaderStatus::accepted) request_=std::move(parsed.request);
                     else mux_user_=identity;

@@ -7,7 +7,7 @@ import state.file;
 namespace state {
     namespace {
         const SnapshotSpec index_file{"index.state", ".index.next",
-            {.magic={'N','X','R','S','0','1'}, .tier=Tier::cache, .max_payload=768 * 1024}};
+            {.magic={'N','X','R','S','0','1'}, .tier=Tier::cache, .max_payload=16 * 1024 * 1024}};
 
         auto safe_text(std::string_view value) noexcept -> bool {
             return std::ranges::none_of(value, [](unsigned char ch) { return ch < 0x20 || ch == 0x7f; });
@@ -108,15 +108,33 @@ namespace state {
         if (size > max_rule_entries) return std::unexpected(StateError{Stage::format});
         std::vector<RulesetRow> rows;
         rows.reserve(size);
+        struct RowKeyHash {
+            std::vector<RulesetRow> const* rows;
+            auto operator()(std::size_t i) const noexcept -> std::size_t {
+                auto const& k = (*rows)[i].key;
+                std::size_t h = std::hash<std::string_view>{}(k.canonical_url);
+                h ^= (static_cast<std::size_t>(std::to_underlying(k.format)) << 32) ^ k.parser_version;
+                std::uint64_t s0 = 0, s1 = 0;
+                std::memcpy(&s0, k.scope.data(), 8);
+                std::memcpy(&s1, k.scope.data() + 8, 8);
+                return h ^ (static_cast<std::size_t>(s0) * 0x9e3779b97f4a7c15ull) ^ static_cast<std::size_t>(s1);
+            }
+        };
+        struct RowKeyEq {
+            std::vector<RulesetRow> const* rows;
+            auto operator()(std::size_t a, std::size_t b) const noexcept -> bool { return (*rows)[a].key == (*rows)[b].key; }
+        };
+        std::unordered_set<std::size_t, RowKeyHash, RowKeyEq> seen(0, RowKeyHash{&rows}, RowKeyEq{&rows});
+        seen.reserve(size);
         for (std::size_t n = 0; n < size; ++n) {
             RulesetKey key{source.text(), static_cast<RuleFormat>(source.number(1)),
                 static_cast<std::uint32_t>(source.number(4)), source.hash()};
             RulesetMetadata meta{source.text(), source.text(), source.text(), source.hash(), source.hash(),
                 source.number(8), source.number(8), static_cast<std::uint32_t>(source.number(4))};
-            if (source.bad || !valid_rule_key(key) || !valid_rule_metadata(meta) ||
-                std::ranges::find(rows, key, &RulesetRow::key) != rows.end())
+            if (source.bad || !valid_rule_key(key) || !valid_rule_metadata(meta))
                 return std::unexpected(StateError{Stage::format});
             rows.push_back({std::move(key), std::move(meta)});
+            if (!seen.insert(n).second) return std::unexpected(StateError{Stage::format});
         }
         if (source.bad || !source.rest.empty()) return std::unexpected(StateError{Stage::format});
         return rows;

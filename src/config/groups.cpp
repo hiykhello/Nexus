@@ -37,12 +37,18 @@ namespace config {
                 if (auto ok = desugar_detail::desugar_routing(node); !ok) return ok;
             } else if (node.name == "dns") {
                 bool rules_seen = false;
+                bool rulesets_seen = false;
                 std::vector<Node> children;
                 for (auto& child : node.children) {
                     if (child.name == "servers") {
                         if (auto result = typed(child, "server", {"local", "hosts", "udp", "tcp", "tls", "https", "quic", "https3", "dhcp", "mdns"}); !result) return result;
-                    }
-                    if (child.name == "rules") {
+                        children.push_back(std::move(child));
+                    } else if (child.name == "rulesets" || child.name == "rule-sets") {
+                        if (auto ok = desugar_detail::desugar_rulesets_block(child, rulesets_seen, children); !ok) return ok;
+                    } else if (child.name == "rule-set") {
+                        if (auto ok = desugar_detail::desugar_rule_set_fields(child); !ok) return ok;
+                        children.push_back(std::move(child));
+                    } else if (child.name == "rules") {
                         if (rules_seen || child.tag || !child.arguments.empty() || !child.properties.empty())
                             return error("invalid or duplicate rules block");
                         rules_seen = true;
@@ -108,19 +114,20 @@ namespace config {
         auto can_probe = automatic || result.mode == OutboundGroupMode::load_balance;
         std::optional<std::uint64_t> interval, timeout, tolerance, idle_timeout, concurrency;
         bool mode_seen = false, status_seen = false, interrupt_seen = false;
+        std::unordered_set<std::string_view> seen_members, seen_providers;
         for (auto const& child : node.children) {
             if (child.name == "member" || (result.mode == OutboundGroupMode::select && child.name == "selected")) {
                 auto value = scalar(child);
                 if (!value || !valid_name(*value)) return error("invalid outbound group member");
                 if (child.name == "member" && result.members.size() < max_tunnel_outbounds &&
-                    std::ranges::find(result.members, *value) == result.members.end()) result.members.push_back(*value);
+                    seen_members.insert(*value).second) result.members.push_back(*value);
                 else if (child.name == "selected" && result.selected.empty()) result.selected = *value;
                 else return error("invalid or duplicate selector field");
             } else if (child.name == "use") {
                 auto value = scalar(child);
                 if (!value || !valid_name(*value)) return error("invalid outbound group provider");
-                if (result.use_providers.size() < 64 &&
-                    std::ranges::find(result.use_providers, *value) == result.use_providers.end())
+                if (result.use_providers.size() < max_tunnel_outbounds &&
+                    seen_providers.insert(*value).second)
                     result.use_providers.push_back(*value);
                 else return error("duplicate or excessive outbound group provider");
             } else if (child.name == "interrupt-exist-connections" && !interrupt_seen) {
@@ -142,7 +149,7 @@ namespace config {
                 mode_seen = true;
             } else if (can_probe && child.name == "probe-expected-status" && !status_seen) {
                 if (child.tag || !child.properties.empty() || !child.children.empty() ||
-                    child.arguments.empty() || child.arguments.size() > 16)
+                    child.arguments.empty() || child.arguments.size() > 512)
                     return error("invalid outbound probe-expected-status");
                 for (auto const& arg : child.arguments) {
                     auto parsed = parse_probe_status_item(arg);
@@ -174,7 +181,7 @@ namespace config {
                     return error("invalid outbound probe idle-timeout-ms");
             } else if (can_probe && child.name == "probe-concurrency" && !concurrency) {
                 concurrency = integer(child);
-                if (!concurrency || *concurrency < 1 || *concurrency > 16)
+                if (!concurrency || *concurrency < 1 || *concurrency > 1024)
                     return error("invalid outbound probe-concurrency");
             } else if (result.mode == OutboundGroupMode::url_test && child.name == "tolerance-ms" && !tolerance) {
                 tolerance = integer(child);
@@ -184,8 +191,7 @@ namespace config {
         if (result.members.empty() && result.use_providers.empty())
             return error("selector requires at least one member or provider");
         if (result.selected.empty() && !result.members.empty()) result.selected = result.members.front();
-        if (!result.selected.empty() && !result.members.empty() &&
-            std::ranges::find(result.members, result.selected) == result.members.end())
+        if (!result.selected.empty() && !result.members.empty() && !seen_members.contains(result.selected))
             return error("selector selected outbound must be a member");
         if (automatic && result.probe.url.empty()) return error("outbound group requires probe-url");
         if (result.probe.url.empty() && (mode_seen || status_seen || !result.probe.ca_file.empty() || !result.probe.server_name.empty() || interval || timeout || idle_timeout || concurrency))
@@ -199,7 +205,7 @@ namespace config {
         if (timeout) result.probe.timeout_ms = static_cast<std::uint32_t>(*timeout);
         if (tolerance) result.probe.tolerance_ms = static_cast<std::uint32_t>(*tolerance);
         if (idle_timeout) result.probe.idle_timeout_ms = static_cast<std::uint32_t>(*idle_timeout);
-        if (concurrency) result.probe.probe_concurrency = static_cast<std::uint8_t>(*concurrency);
+        if (concurrency) result.probe.probe_concurrency = static_cast<std::uint16_t>(*concurrency);
         return result;
     }
 }

@@ -47,7 +47,7 @@ export namespace cli::run_detail {
                 }
                 if (std::ranges::find(keys, key) == keys.end()) {
                     total += data->size();
-                    if (total > 8 * 1024 * 1024) return std::unexpected("DNS rule sets exceed 8 MiB total");
+                    if (total > ::rules::max_input_bytes) return std::unexpected("DNS rule sets exceed 256 MiB total");
                     keys.push_back(key);
                 }
                 if (!routing.unified_cache_root.empty() || !routing.message_cache_directory.empty() ||
@@ -94,7 +94,9 @@ export namespace cli::run_detail {
     class RemoteRulesetManager {
         struct Entry {
             config::BlockRules spec;
-            std::string body, etag;
+            std::string body, etag, client_sig;
+            std::uint64_t fetched_at = 0;
+            std::chrono::steady_clock::time_point fetched_steady{};
             std::chrono::steady_clock::time_point next_refresh{};
         };
         mutable std::mutex mutex_;
@@ -112,6 +114,11 @@ export namespace cli::run_detail {
             if (a.size() != b.size()) return false;
             auto lower = [](char c) noexcept { return (c >= 'A' && c <= 'F') ? static_cast<char>(c - 'A' + 'a') : c; };
             return std::ranges::equal(a, b, {}, lower, lower);
+        }
+
+        static auto same_identity(Entry const& e, config::BlockRules const& spec, std::string_view csig) noexcept -> bool {
+            return e.spec.url == spec.url && e.spec.format == spec.format &&
+                sha256_equal_ci(e.spec.sha256, spec.sha256) && e.client_sig == csig;
         }
 
         static auto collect(config::Config const& config) -> std::expected<std::vector<config::BlockRules>, std::string> {
@@ -160,6 +167,16 @@ export namespace cli::run_detail {
             std::lock_guard lock(mutex_);
             return !entries_.empty();
         }
+        [[nodiscard]] auto next_refresh_for(std::string_view url) const -> std::optional<std::chrono::steady_clock::time_point> {
+            std::lock_guard lock(mutex_);
+            auto it = std::ranges::find_if(entries_, [&](auto const& e) { return e.spec.url == url; });
+            return it != entries_.end() ? std::optional(it->next_refresh) : std::nullopt;
+        }
+        [[nodiscard]] auto fetched_at_for(std::string_view url) const -> std::optional<std::uint64_t> {
+            std::lock_guard lock(mutex_);
+            auto it = std::ranges::find_if(entries_, [&](auto const& e) { return e.spec.url == url; });
+            return it != entries_.end() ? std::optional(it->fetched_at) : std::nullopt;
+        }
         [[nodiscard]] auto consume_updated() noexcept -> bool { return updated_.exchange(false, std::memory_order_acq_rel); }
 
         auto fetch_initial(config::Config const& config, std::string_view source, RuleFileInput& input)
@@ -174,16 +191,28 @@ export namespace cli::run_detail {
                 return {};
             }
             auto now = std::chrono::steady_clock::now();
+            auto now_unix = cli::current_unix_seconds();
             std::vector<Entry> loaded;
             loaded.reserve(specs.size());
             for (auto const& spec : specs) {
+                auto csig = cli::http_client_signature(config, spec.http_client);
+                if (auto fresh = cli::probe_fresh_managed_ruleset_cache(config, source, spec, now_unix)) {
+                    input.seed(spec.url, fresh->body);
+                    auto elapsed_ms = static_cast<std::uint64_t>(spec.update_interval_ms) - fresh->remaining_ms;
+                    loaded.push_back({spec, std::move(fresh->body), std::move(fresh->etag), std::move(csig),
+                        fresh->fetched_at, now - std::chrono::milliseconds(elapsed_ms),
+                        now + std::chrono::milliseconds(fresh->remaining_ms)});
+                    continue;
+                }
                 auto fetched = cli::fetch_managed_ruleset(config, source, spec, {}, true);
                 if (!fetched) return std::unexpected("remote rule-set " + spec.url + ": " + fetched.error());
                 if (auto ok = cli::verify_remote_ruleset_sha256(spec, fetched->body); !ok)
                     return std::unexpected(std::move(ok.error()));
+                auto done_steady = std::chrono::steady_clock::now();
+                auto fetched_at = fetched->fetched_at ? fetched->fetched_at : cli::current_unix_seconds();
                 input.seed(spec.url, fetched->body);
-                loaded.push_back({spec, std::move(fetched->body), std::move(fetched->etag),
-                    now + std::chrono::milliseconds(spec.update_interval_ms)});
+                loaded.push_back({spec, std::move(fetched->body), std::move(fetched->etag), std::move(csig),
+                    fetched_at, done_steady, done_steady + std::chrono::milliseconds(spec.update_interval_ms)});
             }
             std::lock_guard lock(mutex_);
             entries_ = std::move(loaded);
@@ -209,22 +238,39 @@ export namespace cli::run_detail {
             StagedReload staged{};
             staged.entries_.reserve(specs.size());
             auto now = std::chrono::steady_clock::now();
+            auto now_unix = cli::current_unix_seconds();
             for (auto const& spec : specs) {
+                auto csig = cli::http_client_signature(config, spec.http_client);
                 auto it = std::ranges::find_if(existing, [&](auto const& e) {
-                    return e.spec.url == spec.url && sha256_equal_ci(e.spec.sha256, spec.sha256) && !e.body.empty();
+                    return same_identity(e, spec, csig) && !e.body.empty();
                 });
                 if (it != existing.end() && cli::verify_remote_ruleset_sha256(spec, it->body).has_value()) {
-                    input.seed(spec.url, it->body);
-                    staged.entries_.push_back({spec, it->body, it->etag, it->next_refresh});
-                    continue;
+                    auto rem_unix = cli::compute_remaining_refresh_ms(it->fetched_at, now_unix, spec.update_interval_ms);
+                    auto steady_elapsed_ms = (it->fetched_steady != std::chrono::steady_clock::time_point{})
+                        ? std::chrono::duration_cast<std::chrono::milliseconds>(now - it->fetched_steady).count() : 0;
+                    if (rem_unix && steady_elapsed_ms >= 0 &&
+                        static_cast<std::uint64_t>(steady_elapsed_ms) < spec.update_interval_ms) {
+                        auto next_refresh = it->next_refresh;
+                        if (it->spec.update_interval_ms != spec.update_interval_ms) {
+                            auto rem_ms = std::min<std::uint64_t>(*rem_unix,
+                                static_cast<std::uint64_t>(spec.update_interval_ms) - static_cast<std::uint64_t>(steady_elapsed_ms));
+                            next_refresh = now + std::chrono::milliseconds(rem_ms);
+                        }
+                        input.seed(spec.url, it->body);
+                        staged.entries_.push_back({spec, it->body, it->etag, std::move(csig),
+                            it->fetched_at, it->fetched_steady, next_refresh});
+                        continue;
+                    }
                 }
                 auto fetched = cli::fetch_managed_ruleset(config, source, spec, {}, true);
                 if (!fetched) return std::unexpected("remote rule-set " + spec.url + ": " + fetched.error());
                 if (auto ok = cli::verify_remote_ruleset_sha256(spec, fetched->body); !ok)
                     return std::unexpected(std::move(ok.error()));
+                auto done_steady = std::chrono::steady_clock::now();
+                auto fetched_at = fetched->fetched_at ? fetched->fetched_at : cli::current_unix_seconds();
                 input.seed(spec.url, fetched->body);
-                staged.entries_.push_back({spec, std::move(fetched->body), std::move(fetched->etag),
-                    now + std::chrono::milliseconds(spec.update_interval_ms)});
+                staged.entries_.push_back({spec, std::move(fetched->body), std::move(fetched->etag), std::move(csig),
+                    fetched_at, done_steady, done_steady + std::chrono::milliseconds(spec.update_interval_ms)});
             }
             return staged;
         }
@@ -252,8 +298,8 @@ export namespace cli::run_detail {
                     for (std::size_t i = 0; i < specs.size(); ++i) {
                         auto const& a = entries_[i].spec;
                         auto const& b = specs[i];
-                        if (a.url != b.url || a.update_interval_ms != b.update_interval_ms ||
-                            a.format != b.format || a.http_client != b.http_client || !sha256_equal_ci(a.sha256, b.sha256)) {
+                        auto csig = cli::http_client_signature(config, b.http_client);
+                        if (!same_identity(entries_[i], b, csig) || a.update_interval_ms != b.update_interval_ms) {
                             changed = true;
                             break;
                         }
@@ -263,13 +309,15 @@ export namespace cli::run_detail {
                     std::vector<Entry> next;
                     next.reserve(specs.size());
                     for (auto const& spec : specs) {
+                        auto csig = cli::http_client_signature(config, spec.http_client);
                         auto it = std::ranges::find_if(entries_, [&](auto const& e) {
-                            return e.spec.url == spec.url && sha256_equal_ci(e.spec.sha256, spec.sha256);
+                            return same_identity(e, spec, csig);
                         });
                         if (it != entries_.end())
-                            next.push_back({spec, std::move(it->body), std::move(it->etag), it->next_refresh});
+                            next.push_back({spec, std::move(it->body), std::move(it->etag), std::move(csig),
+                                it->fetched_at, it->fetched_steady, it->next_refresh});
                         else
-                            next.push_back({spec, {}, {}, now});
+                            next.push_back({spec, {}, {}, std::move(csig), 0, {}, now});
                     }
                     entries_ = std::move(next);
                     ++generation_;
@@ -309,7 +357,8 @@ export namespace cli::run_detail {
                         if (token.stop_requested()) break;
                         auto res = cli::fetch_managed_ruleset(cfg, src, spec, etag, false, token, http_pool_.get());
                         if (token.stop_requested()) break;
-                        auto next_at = std::chrono::steady_clock::now() + std::chrono::milliseconds(spec.update_interval_ms);
+                        auto done_steady = std::chrono::steady_clock::now();
+                        auto next_at = done_steady + std::chrono::milliseconds(spec.update_interval_ms);
                         std::lock_guard lock(mutex_);
                         if (generation_ != gen_snap || idx >= entries_.size() || entries_[idx].spec.url != spec.url)
                             continue;
@@ -319,6 +368,8 @@ export namespace cli::run_detail {
                                 "remote rule-set refresh failed: {}", logs.private_text(res.error()));
                             continue;
                         }
+                        entries_[idx].fetched_at = res->fetched_at ? res->fetched_at : cli::current_unix_seconds();
+                        entries_[idx].fetched_steady = done_steady;
                         if (!res->etag.empty()) entries_[idx].etag = res->etag;
                         if (!res->unchanged && !res->body.empty() && res->body != entries_[idx].body) {
                             if (auto ok = cli::verify_remote_ruleset_sha256(spec, res->body); !ok) {

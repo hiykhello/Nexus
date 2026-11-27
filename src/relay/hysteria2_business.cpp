@@ -135,7 +135,7 @@ namespace relay {
         auto stop() noexcept -> void {if(std::exchange(stopping,true))return;receiver.close();outgoing.cancel();for(auto& slot:slots)if(slot)slot->stop();}
         auto drained()const noexcept -> bool {return std::ranges::all_of(slots,[](auto const& slot){return !slot || !slot->active;});}
     };
-    Hysteria2Business::Hysteria2Business(Server& s,std::span<h::Password const> p,std::span<std::string const> n,config::Hysteria2Masquerade m):server(s),passwords(p),names(n),masquerade(std::move(m)){}
+    Hysteria2Business::Hysteria2Business(Server& s,std::span<h::Password const> p,std::span<std::string const> n,config::Hysteria2Masquerade m):server(s),passwords(p),password_index(p),names(n),masquerade(std::move(m)){}
     Hysteria2Business::~Hysteria2Business()=default;
     auto Hysteria2Business::opened(quic::SessionHandle owner,io::endpoint const& peer,ConnectionState& connection)->void {
         auto& state=peers[owner.slot];state={owner,&connection};

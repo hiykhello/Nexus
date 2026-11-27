@@ -246,7 +246,7 @@ namespace provider::ws_detail {
             auto mp = lower_ascii(mux.protocol);
             std::string_view proto = (mp == "smux-v1") ? "smux-v1" : (mp == "h2mux") ? "h2mux" : "smux-v2";
             os << "    multiplex {\n      enabled #true\n      protocol " << kdl_quote(proto) << '\n';
-            if (mux.max_connections >= 1 && mux.max_connections <= 64)
+            if (mux.max_connections >= 1 && mux.max_connections <= 4096)
                 os << "      max-connections " << mux.max_connections << '\n';
             if (mux.padding) os << "      padding #true\n";
             os << "    }\n";

@@ -14,6 +14,17 @@ export import config.tun_types;
 export import config.listen_types;
 export import config.routing_defaults_types;
 export namespace config {
+    struct TransparentStringHash {
+        using is_transparent = void;
+        auto operator()(std::string_view sv) const noexcept -> std::size_t { return std::hash<std::string_view>{}(sv); }
+        auto operator()(std::string const& s) const noexcept -> std::size_t { return std::hash<std::string_view>{}(s); }
+    };
+    struct TransparentStringEq {
+        using is_transparent = void;
+        auto operator()(std::string_view a, std::string_view b) const noexcept -> bool { return a == b; }
+    };
+    template<class V>
+    using FlatNameMap = std::unordered_map<std::string, V, TransparentStringHash, TransparentStringEq>;
     using TcpSocketOptions=platform::TcpSocketOptions;
     enum class RuleFormat { kdl, beve, srs, nxmm, json, domain_list, ipcidr_list, classical, adguard };
     enum class RouteAction { direct, block, vless };
@@ -338,6 +349,8 @@ export namespace config {
         std::vector<NamedTailscaleOutbound> tailscale_outbounds;
         std::vector<NamedTcpProxyOutbound> tcp_proxy_outbounds;
         std::vector<OutboundSelector> selectors;
+        FlatNameMap<std::uint32_t> physical_index;
+        FlatNameMap<std::uint32_t> selector_index;
         [[nodiscard]] auto tunnel_count() const noexcept -> std::size_t {
             return vless_outbounds.size()+shadowsocks_outbounds.size()+trojan_outbounds.size()+
                 anytls_outbounds.size()+hysteria2_outbounds.size()+snell_outbounds.size()+
@@ -356,7 +369,7 @@ export namespace config {
     [[nodiscard]] auto distributed_outbound_index(Config const&,std::string_view) -> std::optional<std::size_t>;
     [[nodiscard]] auto outbound_distribution(Config const&) -> std::shared_ptr<rules::OutboundDistribution const>;
     [[nodiscard]] auto selected_outbound(Config const&,std::string_view) noexcept -> std::string_view;
-    inline constexpr std::size_t max_config_bytes = 1048576, max_tunnel_outbounds = 256;
+    inline constexpr std::size_t max_config_bytes = 8u * 1024 * 1024, max_tunnel_outbounds = 65535;
     enum class ReloadIdentity { full, dns_policy, process, tun_live }; struct ReloadIdentities { std::string full, dns_policy, process, tun_live; };
     [[nodiscard]] auto reload_identity(std::string_view input,ReloadIdentity scope=ReloadIdentity::full) -> std::expected<std::string,std::string>;
     [[nodiscard]] auto reload_identities(std::string_view input) -> std::expected<ReloadIdentities,std::string>;

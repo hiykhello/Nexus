@@ -105,7 +105,7 @@ namespace relay::trojan_in {
 
     inline auto probe_trojan_header(
         tls::detail::ByteStream<corosio::tcp_socket>& stream,
-        std::span<trojan::PasswordKey const> users,
+        trojan::UserTable const& users,
         Clock::time_point deadline) -> capy::task<TrojanProbeOutcome> {
         TrojanProbeOutcome out;
         trojan::RequestDecoder decoder;
@@ -137,7 +137,7 @@ namespace relay::trojan_in {
                 co_return out;
             }
             auto const* hdr = decoder.request();
-            auto user = hdr ? trojan::authenticate(users, hdr->key) : std::nullopt;
+            auto user = hdr ? users.authenticate(hdr->key) : std::nullopt;
             if (!user) {
                 out.fallback = true;
                 co_return out;

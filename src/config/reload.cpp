@@ -31,8 +31,8 @@ namespace config {
         }
         if (node.name == "tcp-splice-pipes") {
             auto value = kdl::integer(node);
-            if (config.tcp_splice_pipes || !value || *value > 256)
-                return error("tcp-splice-pipes must be an integer from 0 to 256");
+            if (config.tcp_splice_pipes || !value || *value > 65535)
+                return error("tcp-splice-pipes must be an integer from 0 to 65535");
             config.tcp_splice_pipes = static_cast<std::uint32_t>(*value);
             return {};
         }
@@ -57,6 +57,7 @@ namespace config {
             node.properties.size() != expected_props || (!socket && !http_prop))
             return error("control requires socket and/or http-listen");
         std::vector<std::string> cors_origins;
+        std::unordered_set<std::string_view> seen_cors;
         auto add_cors_origin = [&](std::string_view raw) -> std::expected<void, std::string> {
             while (!raw.empty() && (raw.front() == ' ' || raw.front() == '\t')) raw.remove_prefix(1);
             while (!raw.empty() && (raw.back() == ' ' || raw.back() == '\t')) raw.remove_suffix(1);
@@ -71,9 +72,9 @@ namespace config {
                 if (rest.empty() || rest.contains('/') || rest.contains('?') || rest.contains('#'))
                     return error("control cors-allow-origin must be an exact origin without path");
             }
-            if (cors_origins.size() >= 32)
-                return error("control cors-allow-origin exceeds 32 entries");
-            if (std::ranges::find(cors_origins, raw) == cors_origins.end())
+            if (cors_origins.size() >= 4096)
+                return error("control cors-allow-origin exceeds 4096 entries");
+            if (seen_cors.insert(raw).second)
                 cors_origins.emplace_back(raw);
             return {};
         };

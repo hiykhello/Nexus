@@ -1864,3 +1864,28 @@ required_features = ["ssh", "xhttp-vless", "logging", "test-bins"]
 kind = "bin"
 main = "tests/wave36_core_audit_r7_async_unit.cpp"
 required_features = ["ntp", "dns-dhcp", "tun-inbound", "dns-fakeip", "test-bins"]
+
+[targets.wave37-limits-track3-unit]
+kind = "bin"
+main = "tests/wave37_limits_track3_unit.cpp"
+required_features = ["ss2022", "tproxy-udp", "test-bins"]
+
+[targets.wave37-limits-track4-unit]
+kind = "bin"
+main = "tests/wave37_limits_track4_unit.cpp"
+required_features = ["dns-quic", "tailscale-endpoint", "test-bins"]
+
+[targets.wave37-limits-track2-unit]
+kind = "bin"
+main = "tests/wave37_limits_track2_unit.cpp"
+required_features = ["srs", "test-bins"]
+
+[targets.wave37-limits-track1-unit]
+kind = "bin"
+main = "tests/wave37_limits_track1_unit.cpp"
+required_features = ["control-http", "vless", "trojan", "anytls", "ss2022", "hy2-cli", "naive", "tuic", "shadowtls-proxy", "tailscale-endpoint", "test-bins"]
+
+[targets.wave37-persisted-refresh-unit]
+kind = "bin"
+main = "tests/wave37_persisted_refresh_unit.cpp"
+required_features = ["http-client", "srs", "test-bins"]

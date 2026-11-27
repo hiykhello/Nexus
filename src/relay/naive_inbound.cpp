@@ -62,6 +62,7 @@ namespace relay::naive_in_detail {
             std::vector<std::string> alpn;
             std::shared_ptr<tls::EchServerKeys const> ech_keys;
             std::vector<naive::UserCredential> users;
+            naive::UserIndex user_index;
             bool padding = true;
             std::uint16_t fallback_status = 404;
             std::uint32_t handshake_timeout_ms = 10000;
@@ -98,7 +99,7 @@ namespace relay::naive_in_detail {
                 else if (naive::header_ci_equal(h.name, "proxy-authorization")) auth_hdr = h.value;
                 else if (naive::header_ci_equal(h.name, "padding-type-request")) pad_req = h.value;
             }
-            auto matched_user = naive::verify_basic_auth(auth_hdr, profile.users);
+            auto matched_user = naive::verify_basic_auth(auth_hdr, profile.users, profile.user_index);
             if (method != "CONNECT" || !matched_user) {
                 (void)co_await stream.respond_decoy(profile.fallback_status, until);
                 co_return;
@@ -253,6 +254,7 @@ namespace relay {
         auto users = naive_in_detail::load_naive_users(cfg.users);
         if (!users) return std::unexpected(users.error());
         profile->users = std::move(*users);
+        profile->user_index = naive::UserIndex(profile->users);
         profile->padding = cfg.padding;
         profile->fallback_status = cfg.fallback_status;
         profile->handshake_timeout_ms = cfg.handshake_timeout_ms;

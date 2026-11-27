@@ -168,6 +168,9 @@ export namespace dns::doq_detail {
             std::optional<InterfaceAttempt> path)
             : profile_(std::move(profile)), tickets_(std::move(tickets)), peer_(peer), path_(path), socket_(context) {}
         [[nodiscard]] auto done() const noexcept -> bool { return finished_; }
+        [[nodiscard]] auto idle() const noexcept -> bool {
+            return !stopping_ && !finished_ && app_ && app_->idle_deadline().has_value();
+        }
         [[nodiscard]] auto accepts(Profile const& profile, Endpoint peer) const noexcept -> bool {
             return !stopping_ && !finished_ && &profile == profile_.get() && peer == peer_ && app_->available();
         }
@@ -265,42 +268,114 @@ export namespace dns::doq_detail {
         }
     };
 
-    template<class Policy>
+    template<class Policy, class Conn = Connection<Policy>>
     class Pool final : public capy::execution_context::service {
         using Profile = typename Policy::Profile;
         using TicketCache = typename Policy::TicketCache;
-        using Conn = Connection<Policy>;
+        struct PoolKey {
+            Profile const* profile = nullptr;
+            std::array<std::uint8_t, 16> addr{};
+            std::uint16_t port = 0;
+            bool is_v6 = false, has_path = false;
+            std::uint32_t iface = 0;
+            auto operator==(PoolKey const&) const -> bool = default;
+        };
+        struct PoolKeyHash {
+            auto operator()(PoolKey const& k) const noexcept -> std::size_t {
+                std::size_t h = std::hash<void const*>{}(k.profile);
+                h ^= (std::size_t(k.port) << 16) ^ (std::size_t(k.iface) << 2) ^ (std::size_t(k.is_v6) << 1) ^ std::size_t(k.has_path);
+                for (std::size_t i = 0; i < (k.is_v6 ? 16u : 4u); ++i) h = (h * 1315423911u) ^ k.addr[i];
+                return h;
+            }
+        };
+        struct Entry { PoolKey key; std::shared_ptr<Conn> conn; };
+        using LruList = std::list<Entry>;
+        using LruIt = typename LruList::iterator;
+        static auto make_key(Profile const* profile, Endpoint const& peer, bool has_path, std::uint32_t iface) noexcept -> PoolKey {
+            PoolKey k{profile, {}, peer.port(), peer.is_v6(), has_path, has_path ? iface : 0u};
+            if (k.is_v6) k.addr = peer.address().to_v6().to_bytes();
+            else { auto b = peer.address().to_v4().to_bytes(); std::ranges::copy(b, k.addr.begin()); }
+            return k;
+        }
         [[no_unique_address]] TicketCache tickets_ = Policy::make_ticket_cache();
-        std::vector<std::shared_ptr<Conn>> connections_;
+        LruList lru_;
+        std::unordered_multimap<PoolKey, LruIt, PoolKeyHash> by_key_;
+        std::size_t max_connections_ = default_max_connections;
         bool stopped_ = false;
+        auto erase_entry(LruIt it) noexcept -> void {
+            auto [first, last] = by_key_.equal_range(it->key);
+            for (auto m = first; m != last; ++m) if (m->second == it) { by_key_.erase(m); break; }
+            lru_.erase(it);
+        }
+        auto prune_done() noexcept -> void {
+            for (auto it = lru_.begin(); it != lru_.end(); ) {
+                auto cur = it++;
+                if (cur->conn->done()) erase_entry(cur);
+            }
+        }
         auto shutdown() noexcept -> void override {
             stopped_ = true;
-            for (auto const& connection : connections_) connection->stop();
-            connections_.clear();
+            for (auto const& e : lru_) e.conn->stop();
+            by_key_.clear();
+            lru_.clear();
         }
     public:
+        static constexpr std::size_t default_max_connections = 256;
+        static constexpr std::size_t max_connections_limit = 4096;
         explicit Pool(capy::execution_context&) {}
         auto stop() noexcept -> void { shutdown(); }
         auto resume() noexcept -> void { stopped_ = false; }
-        auto find_ready(Profile const& profile, Endpoint peer, std::span<std::uint32_t const> interfaces) const
-            -> std::shared_ptr<Conn> {
-            auto existing = std::ranges::find_if(connections_, [&](auto const& connection) {
-                return connection->accepts(profile, peer) && connection->ready_on(interfaces);
-            });
-            return existing == connections_.end() ? nullptr : *existing;
+        auto set_max_connections(std::size_t limit) noexcept -> void {
+            max_connections_ = std::clamp<std::size_t>(limit, 1, max_connections_limit);
+        }
+        [[nodiscard]] auto max_connections() const noexcept -> std::size_t { return max_connections_; }
+        [[nodiscard]] auto size() const noexcept -> std::size_t { return lru_.size(); }
+        auto find_ready(Profile const& profile, Endpoint peer, std::span<std::uint32_t const> interfaces) -> std::shared_ptr<Conn> {
+            for (auto iface : interfaces) {
+                auto [first, last] = by_key_.equal_range(make_key(&profile, peer, true, iface));
+                for (auto m = first; m != last; ) {
+                    auto cur = m++;
+                    auto lit = cur->second;
+                    if (lit->conn->done()) { by_key_.erase(cur); lru_.erase(lit); continue; }
+                    if (lit->conn->accepts(profile, peer) && lit->conn->ready_on(interfaces)) {
+                        lru_.splice(lru_.begin(), lru_, lit);
+                        return lit->conn;
+                    }
+                }
+            }
+            return nullptr;
         }
         auto acquire(Io& context, std::shared_ptr<Profile const> const& profile, Endpoint peer, Clock::time_point deadline,
             bool replayable, std::optional<InterfaceAttempt> path = {}) -> std::expected<std::shared_ptr<Conn>, Error> {
             if (stopped_) return std::unexpected(Error::canceled);
-            std::erase_if(connections_, [](auto const& connection) { return connection->done(); });
-            auto existing = std::ranges::find_if(connections_, [&](auto const& connection) {
-                return connection->accepts(*profile, peer) && connection->matches(path);
-            });
-            if (existing != connections_.end()) return *existing;
-            if (connections_.size() >= 16) return std::unexpected(Error::budget_exhausted);
+            auto key = make_key(profile.get(), peer, path.has_value(), path ? path->index : 0u);
+            auto [first, last] = by_key_.equal_range(key);
+            for (auto m = first; m != last; ) {
+                auto cur = m++;
+                auto lit = cur->second;
+                if (lit->conn->done()) { by_key_.erase(cur); lru_.erase(lit); continue; }
+                if (lit->conn->accepts(*profile, peer) && lit->conn->matches(path)) {
+                    lru_.splice(lru_.begin(), lru_, lit);
+                    return lit->conn;
+                }
+            }
+            if (lru_.size() >= max_connections_) prune_done();
+            if (lru_.size() >= max_connections_) {
+                for (auto rit = lru_.rbegin(); rit != lru_.rend(); ++rit) {
+                    if (rit->conn->idle()) {
+                        auto victim = std::prev(rit.base());
+                        auto victim_conn = victim->conn;
+                        erase_entry(victim);
+                        victim_conn->stop();
+                        break;
+                    }
+                }
+            }
+            if (lru_.size() >= max_connections_) return std::unexpected(Error::budget_exhausted);
             auto connection = std::make_shared<Conn>(context, profile, peer, tickets_, path);
             if (!connection->start(context, connection, deadline, replayable)) return std::unexpected(Error::transport);
-            connections_.push_back(connection);
+            lru_.push_front(Entry{key, connection});
+            by_key_.emplace(key, lru_.begin());
             return connection;
         }
     };

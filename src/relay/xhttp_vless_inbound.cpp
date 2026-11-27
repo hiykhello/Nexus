@@ -122,9 +122,10 @@ namespace relay {
             transport.mode!=xhttp::Mode::automatic && transport.mode!=xhttp::Mode::packet_up)
             return std::unexpected("VLESS XHTTP HTTP/1.1 requires packet-up");
         if (!names.empty() && names.size()!=users.size()) return std::unexpected("VLESS user names do not match UUIDs");
-        for (std::size_t i=0;i<names.size();++i)
-            if (names[i].empty() || names[i].size()>255 || names[i].contains('\0') ||
-                std::find(names.begin(),names.begin()+i,names[i])!=names.begin()+i)
+        std::unordered_set<std::string_view> seen_names;
+        seen_names.reserve(names.size());
+        for (auto const& n : names)
+            if (n.empty() || n.size()>255 || n.contains('\0') || !seen_names.insert(n).second)
                 return std::unexpected("invalid or duplicate VLESS user name");
         auto secure=reality || !certificate.empty() || bool(tls_rt.atomic_credential);
         auto pki_tcp=secure && !reality && transport.endpoint.version!=xhttp::HttpVersion::http3;

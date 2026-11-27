@@ -154,12 +154,24 @@ namespace relay {
             return idx < selector_names.size() ? std::string_view(selector_names[idx]) : std::string_view{};
         }
     };
+    export struct TunnelRefBits {
+        std::vector<std::uint64_t> words;
+        std::size_t bit_count = 0;
+        explicit TunnelRefBits(std::size_t bits = 0) : words((bits + 63u) / 64u, 0u), bit_count(bits) {}
+        [[nodiscard]] auto size() const noexcept -> std::size_t { return bit_count; }
+        auto set(std::size_t idx) noexcept -> void {
+            if (idx < bit_count) words[idx >> 6] |= (std::uint64_t{1} << (idx & 63u));
+        }
+        [[nodiscard]] auto test(std::size_t idx) const noexcept -> bool {
+            return idx < bit_count && ((words[idx >> 6] >> (idx & 63u)) & 1u) != 0u;
+        }
+    };
     export struct RouteSnapshot {
         rules::RouteMatcher matcher;
         std::optional<OrderedTcpPolicy> ordered;
         std::shared_ptr<DnsRuleSnapshot const> dns{};
         std::uint64_t generation = 1;
-        std::optional<std::bitset<256>> tunnel_references{};
+        std::optional<TunnelRefBits> tunnel_references{};
         std::shared_ptr<dns::detail::TransportSnapshot const> dns_transports;
         std::shared_ptr<DnsRuntimeSnapshot const> dns_runtime{};
         std::shared_ptr<GroupTagMap const> group_tags{};

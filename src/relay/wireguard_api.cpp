@@ -8,7 +8,7 @@ namespace relay {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty())
             return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_WIREGUARD
-        if (outbounds.size() >= 256) return std::unexpected("too many tunnel outbounds");
+        if (outbounds.size() >= max_tunnel_outbounds) return std::unexpected("too many tunnel outbounds");
         if (cfg.bootstrap_index && (!dns_routing || *cfg.bootstrap_index >= dns_routing->resolver_count()))
             return std::unexpected("invalid bootstrap resolver");
         auto factory = make_wireguard_factory(cfg);

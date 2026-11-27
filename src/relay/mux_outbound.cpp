@@ -412,7 +412,7 @@ namespace relay {
     auto make_mux_factory(TunnelFactory inner, config::MultiplexConfig cfg)
         -> std::expected<TunnelFactory, std::string> {
         if (!cfg.enabled) return inner;
-        if (cfg.max_connections == 0 || cfg.max_connections > 64 ||
+        if (cfg.max_connections == 0 || cfg.max_connections > 4096 ||
             (cfg.max_streams > 0 && cfg.min_streams > cfg.max_streams))
             return std::unexpected("invalid multiplex pool limits");
         if (cfg.protocol == config::MultiplexProtocol::h2mux) {

@@ -9,7 +9,7 @@ namespace rules {
             if ((input.explicit_domain && input.domain_absent[0]) || (input.fakeip_domain && input.domain_absent[1]) ||
                 (input.reverse_domain && input.domain_absent[2]) || (input.sniffed_domain && input.domain_absent[3])) return false;
             if (!input.candidates) return true;
-            if (input.ip || input.candidates->size() > 256) return false;
+            if (input.ip) return false;
             return std::ranges::all_of(*input.candidates, [](auto const& value) {
                 return (value.size == 4 && std::ranges::all_of(std::span(value.bytes).subspan(4), [](auto byte) { return byte == 0; })) ||
                        value.size == 16;
@@ -88,7 +88,7 @@ namespace rules {
 
     auto Matcher::match_truth_mapped(MatchInput input, std::optional<std::span<ProgramAddress const>> candidates) const -> std::expected<Truth, Error> {
         if (roots_.size() != 1) return std::unexpected(Error{ErrorCode::invalid_query, "truth requires one root"});
-        if (candidates && (input.ip || candidates->size() > 16384 || !std::ranges::all_of(*candidates, [](auto const& value) {
+        if (candidates && (input.ip || !std::ranges::all_of(*candidates, [](auto const& value) {
             return (value.size == 4 && std::ranges::all_of(std::span(value.bytes).subspan(4), [](auto byte) { return byte == 0; })) || value.size == 16;
         }))) return std::unexpected(Error{ErrorCode::invalid_query, "invalid candidate addresses"});
         auto prepared = prepare(input);

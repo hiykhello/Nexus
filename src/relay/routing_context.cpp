@@ -44,7 +44,7 @@ namespace relay {
             std::size_t outbound_count,std::optional<std::string_view> inbound,
             std::vector<std::size_t>* referenced=nullptr)
             -> std::expected<rules::RouteMatcher,std::string> {
-            if (fallback>=outbound_count || input.size()>256) return std::unexpected("invalid route action or count");
+            if (fallback>=outbound_count || input.size()>rules::max_rules) return std::unexpected("invalid route action or count");
             std::vector<rules::RouteRule> route_rules;
             std::size_t predicate_count=0;
             for (std::size_t index=0;index<input.size();++index) {
@@ -59,9 +59,9 @@ namespace relay {
                         if (!opened) return std::unexpected(std::move(opened.error()));
                         mmap = std::make_shared<rules::MmapMatcher const>(std::move(*opened));
                     }
-                    auto n = mmap->exact_count() + mmap->suffix_count() + mmap->v4_count() + mmap->v6_count();
+                    auto n = std::uint64_t(mmap->exact_count()) + mmap->suffix_count() + mmap->v4_count() + mmap->v6_count();
                     if (n > rules::max_rules - predicate_count) return std::unexpected("too many route predicates");
-                    predicate_count += n;
+                    predicate_count += static_cast<std::size_t>(n);
                     if (mmap->has_domain() || mmap->has_ip() || mmap->tail_beve_bytes() > 0) {
                         route_rules.push_back({{}, rule.outbound, index, std::move(mmap), rule.ip_cidr_match_source});
                         if (referenced) referenced->push_back(rule.outbound);
@@ -137,14 +137,14 @@ namespace relay {
                 if (rule.action.kind==rules::ProgramActionKind::route || rule.action.kind==rules::ProgramActionKind::bypass)
                     referenced.push_back(rule.action.outbound);
         }
-        if (physical_count<=258) {
-            std::vector<bool> seen(outbound_count);
-            std::bitset<256> mask{};
+        {
+            std::vector<std::uint8_t> seen(outbound_count, 0);
+            TunnelRefBits mask(physical_count >= 2 ? physical_count - 2 : 0);
             while (!referenced.empty()) {
                 auto index=referenced.back();
                 referenced.pop_back();
                 if (index>=outbound_count || seen[index]) continue;
-                seen[index]=true;
+                seen[index]=1;
                 if (index<physical_count) {
                     if (index>=2) mask.set(index-2);
                 } else {
@@ -152,7 +152,7 @@ namespace relay {
                     referenced.insert(referenced.end(),members.begin(),members.end());
                 }
             }
-            result.tunnel_references=mask;
+            result.tunnel_references=std::move(mask);
         }
         return result;
     }

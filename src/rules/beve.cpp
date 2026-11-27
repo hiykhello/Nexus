@@ -37,7 +37,7 @@ namespace rules {
     }
 
     auto parse_beve(std::string_view input) -> std::expected<RuleSet, Error> {
-        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "BEVE input exceeds 32 MiB"});
+        if (input.size() > max_input_bytes) return std::unexpected(Error{ErrorCode::limit, "BEVE input exceeds 256 MiB"});
         if (input.size() < header_size || input.substr(0, magic.size()) != magic) return invalid("invalid rule-set header");
         if (input[8] != '\0' || input[9] != '\1' || input[10] != '\0' || input[11] != '\0')
             return invalid("unsupported container version or flags");
@@ -55,13 +55,27 @@ namespace rules {
     }
 
     auto write_beve(RuleSet const& set) -> std::expected<std::string, Error> {
+        if (set.rules.size() > max_rules)
+            return std::unexpected(Error{ErrorCode::limit, "rule nesting or count exceeds limit"});
+        std::size_t min_bytes = header_size;
+        auto estimate = [&](auto&& self, Rule const& r, unsigned depth) -> bool {
+            if (depth > max_rule_depth) return true;
+            std::size_t add = 24u + r.type.size() + r.value.size();
+            if (add > max_input_bytes - min_bytes) return false;
+            min_bytes += add;
+            for (auto const& c : r.children) if (!self(self, c, depth + 1)) return false;
+            return true;
+        };
+        for (auto const& r : set.rules)
+            if (!estimate(estimate, r, 1))
+                return std::unexpected(Error{ErrorCode::limit, "BEVE output exceeds 256 MiB"});
         auto normalized = normalize_set(set);
         if (!normalized) return std::unexpected(std::move(normalized.error()));
         std::string payload;
         WireSetV2 wire{2,"predicate",std::move(normalized->rules)};
         if (auto error=g::write_beve(wire,payload); error) return invalid("cannot encode BEVE payload");
         if (payload.empty() || payload.size() > max_input_bytes - header_size)
-            return std::unexpected(Error{ErrorCode::limit, "BEVE output exceeds 32 MiB"});
+            return std::unexpected(Error{ErrorCode::limit, "BEVE output exceeds 256 MiB"});
         auto length = static_cast<std::uint32_t>(payload.size());
         std::string output(magic);
         output.push_back('\0'); output.push_back('\1');

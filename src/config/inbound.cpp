@@ -340,31 +340,30 @@ namespace config {
                 else return error("invalid or duplicate shadowsocks inbound field");
             } else if (child.name == "authentication" && *type == "shadowsocks") {
                 if (child.tag || !child.arguments.empty() || !child.properties.empty() ||
-                    child.children.empty() || child.children.size() > 32 || !ss.users.empty())
+                    child.children.empty() || child.children.size() > max_tunnel_outbounds || !ss.users.empty())
                     return error("invalid shadowsocks authentication");
+                std::unordered_set<std::string_view> seen_names, seen_paths;
                 for (auto const& user : child.children) {
                     auto uname = argument(user), path = text_property(user, "key-file");
                     if (user.tag || user.name != "user" || !uname || !valid_name(*uname) || !path ||
                         !absolute_path(*path) || user.properties.size() != 1 || !user.children.empty() ||
-                        std::ranges::find(ss.users, *uname, &ShadowsocksUser::name) != ss.users.end() ||
-                        std::ranges::find(ss.users, *path, &ShadowsocksUser::key_file) != ss.users.end())
+                        !seen_names.insert(*uname).second || !seen_paths.insert(*path).second)
                         return error("invalid or duplicate shadowsocks user");
                     ss.users.push_back({std::move(*uname), std::move(*path)});
                 }
             } else if (child.name == "flow" && *type == "vless") {
                 auto value = scalar(child);
                 if (flow_seen || !value || *value != "xtls-rprx-vision") return error("invalid vless inbound flow");
-                vless.vision = true;
-                flow_seen = true;
+                vless.vision = true; flow_seen = true;
             } else if (child.name == "authentication" && *type == "vless") {
                 if (auth_seen || child.tag || !child.arguments.empty() || !child.properties.empty())
                     return error("invalid vless authentication");
+                std::unordered_set<std::string_view> seen_names;
                 for (auto const& user : child.children) {
-                    auto user_name = argument(user);
-                    auto path = text_property(user, "uuid-file");
+                    auto user_name = argument(user), path = text_property(user, "uuid-file");
                     if (user.name != "user" || !user_name || !valid_name(*user_name) || !path || !absolute_path(*path) ||
-                        user.properties.size() != 1 || !user.children.empty() || vless.users.size() >= 64 ||
-                        std::ranges::any_of(vless.users, [&](auto const& existing) { return existing.name == *user_name; }))
+                        user.properties.size() != 1 || !user.children.empty() || vless.users.size() >= max_tunnel_outbounds ||
+                        !seen_names.insert(*user_name).second)
                         return error("invalid or duplicate vless user");
                     vless.users.push_back({*user_name, *path});
                 }
@@ -409,10 +408,10 @@ namespace config {
                                 reality.certificate_file = *value;
                             else if (item.name == "signing-key-file" && reality.signing_key_file.empty() && absolute_path(*value))
                                 reality.signing_key_file = *value;
-                            else if (item.name == "server-name" && endpoint_name(*value) && reality.server_names.size() < 64 &&
+                            else if (item.name == "server-name" && endpoint_name(*value) && reality.server_names.size() < 4096 &&
                                      !std::ranges::contains(reality.server_names, *value))
                                 reality.server_names.push_back(*value);
-                            else if (item.name == "short-id" && value->size() <= 16 && value->size() % 2 == 0 && reality.short_ids.size() < 64) {
+                            else if (item.name == "short-id" && value->size() <= 16 && value->size() % 2 == 0 && reality.short_ids.size() < 4096) {
                                 std::array<std::uint8_t, 8> id{};
                                 auto hex = [](char c) -> int {
                                     return (c >= '0' && c <= '9') ? c - '0' : (c >= 'a' && c <= 'f') ? c - 'a' + 10 : (c >= 'A' && c <= 'F') ? c - 'A' + 10 : -1;

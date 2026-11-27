@@ -9,7 +9,7 @@ namespace relay {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty())
             return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_TOR
-        if (outbounds.size() >= 256) return std::unexpected("too many tunnel outbounds");
+        if (outbounds.size() >= max_tunnel_outbounds) return std::unexpected("too many tunnel outbounds");
         auto factory = make_tor_factory(cfg, timeout_ms);
         if (!factory) return std::unexpected(std::move(factory.error()));
         auto index = outbounds.size() + 2;

@@ -9,7 +9,7 @@ namespace relay {
         std::uint32_t timeout_ms,TcpSocketOptions options,MasqueIpOptions ip,QuicEchOptions const& ech,std::span<std::array<std::uint8_t,32> const> pins) -> std::expected<std::size_t,std::string> {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty()) return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_MASQUE_OUTBOUND
-        if (outbounds.size()>=256) return std::unexpected("too many tunnel outbounds");
+        if (outbounds.size()>=max_tunnel_outbounds) return std::unexpected("too many tunnel outbounds");
         if (bootstrap && (!dns_routing || *bootstrap>=dns_routing->resolver_count())) return std::unexpected("invalid bootstrap resolver");
         auto factory=make_masque_factory(host,port,authority,bearer_file,server_name,ca_file,exchange,fingerprint,handshake_ms,idle_ms,native_bytes,bootstrap,timeout_ms,options,std::move(ip),ech,dns_routing.has_value(),pins);
         if (!factory) return std::unexpected(factory.error());

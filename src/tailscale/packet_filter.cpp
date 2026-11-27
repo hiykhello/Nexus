@@ -28,13 +28,16 @@ namespace tailscale::packet_filter {
         auto present(Raw const& raw) noexcept -> bool {auto text=trim(raw.str);return !text.empty() && text!="null";}
         auto array(std::string_view json) noexcept -> bool {json=trim(json);return json.size()>=2 && json.front()=='[' && json.back()==']';}
         auto fail(Error error) noexcept -> std::unexpected<Error> {return std::unexpected(error);}
-        template<std::size_t N>
-        auto object(std::string_view json,containers::inplace_vector<std::pair<std::string_view,Raw>,N>& fields) -> std::expected<void,Error> {
+        auto object(std::string_view json,std::vector<std::pair<std::string_view,Raw>>& fields,std::size_t max_fields) -> std::expected<void,Error> {
             auto trimmed=trim(json);if(trimmed.size()<2 || trimmed.front()!='{' || trimmed.back()!='}')return fail(Error::schema);
             if(!read(fields,json))return fail(Error::json);
-            for(std::size_t i=0;i<fields.size();++i) {
-                if(fields[i].first.contains('\\'))return fail(Error::unsupported);
-                for(std::size_t j=0;j<i;++j)if(fields[i].first==fields[j].first)return fail(Error::duplicate);
+            if(fields.size()>max_fields)return fail(Error::limit);
+            std::unordered_set<std::string_view> seen;
+            seen.reserve(fields.size());
+            for(auto const& [k,v]:fields) {
+                (void)v;
+                if(k.contains('\\'))return fail(Error::unsupported);
+                if(!seen.insert(k).second)return fail(Error::duplicate);
             }
             return {};
         }
@@ -99,8 +102,8 @@ namespace tailscale::packet_filter {
             result.push_back({*first,last});return result;
         }
         template<class T> auto fields_unique(std::string_view json) -> std::expected<T,Error> {
-            containers::inplace_vector<std::pair<std::string_view,Raw>,64> fields;
-            if(auto result=object(json,fields);!result)return std::unexpected(result.error());
+            std::vector<std::pair<std::string_view,Raw>> fields;
+            if(auto result=object(json,fields,64);!result)return std::unexpected(result.error());
             T value;if(!read(value,json))return fail(Error::schema);return value;
         }
         auto ports(Raw const& raw) -> std::expected<std::pair<std::uint16_t,std::uint16_t>,Error> {
@@ -117,10 +120,27 @@ namespace tailscale::packet_filter {
             if(!read(items,raw.str))return fail(Error::unsupported);
             return items.empty();
         }
+        auto merge_ranges(std::vector<Range>& ranges) -> void {
+            if(ranges.size()<2)return;
+            std::ranges::sort(ranges,[](Range const& a,Range const& b) noexcept {
+                if(a.first.family!=b.first.family)return a.first.family<b.first.family;
+                int c=order(a.first,b.first);
+                return c!=0 ? c<0 : order(a.last,b.last)<0;
+            });
+            std::vector<Range> merged;
+            merged.reserve(ranges.size());
+            for(auto const& r:ranges) {
+                if(!merged.empty() && merged.back().first.family==r.first.family && order(r.first,merged.back().last)<=0) {
+                    if(order(merged.back().last,r.last)<0)merged.back().last=r.last;
+                } else merged.push_back(r);
+            }
+            ranges=std::move(merged);
+        }
         auto rules(std::string_view json) -> std::expected<std::vector<Rule>,Error> {
             if(!array(json))return fail(Error::schema);
-            containers::inplace_vector<Raw,max_rules> entries;
+            std::vector<Raw> entries;
             if(!read(entries,json))return fail(Error::json);
+            if(entries.size()>max_rules)return fail(Error::limit);
             std::vector<Rule> result;result.reserve(entries.size());std::size_t address_count=0;
             for(auto const& entry:entries) {
                 auto input=fields_unique<RuleJson>(entry.str);if(!input)return std::unexpected(input.error());
@@ -128,17 +148,22 @@ namespace tailscale::packet_filter {
                 if(!bits_empty || !caps_empty || !*bits_empty || !*caps_empty)return fail(Error::unsupported);
                 Rule rule;
                 if(present(input->SrcIPs)) {
-                    containers::inplace_vector<Raw,max_protocols> src;
+                    std::vector<Raw> src;
                     if(!array(input->SrcIPs.str) || !read(src,input->SrcIPs.str))return fail(Error::schema);
+                    if(src.size()>max_addresses)return fail(Error::limit);
+                    rule.sources.reserve(src.size());
                     for(auto const& value:src) {
                         auto ranges=ip_ranges(value);if(!ranges)return std::unexpected(ranges.error());
                         address_count+=ranges->size();if(address_count>max_addresses)return fail(Error::limit);
                         for(auto const& range:*ranges)rule.sources.push_back(range);
                     }
+                    merge_ranges(rule.sources);
                 }
                 if(present(input->DstPorts)) {
-                    containers::inplace_vector<Raw,max_protocols> dst;
+                    std::vector<Raw> dst;
                     if(!array(input->DstPorts.str) || !read(dst,input->DstPorts.str))return fail(Error::schema);
+                    if(dst.size()>max_addresses)return fail(Error::limit);
+                    rule.destinations.reserve(dst.size());
                     for(auto const& value:dst) {
                         auto destination=fields_unique<DestinationJson>(value.str);if(!destination)return std::unexpected(destination.error());
                         if(present(destination->Bits))return fail(Error::unsupported);
@@ -148,8 +173,9 @@ namespace tailscale::packet_filter {
                         for(auto const& range:*ranges)rule.destinations.push_back({range,port->first,port->second});
                     }
                 }
-                containers::inplace_vector<std::int64_t,max_protocols> protocols;
+                std::vector<std::int64_t> protocols;
                 if(present(input->IPProto) && (!array(input->IPProto.str) || !read(protocols,input->IPProto.str)))return fail(Error::schema);
+                if(protocols.size()>max_protocols)return fail(Error::limit);
                 if(protocols.empty())for(auto n:{1u,6u,17u,58u})rule.protocols[n/64]|=std::uint64_t{1}<<(n%64);
                 else for(auto n:protocols)if(n>=0 && n<256)rule.protocols[static_cast<unsigned>(n)/64]|=std::uint64_t{1}<<(static_cast<unsigned>(n)%64);
                 result.push_back(std::move(rule));
@@ -178,9 +204,13 @@ namespace tailscale::packet_filter {
         return (value.family==4 || value.family==6) && first.family==value.family && last.family==value.family && order(first,value)<=0 && order(value,last)<=0;
     }
     auto Rule::matches(Address const& source,Address const& destination,std::uint8_t protocol,std::uint16_t port) const noexcept -> bool {
-        if(source.family!=destination.family)return false;
+        if(source.family!=destination.family || sources.empty())return false;
         if(!(protocols[protocol/64] & (std::uint64_t{1}<<(protocol%64))))return false;
-        if(std::ranges::none_of(sources,[&](auto const& value){return value.contains(source);}))return false;
+        auto it=std::upper_bound(sources.begin(),sources.end(),source,[](Address const& target,Range const& r) noexcept {
+            if(target.family!=r.first.family)return target.family<r.first.family;
+            return order(target,r.first)<0;
+        });
+        if(it==sources.begin() || !std::prev(it)->contains(source))return false;
         return std::ranges::any_of(destinations,[&](auto const& value){return value.range.contains(destination) && value.first<=port && port<=value.last;});
     }
     auto Filter::matches(Address const& source,Address const& destination,std::uint8_t protocol,std::uint16_t port) const noexcept -> bool {
@@ -199,10 +229,10 @@ namespace tailscale::packet_filter {
                 auto parsed=rules(*legacy);if(!parsed)return std::unexpected(parsed.error());
                 base=std::move(*parsed);
             }
-            containers::inplace_vector<std::pair<std::string_view,Raw>,max_chunks+1> entries;
+            std::vector<std::pair<std::string_view,Raw>> entries;
             bool clear_all=false,base_overridden=false;
             if(has_named) {
-                if(auto parsed=object(*named,entries);!parsed)return parsed;
+                if(auto parsed=object(*named,entries,max_chunks+1);!parsed)return parsed;
                 for(auto const& [key,value]:entries) {
                     if(key.size()>max_name_bytes)return fail(Error::limit);
                     if(key=="*" && trim(value.str)=="null")clear_all=true;

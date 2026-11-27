@@ -4,6 +4,7 @@ import std;
 import config;
 import glaze;
 import platform.ip_address;
+import provider.types;
 import rules.regex;
 import :detail;
 
@@ -120,14 +121,14 @@ namespace provider {
                     for (auto const& mid : p.policy_group.member_ids)
                         if (seen_ids.insert(mid).second) candidate_ids.push_back(mid);
                     if (!p.policy_group.dynamic_sub_id.empty()) {
-                        std::optional<rules::BoundedRegex> inc, exc;
+                        std::vector<rules::BoundedRegex> inc, exc;
                         if (!p.policy_group.include_regex.empty()) {
-                            auto r = rules::BoundedRegex::compile(p.policy_group.include_regex);
+                            auto r = compile_filter_regex(p.policy_group.include_regex);
                             if (!r) return done(std::unexpected("invalid policy_group include_regex on " + id));
                             inc = std::move(*r);
                         }
                         if (!p.policy_group.exclude_regex.empty()) {
-                            auto r = rules::BoundedRegex::compile(p.policy_group.exclude_regex);
+                            auto r = compile_filter_regex(p.policy_group.exclude_regex);
                             if (!r) return done(std::unexpected("invalid policy_group exclude_regex on " + id));
                             exc = std::move(*r);
                         }
@@ -135,8 +136,8 @@ namespace provider {
                             if (cand.subscription_id != p.policy_group.dynamic_sub_id || cand.id == p.id || cand.kind == "full_custom_kdl")
                                 continue;
                             auto hay = !cand.remarks.empty() ? cand.remarks : cand.id;
-                            if (inc && !inc->search(hay)) continue;
-                            if (exc && exc->search(hay)) continue;
+                            if (!inc.empty() && !std::ranges::any_of(inc, [&](auto const& re) { return re.search(hay); })) continue;
+                            if (!exc.empty() && std::ranges::any_of(exc, [&](auto const& re) { return re.search(hay); })) continue;
                             if (seen_ids.insert(cand.id).second) candidate_ids.push_back(cand.id);
                         }
                     }
@@ -252,13 +253,13 @@ namespace provider {
             if (!entry) return fail(entry.error());
             res.active_tag = *entry;
 
-            // Sibling selector population (up to min(max_selector_members, 240))
+            // Sibling selector population (up to min(max_selector_members, max_tunnel_outbounds))
             std::vector<std::string> proxy_members{*entry};
             if (host.include_sibling_nodes_in_selector && sub_chain.empty() && active.kind == "node") {
-                std::size_t cap = std::min<std::size_t>(host.max_selector_members ? host.max_selector_members : 128, 240);
+                std::size_t cap = std::min<std::size_t>(host.max_selector_members ? host.max_selector_members : 128, config::max_tunnel_outbounds);
                 auto add_siblings = [&](bool same_sub) {
                     for (auto const& cand : ws.profiles) {
-                        if (proxy_members.size() >= cap || ctx.physical_outbound_count >= 250) break;
+                        if (proxy_members.size() >= cap || ctx.physical_outbound_count >= config::max_tunnel_outbounds) break;
                         if (cand.id == active.id || cand.kind != "node") continue;
                         if ((cand.subscription_id == active.subscription_id) != same_sub) continue;
                         std::set<std::string> sv;

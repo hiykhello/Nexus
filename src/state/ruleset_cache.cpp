@@ -9,27 +9,37 @@ namespace state {
             return limits.max_entries && limits.max_entries <= max_rule_entries && limits.max_bytes;
         }
 
-        auto resident(std::span<RulesetRow const> rows, RulesetMetadata const* incoming = nullptr) noexcept
-            -> std::uint64_t {
-            std::uint64_t bytes = incoming ? incoming->size_bytes : 0;
-            for (std::size_t index = 0; index < rows.size(); ++index) {
-                auto const& value = rows[index].metadata;
-                if (incoming && incoming->content_blake3 == value.content_blake3) continue;
-                if (std::ranges::none_of(rows.first(index), [&](auto const& row) {
-                    return row.metadata.content_blake3 == value.content_blake3;
-                })) bytes += value.size_bytes;
+        struct FingerprintHash {
+            auto operator()(Fingerprint const& fp) const noexcept -> std::size_t {
+                std::uint64_t a = 0, b = 0;
+                std::memcpy(&a, fp.data(), 8);
+                std::memcpy(&b, fp.data() + 8, 8);
+                return static_cast<std::size_t>(a ^ (b * 0x9e3779b97f4a7c15ull));
             }
-            return bytes;
-        }
+        };
 
         auto trim(RulesetIndex& index, RulesetCacheLimits limits, RulesetMetadata const* incoming = nullptr) -> bool {
-            bool changed = false;
-            while (index.rows.size() + (incoming ? 1 : 0) > limits.max_entries ||
-                   resident(index.rows, incoming) > limits.max_bytes) {
-                index.rows.erase(index.rows.begin());
-                changed = true;
+            std::unordered_map<Fingerprint, std::uint32_t, FingerprintHash> refs;
+            refs.reserve(index.rows.size());
+            std::uint64_t total_bytes = incoming ? incoming->size_bytes : 0;
+            for (auto const& row : index.rows) {
+                auto const& v = row.metadata;
+                if (++refs[v.content_blake3] == 1 && (!incoming || v.content_blake3 != incoming->content_blake3))
+                    total_bytes += v.size_bytes;
             }
-            return changed;
+            std::size_t drop = 0;
+            while (drop < index.rows.size() &&
+                   ((index.rows.size() - drop) + (incoming ? 1 : 0) > limits.max_entries ||
+                    total_bytes > limits.max_bytes)) {
+                auto const& v = index.rows[drop].metadata;
+                if (auto it = refs.find(v.content_blake3); it != refs.end() && --it->second == 0 &&
+                    (!incoming || v.content_blake3 != incoming->content_blake3))
+                    total_bytes -= v.size_bytes;
+                ++drop;
+            }
+            if (drop == 0) return false;
+            index.rows.erase(index.rows.begin(), index.rows.begin() + static_cast<std::ptrdiff_t>(drop));
+            return true;
         }
 
         auto discard_digest(InstanceLock const& lock, RulesetIndex& index, Fingerprint const& digest,

@@ -2,6 +2,7 @@ module state.maintenance;
 import std;
 import functional;
 import state.dns_cache;
+import state.fakeip_disk;
 import state.file;
 import state.ruleset_storage;
 import state.serde;
@@ -102,7 +103,7 @@ namespace state {
         if (!meta || !*meta || (**meta).payload.size()<74) {info.health="damaged";return info;}
         auto owner=std::span((**meta).payload).last(24).first(16);
         auto checkpoint=inspect_snapshot(dir,{"fakeip.ckpt",".ckpt.next",{.magic=fake_magic,
-            .tier=Tier::lease,.max_payload=65536*267+4,.fingerprint=fingerprint(owner)}});
+            .tier=Tier::lease,.max_payload=static_cast<std::uint32_t>(fakeip_max_pool_size*267+4),.fingerprint=fingerprint(owner)}});
         if (!checkpoint) {info.health="damaged";return info;}
         if (*checkpoint) info.entries=(**checkpoint).header.revision;
 

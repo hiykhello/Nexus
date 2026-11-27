@@ -19,7 +19,7 @@ export namespace rules {
         std::size_t exact_off_ = 64, suffix_off_ = 64, v4_off_ = 64, v6_off_ = 64, arena_off_ = 64, tail_off_ = 64;
         bool ip_cidr_match_source_ = false;
 
-        [[nodiscard]] auto init_and_validate() -> std::expected<void, std::string>;
+        [[nodiscard]] auto init_and_validate(std::size_t max_bytes, std::uint32_t max_rule_count) -> std::expected<void, std::string>;
         [[nodiscard]] auto read_span(std::size_t table_off, std::size_t idx) const noexcept -> std::string_view;
         [[nodiscard]] auto search_domains(std::size_t table_off, std::uint32_t count, std::string_view key) const noexcept -> bool;
         [[nodiscard]] auto search_v4(std::uint32_t ip) const noexcept -> bool;
@@ -28,9 +28,12 @@ export namespace rules {
     public:
         MmapMatcher() = default;
 
-        [[nodiscard]] static auto open_file(std::string_view path) -> std::expected<MmapMatcher, std::string>;
-        [[nodiscard]] static auto open_bytes(std::string bytes) -> std::expected<MmapMatcher, std::string>;
-        [[nodiscard]] static auto from_mapped(std::shared_ptr<rulefile::MappedFile const> mapped)
+        [[nodiscard]] static auto open_file(std::string_view path, std::size_t max_bytes = 268435456u,
+            std::uint32_t max_rule_count = 4000000u) -> std::expected<MmapMatcher, std::string>;
+        [[nodiscard]] static auto open_bytes(std::string bytes, std::size_t max_bytes = 268435456u,
+            std::uint32_t max_rule_count = 4000000u) -> std::expected<MmapMatcher, std::string>;
+        [[nodiscard]] static auto from_mapped(std::shared_ptr<rulefile::MappedFile const> mapped,
+            std::size_t max_bytes = 268435456u, std::uint32_t max_rule_count = 4000000u)
             -> std::expected<MmapMatcher, std::string>;
 
         [[nodiscard]] auto exact_count() const noexcept -> std::uint32_t { return exact_count_; }

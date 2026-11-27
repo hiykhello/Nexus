@@ -118,6 +118,8 @@ namespace rules {
     }
 
     auto Matcher::compile(RuleSet const& set) -> std::expected<Matcher, Error> {
+        if (set.rules.size() > max_rules)
+            return std::unexpected(Error{ErrorCode::limit, "rule nesting or count exceeds limit"});
         Matcher result;
         auto normalized = normalize_matcher_set(set, result.regexes_);
         if (!normalized) return std::unexpected(std::move(normalized.error()));
@@ -132,6 +134,8 @@ namespace rules {
             for (auto const& child : rule.children) self(self, child);
         };
         for (auto const& rule : normalized->rules) count_texts(count_texts, rule);
+        if (text_bytes > std::numeric_limits<std::uint32_t>::max())
+            return std::unexpected(Error{ErrorCode::limit, "rule text exceeds 32-bit arena limit"});
         result.text_arena_.reserve(text_bytes);
         result.text_spans_.reserve(text_count);
         std::uint32_t regex_index = 0;

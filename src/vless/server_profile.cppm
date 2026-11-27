@@ -12,8 +12,8 @@ export namespace vless {
         std::shared_ptr<tls::AtomicServerCredential> atomic_credential_;
         std::vector<std::string> alpn_;
         std::shared_ptr<tls::EchServerKeys const> ech_keys_;
-        std::vector<UserId> users_;
-        ServerProfile(std::optional<tls::ServerCredential>&& credential,std::vector<UserId>&& users,
+        std::shared_ptr<UserTable const> users_;
+        ServerProfile(std::optional<tls::ServerCredential>&& credential,std::shared_ptr<UserTable const> users,
             std::shared_ptr<tls::AtomicServerCredential> atomic_credential={})
             : credential_(std::move(credential)),atomic_credential_(std::move(atomic_credential)),users_(std::move(users)) {}
     public:
@@ -24,10 +24,11 @@ export namespace vless {
         [[nodiscard]] static auto create(std::span<std::uint8_t const> certificate,
             std::span<std::uint8_t const> private_key,std::span<UserId const> users)
             -> std::expected<ServerProfile,std::string> {
-            if (!ServerHandshake::create(users)) return std::unexpected("invalid VLESS users");
+            auto table=UserTable::create(users);
+            if (!table) return std::unexpected("invalid VLESS users");
             auto credential=tls::ServerCredential::create(certificate,private_key);
             if (!credential) return std::unexpected("invalid or mismatched TLS credential");
-            return ServerProfile(std::move(*credential),std::vector<UserId>(users.begin(),users.end()));
+            return ServerProfile(std::move(*credential),std::move(*table));
         }
         // File contents are snapshotted before any listener starts. Certificate
         // and key are DER or PEM; the PEM certificate file may include a leaf-first chain.
@@ -35,7 +36,7 @@ export namespace vless {
             std::span<std::string const> user_paths) -> std::expected<ServerProfile,std::string> {
             if (certificate_path.empty() || certificate_path.front()!='/' || certificate_path.find('\0')!=certificate_path.npos)
                 return std::unexpected("certificate path must be absolute");
-            if (user_paths.empty() || user_paths.size()>64) return std::unexpected("invalid VLESS users");
+            if (user_paths.empty() || user_paths.size()>max_users) return std::unexpected("invalid VLESS users");
             auto certificate=rulefile::read_regular_file(certificate_path);
             if (!certificate) return std::unexpected("certificate file: " + certificate.error());
             auto key=rulefile::read_private_file(key_path);
@@ -53,10 +54,11 @@ export namespace vless {
             auto bytes=[](std::span<char const> input) {
                 return std::span(reinterpret_cast<std::uint8_t const*>(input.data()),input.size());
             };
-            if (!ServerHandshake::create(users)) return std::unexpected("invalid VLESS users");
+            auto table=UserTable::create(users);
+            if (!table) return std::unexpected("invalid VLESS users");
             auto credential=tls::ServerCredential::create_file_contents(bytes(std::span{certificate->data(),certificate->size()}),bytes(key->bytes()));
             if (!credential) return std::unexpected("invalid or mismatched TLS credential");
-            return ServerProfile(std::move(*credential),std::move(users));
+            return ServerProfile(std::move(*credential),std::move(*table));
         }
         // Dynamic TLS credential (ACME or static hot-reload) resolved per handshake.
         [[nodiscard]] static auto load_dynamic(std::shared_ptr<tls::AtomicServerCredential> credential,
@@ -69,7 +71,7 @@ export namespace vless {
         }
         // Reality provides its own per-session TLS credential.
         [[nodiscard]] static auto load_users(std::span<std::string const> paths) -> std::expected<ServerProfile,std::string> {
-            if (paths.empty() || paths.size()>64) return std::unexpected("invalid VLESS users");
+            if (paths.empty() || paths.size()>max_users) return std::unexpected("invalid VLESS users");
             std::vector<UserId> users; users.reserve(paths.size());
             for (auto const& path:paths) {
                 auto content=rulefile::read_private_file(path); if (!content) return std::unexpected("UUID file: "+content.error());
@@ -78,8 +80,9 @@ export namespace vless {
                 if (!user) return std::unexpected("UUID file must contain a canonical UUID");
                 users.push_back(*user);
             }
-            if (!ServerHandshake::create(users)) return std::unexpected("invalid VLESS users");
-            return ServerProfile({},std::move(users));
+            auto table=UserTable::create(users);
+            if (!table) return std::unexpected("invalid VLESS users");
+            return ServerProfile({},std::move(*table));
         }
         auto set_alpn(std::vector<std::string> alpn) -> void { alpn_=std::move(alpn); }
         auto set_ech_keys(std::shared_ptr<tls::EchServerKeys const> keys) noexcept -> void { ech_keys_=std::move(keys); }
@@ -126,20 +129,14 @@ export namespace vless {
             return std::move(*handshake);
         }
         [[nodiscard]] auto vless_handshake() const -> std::expected<ServerHandshake,std::string> {
-            return ServerHandshake::create(users_);
+            return ServerHandshake::create_shared(users_);
         }
         [[nodiscard]] auto vision_handshake() const -> std::expected<ServerHandshake,std::string> {
-            return ServerHandshake::create_vision(users_);
+            return ServerHandshake::create_vision_shared(users_);
         }
         // The caller supplies an identity already accepted by a handshake.
         [[nodiscard]] auto user_index(UserId const& identity) const noexcept -> std::optional<std::size_t> {
-            std::optional<std::size_t> result;
-            for (std::size_t i=0;i<users_.size();++i) {
-                unsigned difference=0;
-                for (std::size_t j=0;j<identity.size();++j) difference |= identity[j]^users_[i][j];
-                if (!difference) result=i;
-            }
-            return result;
+            return users_ ? users_->find(identity) : std::nullopt;
         }
     };
 }

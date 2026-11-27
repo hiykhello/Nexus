@@ -45,14 +45,14 @@ namespace relay::session_udp_detail {
         XudpStream xudp_stream;
         std::unique_ptr<xudp::ClientIo<XudpStream>> xudp_client;
         std::uint16_t xudp_session = 0;
-        bool xudp_rotating = false, xudp_reader_active = false;
 #endif
-        bool ready = false;
-        capy::async_event readiness;
+        bool ready = false, rotating = false, reader_active = false;
+        capy::async_event readiness, reader_done;
     };
 
-    inline constexpr std::size_t routed_udp_slots = 128;
-    inline constexpr std::size_t fixed_udp_slots = 16;
+    inline constexpr std::size_t routed_udp_slots = 4096;
+    inline constexpr std::size_t fixed_udp_slots = 512;
+    inline constexpr std::size_t alias_udp_slots = 512;
     inline constexpr std::size_t ordinary_udp_slots = routed_udp_slots + fixed_udp_slots;
 
     inline auto uot_address(socks5::UdpPeer peer) -> uot::Address {

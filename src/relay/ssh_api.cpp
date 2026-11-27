@@ -11,7 +11,7 @@ namespace relay {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty())
             return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_SSH
-        if (outbounds.size() >= 256) return std::unexpected("too many tunnel outbounds");
+        if (outbounds.size() >= max_tunnel_outbounds) return std::unexpected("too many tunnel outbounds");
         if (bootstrap && (!dns_routing || *bootstrap >= dns_routing->resolver_count()))
             return std::unexpected("invalid bootstrap resolver");
         auto factory = make_ssh_factory(host, port, user, password_file, private_key_file,

@@ -353,7 +353,7 @@ export namespace cli::run_detail {
                 job.idle_paused = false;
                 round_network_generation_ = network_generation;
             }
-            std::size_t const max_conc = std::clamp<std::size_t>(group.probe.probe_concurrency, 1u, 16u);
+            std::size_t const max_conc = std::clamp<std::size_t>(group.probe.probe_concurrency, 1u, 1024u);
             while (inflight_.size() < max_conc && next_member_ < group.members.size()) {
                 auto outbound = config::configured_outbound_index(config, group.members[next_member_]);
                 if (!outbound || *outbound == 1) { job.members[next_member_++] = {outbound, 1, 0, now, network_generation}; continue; }

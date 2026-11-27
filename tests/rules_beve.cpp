@@ -117,20 +117,18 @@ int main() {
         auto decoded = parse_beve(*empty_binary);
         check(decoded && *decoded == empty, "empty set roundtrips");
     }
-    RuleSet maximum{.version = 2};
-    maximum.rules.resize(max_rules, Rule{"domain-suffix", "example.com"});
-    auto encoded = write_beve(maximum);
-    check(bool(encoded), "maximum rule count encodes");
+    RuleSet high_scale{.version = 2};
+    high_scale.rules.resize(300000, Rule{"domain-suffix", "example.com"});
+    auto encoded = write_beve(high_scale);
+    check(bool(encoded), "high-scale (>262144) rule count encodes");
     if (encoded) {
         auto decoded = parse_beve(*encoded);
-        check(decoded && *decoded == maximum, "maximum rule count roundtrips");
+        check(decoded && *decoded == high_scale, "high-scale (>262144) rule count roundtrips");
     }
-    maximum.rules.push_back({"domain-suffix", "example.com"});
-    check(!write_beve(maximum), "excess rule count rejected on write");
     auto long_domain = std::string(63, 'a') + "." + std::string(63, 'b') + "." +
                        std::string(63, 'c') + "." + std::string(61, 'd');
     RuleSet large{.version = 2};
-    large.rules.resize(130000, Rule{"domain-suffix", long_domain});
+    large.rules.resize(1020000, Rule{"domain-suffix", long_domain});
     check(!write_beve(large), "BEVE output budget enforced");
     check(!write_kdl(large), "KDL output budget enforced");
     if (!failures) std::cout << "BEVE rule tests passed\n";

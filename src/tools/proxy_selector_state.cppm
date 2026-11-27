@@ -111,11 +111,13 @@ export namespace cli::run_detail {
             if (sel.mode == config::OutboundGroupMode::load_balance) {
                 for (auto const& m : sel.members)
                     if (auto ob = config::configured_outbound_index(config, m); ob && *ob < total) {
-                        if (++counts[*ob] == 1) map->unique_outbound_group[*ob] = i;
+                        if (counts[*ob] < 2) ++counts[*ob];
+                        if (counts[*ob] == 1) map->unique_outbound_group[*ob] = i;
                         else map->unique_outbound_group[*ob].reset();
                     }
             } else if (auto ob = config::configured_outbound_index(config, sel.selected_leaf); ob && *ob < total) {
-                if (++counts[*ob] == 1) map->unique_outbound_group[*ob] = i;
+                if (counts[*ob] < 2) ++counts[*ob];
+                if (counts[*ob] == 1) map->unique_outbound_group[*ob] = i;
                 else map->unique_outbound_group[*ob].reset();
             }
         }

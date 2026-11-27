@@ -18,11 +18,16 @@ namespace cli {
         std::mutex g_working_directory_mutex;
         std::optional<std::filesystem::path> g_working_directory;
         std::atomic<ManagedRulesetFetcher> g_managed_ruleset_fetcher{nullptr};
+        std::atomic<ManagedRulesetCacheProbe> g_managed_ruleset_cache_probe{nullptr};
         std::atomic<ManagedHttpPoolFactory> g_managed_http_pool_factory{nullptr};
     }
 
     auto register_managed_ruleset_fetcher(ManagedRulesetFetcher fetcher) noexcept -> void {
         g_managed_ruleset_fetcher.store(fetcher, std::memory_order_release);
+    }
+
+    auto register_managed_ruleset_cache_probe(ManagedRulesetCacheProbe probe) noexcept -> void {
+        g_managed_ruleset_cache_probe.store(probe, std::memory_order_release);
     }
 
     auto register_managed_http_pool_factory(ManagedHttpPoolFactory factory) noexcept -> void {
@@ -38,6 +43,13 @@ namespace cli {
         ensure_http_fetchers_registered();
         auto fn = g_managed_http_pool_factory.load(std::memory_order_acquire);
         return fn ? fn() : std::shared_ptr<void>{};
+    }
+
+    auto probe_fresh_managed_ruleset_cache(config::Config const& config, std::string_view config_source,
+        config::BlockRules const& spec, std::uint64_t now_unix) -> std::optional<FreshRulesetCacheHit> {
+        ensure_http_fetchers_registered();
+        auto fn = g_managed_ruleset_cache_probe.load(std::memory_order_acquire);
+        return fn ? fn(config, config_source, spec, now_unix) : std::nullopt;
     }
 
     auto verify_remote_ruleset_sha256(config::BlockRules const& spec, std::string_view body)
@@ -358,17 +370,17 @@ namespace cli {
         if (auto found=files_.find(path);found!=files_.end()) return std::string_view(found->second);
         auto target = resolve_rule_path(config_path_, path);
         if (!target) return std::unexpected(std::move(target.error()));
-        auto data=rulefile::read_regular_file(target->string());
+        auto data=rulefile::read_regular_file(target->string(), rules::max_input_bytes);
         if (!data) return std::unexpected(std::move(data.error()));
         return std::string_view(files_.emplace(path,std::move(*data)).first->second);
     }
 
-    auto RuleFileInput::open_mapped(std::string const& path)
+    auto RuleFileInput::open_mapped(std::string const& path, std::size_t max_bytes)
         -> std::expected<std::shared_ptr<rules::MmapMatcher const>,std::string> {
         if (auto found=mmaps_.find(path); found!=mmaps_.end()) return found->second;
         auto target = resolve_rule_path(config_path_, path);
         if (!target) return std::unexpected(std::move(target.error()));
-        auto mm = rules::MmapMatcher::open_file(target->string());
+        auto mm = rules::MmapMatcher::open_file(target->string(), max_bytes);
         if (!mm) return std::unexpected(std::move(mm.error()));
         auto ptr = std::make_shared<rules::MmapMatcher const>(std::move(*mm));
         return mmaps_.emplace(path, ptr).first->second;
@@ -380,7 +392,9 @@ namespace cli {
 
         std::filesystem::path cache_dir = !input.cache_dir().empty() ? input.cache_dir() :
             (config.state && !config.state->cache_directory.empty() ? std::filesystem::path(config.state->cache_directory) : std::filesystem::path{});
-        std::uint64_t nxmm_max_bytes = config.state ? config.state->ruleset_cache_max_bytes : 64ull * 1024 * 1024;
+        std::uint64_t nxmm_max_bytes = config.state ? config.state->ruleset_cache_max_bytes : rules::max_input_bytes;
+        auto mapped_budget = static_cast<std::size_t>(std::min<std::uint64_t>(
+            std::max<std::uint64_t>(rules::max_input_bytes, nxmm_max_bytes), std::numeric_limits<std::uint32_t>::max()));
         std::vector<std::filesystem::path> active_nxmm;
         std::size_t total_inline=0, total_mapped=0;
         std::vector<std::string> keys;
@@ -411,7 +425,7 @@ namespace cli {
                 auto seeded=input.read(file.url);
                 if (seeded) {
                     if (allow_mmap && file.format==config::RuleFormat::nxmm) {
-                        auto mm=rules::MmapMatcher::open_bytes(std::string(*seeded));
+                        auto mm=rules::MmapMatcher::open_bytes(std::string(*seeded), mapped_budget);
                         if (!mm) return std::unexpected(std::move(mm.error()));
                         mapped=std::make_shared<rules::MmapMatcher const>(std::move(*mm));
                     } else if (allow_mmap && file.format==config::RuleFormat::srs && !cache_dir.empty()) {
@@ -423,7 +437,7 @@ namespace cli {
                     content="schema-version 2\nkind \"predicate\"\ndomain \"remote-placeholder.invalid\"\n";
                 } else return std::unexpected("remote rule-set "+file.url+": "+seeded.error());
             } else if (allow_mmap && file.format == config::RuleFormat::nxmm) {
-                auto mm = input.open_mapped(file.path);
+                auto mm = input.open_mapped(file.path, mapped_budget);
                 if (!mm) return std::unexpected(std::move(mm.error()));
                 mapped = std::move(*mm);
             } else {
@@ -437,10 +451,10 @@ namespace cli {
             }
             if (mapped) {
                 total_mapped += mapped->byte_size();
-                if (total_mapped > rules::max_input_bytes) return std::unexpected("mapped routing rules exceed 32 MiB total");
+                if (total_mapped > mapped_budget) return std::unexpected("mapped routing rules exceed budget");
             } else {
                 total_inline += content.size();
-                if (total_inline > 8*1024*1024) return std::unexpected("routing rules exceed 8 MiB total");
+                if (total_inline > rules::max_input_bytes) return std::unexpected("routing rules exceed 256 MiB total");
             }
             keys.push_back(std::move(key));
             result.data.emplace_back(std::move(content));

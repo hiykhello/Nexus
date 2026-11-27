@@ -192,7 +192,7 @@ auto main() -> int {
     auto wrong=*cache.begin_query(key);
     stale=cache.publish({2,"other.test",1},answer,11005,wrong);
     if (stale || stale.error()!=d::CacheError::stale_query || !cache.cancel_query(wrong)) return 32;
-    d::AddressCache bounded(1);
+    d::AddressCache bounded(1,0,false,0,4096);
     std::vector<d::CacheToken> tokens;
     for (int i=0; i<4096; ++i) {
         auto t=bounded.begin_query(key);

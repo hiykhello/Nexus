@@ -310,11 +310,11 @@ role "client"
 inbounds { inbound "s" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
 outbounds {
     outbound "direct" type="direct"
-    outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 17; }
+    outbound "g" type="url-test" { member "direct"; probe-url "http://127.0.0.1/p"; probe-concurrency 1025; }
 }
 routing { default-outbound "g"; }
 )");
-        require(!bad2.has_value(), "30B reject probe-concurrency 17");
+        require(!bad2.has_value(), "30B reject probe-concurrency 1025");
         auto bad3 = config::parse_kdl(R"(
 schema-version 1
 role "client"
@@ -416,9 +416,9 @@ routing { default-outbound "g"; }
         require(closed == 1 && s1.traffic.close_requested() && !s2.traffic.close_requested() &&
             !s3.traffic.close_requested() && !s4.traffic.close_requested(),
             "30B close_group_sessions closes only matching (group_tag, outbound) and skips untagged sessions");
-        for (int i = 0; i < 16; ++i)
-            require((*srv)->queue_outbound_probe(std::make_shared<relay::OutboundProbe>()), "30B Server queues up to 16 concurrent probes");
-        require(!(*srv)->queue_outbound_probe(std::make_shared<relay::OutboundProbe>()), "30B Server bounds concurrent probe queue at 16");
+        for (int i = 0; i < 1024; ++i)
+            require((*srv)->queue_outbound_probe(std::make_shared<relay::OutboundProbe>()), "30B Server queues up to 1024 concurrent probes");
+        require(!(*srv)->queue_outbound_probe(std::make_shared<relay::OutboundProbe>()), "30B Server bounds concurrent probe queue at 1024");
 
         // 6. GroupTagMap + find_process propagation
         auto gtag = cli::run_detail::build_group_tag_map(cfg);

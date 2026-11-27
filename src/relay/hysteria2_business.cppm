@@ -32,6 +32,7 @@ export namespace relay {
         using ConnectionState=SessionQuota::Lease;
         Server& server;
         std::span<hysteria2::Password const> passwords;
+        hysteria2::PasswordIndex password_index;
         std::span<std::string const> names;
         config::Hysteria2Masquerade masquerade;
         auto has_masquerade() const noexcept -> bool { return !masquerade.type.empty(); }
@@ -39,7 +40,7 @@ export namespace relay {
             return server.acquire_session();
         }
         auto authenticate(hysteria2::ClientAuthView request) noexcept -> std::optional<std::size_t> {
-            return hysteria2::authenticate(passwords,request.credential);
+            return password_index.authenticate(passwords,request.credential);
         }
         struct UdpOwner;
         std::array<std::unique_ptr<UdpOwner>,16> udp;

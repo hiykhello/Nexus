@@ -59,6 +59,34 @@ export namespace encoding {
         return encode_base64(input, true, pad);
     }
 
+    // Strict RFC 4648 standard Base64 decode into a caller-provided span (zero heap allocation).
+    [[nodiscard]] inline auto decode_base64_strict(std::string_view in, std::span<std::uint8_t> out) noexcept
+        -> std::optional<std::size_t> {
+        if (in.empty() || in.size() % 4 != 0) return std::nullopt;
+        std::size_t pad = 0;
+        if (in.back() == '=') ++pad;
+        if (in.size() >= 2 && in[in.size() - 2] == '=') ++pad;
+        if (pad > 0 && in.back() != '=') return std::nullopt;
+        std::size_t const expected = (in.size() / 4) * 3 - pad;
+        if (expected > out.size()) return std::nullopt;
+        std::size_t written = 0;
+        for (std::size_t i = 0; i < in.size(); i += 4) {
+            bool last = (i + 4 == in.size());
+            int a = base64_detail::std_digit(in[i]);
+            int b = base64_detail::std_digit(in[i + 1]);
+            int c = (last && in[i + 2] == '=') ? -2 : base64_detail::std_digit(in[i + 2]);
+            int d = (last && in[i + 3] == '=') ? -2 : base64_detail::std_digit(in[i + 3]);
+            if (a < 0 || b < 0 || c == -1 || d == -1) return std::nullopt;
+            if (c == -2 && d != -2) return std::nullopt;
+            if (last && pad == 1 && (c & 3) != 0) return std::nullopt;
+            if (last && pad == 2 && (b & 15) != 0) return std::nullopt;
+            out[written++] = static_cast<std::uint8_t>((a << 2) | (b >> 4));
+            if (c >= 0) out[written++] = static_cast<std::uint8_t>(((b & 15) << 4) | (c >> 2));
+            if (d >= 0) out[written++] = static_cast<std::uint8_t>(((c & 3) << 6) | d);
+        }
+        return written;
+    }
+
     // Strict RFC 4648 standard Base64 decode (non-empty, multiple of 4, canonical padding bits).
     [[nodiscard]] inline auto decode_base64_strict(std::string_view in, std::vector<std::uint8_t>& out) -> bool {
         if (in.empty() || in.size() % 4 != 0) return false;
@@ -66,20 +94,13 @@ export namespace encoding {
         if (in.back() == '=') ++pad;
         if (in.size() >= 2 && in[in.size() - 2] == '=') ++pad;
         if (pad > 0 && in.back() != '=') return false;
-        out.reserve(out.size() + (in.size() / 4) * 3 - pad);
-        for (std::size_t i = 0; i < in.size(); i += 4) {
-            bool last = (i + 4 == in.size());
-            int a = base64_detail::std_digit(in[i]);
-            int b = base64_detail::std_digit(in[i + 1]);
-            int c = (last && in[i + 2] == '=') ? -2 : base64_detail::std_digit(in[i + 2]);
-            int d = (last && in[i + 3] == '=') ? -2 : base64_detail::std_digit(in[i + 3]);
-            if (a < 0 || b < 0 || c == -1 || d == -1) return false;
-            if (c == -2 && d != -2) return false;
-            if (last && pad == 1 && (c & 3) != 0) return false;
-            if (last && pad == 2 && (b & 15) != 0) return false;
-            out.push_back(static_cast<std::uint8_t>((a << 2) | (b >> 4)));
-            if (c >= 0) out.push_back(static_cast<std::uint8_t>(((b & 15) << 4) | (c >> 2)));
-            if (d >= 0) out.push_back(static_cast<std::uint8_t>(((c & 3) << 6) | d));
+        std::size_t const expected = (in.size() / 4) * 3 - pad;
+        std::size_t const base = out.size();
+        out.resize(base + expected);
+        auto written = decode_base64_strict(in, std::span(out).subspan(base));
+        if (!written) {
+            out.resize(base);
+            return false;
         }
         return true;
     }

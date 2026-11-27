@@ -128,7 +128,7 @@ namespace cli::tailscale_endpoint {
                         return std::unexpected("Tailscale advertise-routes requires one or more CIDR strings");
                     for (auto const& arg : field.arguments) {
                         auto* s = arg.tag ? nullptr : std::get_if<std::string>(&arg.data);
-                        if (!s || !valid_cidr(*s) || options.advertise_routes.size() >= 64)
+                        if (!s || !valid_cidr(*s) || options.advertise_routes.size() >= 4096)
                             return std::unexpected("invalid Tailscale advertise-routes CIDR");
                         options.advertise_routes.push_back(*s);
                     }

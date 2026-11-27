@@ -293,9 +293,9 @@ namespace relay {
             return std::unexpected(std::make_error_code(std::errc::operation_in_progress));
         if (this->max_bootstrap_index && *this->max_bootstrap_index>=routing.resolver_count())
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-        if (routing.servers.empty() || routing.servers.size()>64 || routing.final>=routing.servers.size() || routing.rules.size()>256)
+        if (routing.servers.empty() || routing.servers.size()>4096 || routing.final>=routing.servers.size() || routing.rules.size()>max_tunnel_outbounds)
             return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-        if (routing.view_finals.size()>64 || std::ranges::any_of(routing.view_finals,[&](auto index) {
+        if (routing.view_finals.size()>4096 || std::ranges::any_of(routing.view_finals,[&](auto index) {
             return index>=routing.servers.size();
         })) return std::unexpected(std::make_error_code(std::errc::invalid_argument));
         if (routing.strategy!=DnsStrategy::automatic && routing.strategy!=DnsStrategy::prefer_ipv4 &&
@@ -348,7 +348,7 @@ namespace relay {
         if (this->running || (this->listener && this->listener->is_open()) || !this->sessions.empty() || !this->workers.empty())
             return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_VLESS
-        if (this->outbounds.size()>=256) return std::unexpected("too many VLESS outbounds");
+        if (this->outbounds.size()>=max_tunnel_outbounds) return std::unexpected("too many VLESS outbounds");
         if (bootstrap && (!this->dns_routing || *bootstrap>=this->dns_routing->resolver_count())) return std::unexpected("invalid bootstrap resolver");
         if (xhttp && (vision || transport || grpc || fast_open || packetaddr || fixed_udp))
             return std::unexpected("invalid VLESS XHTTP outbound options");
@@ -397,7 +397,7 @@ namespace relay {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty())
             return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_SS2022
-        if (outbounds.size()>=256) return std::unexpected("too many tunnel outbounds");
+        if (outbounds.size()>=max_tunnel_outbounds) return std::unexpected("too many tunnel outbounds");
         if (bootstrap && (!dns_routing || *bootstrap>=dns_routing->resolver_count())) return std::unexpected("invalid bootstrap resolver");
         auto factory=make_shadowsocks_factory(host,port,key,bootstrap,udp_over_tcp,timeout_ms,tcp_options,fast_open,identity_keys,cipher,udp_native);
         if (!factory) return std::unexpected(factory.error());

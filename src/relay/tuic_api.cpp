@@ -10,7 +10,7 @@ namespace relay {
         std::uint32_t timeout_ms,TcpSocketOptions options,QuicEchOptions const& ech,std::span<std::array<std::uint8_t,32> const> pins,bool zero_rtt_handshake) -> std::expected<std::size_t,std::string> {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty()) return std::unexpected("stop the server before changing the outbound");
 #ifdef NEXUS_ENABLE_TUIC
-        if (outbounds.size()>=256) return std::unexpected("too many tunnel outbounds");
+        if (outbounds.size()>=max_tunnel_outbounds) return std::unexpected("too many tunnel outbounds");
         if (bootstrap && (!dns_routing || *bootstrap>=dns_routing->resolver_count())) return std::unexpected("invalid bootstrap resolver");
         auto factory=make_tuic_factory(host,port,uuid_file,password_file,server_name,ca_file,exchange,fingerprint,cc,udp_over_stream,heartbeat_ms,handshake_ms,idle_ms,native_bytes,bootstrap,timeout_ms,options,ech,dns_routing.has_value(),pins,zero_rtt_handshake);
         if (!factory) return std::unexpected(factory.error());

@@ -292,7 +292,7 @@ namespace rules {
         }
     }
     auto decode_srs_payload(std::span<std::uint8_t const> bytes, bool ip_cidr_match_source, bool lenient) -> std::expected<RuleSet,Error> {
-        if(bytes.size()>max_input_bytes)return std::unexpected(Error{ErrorCode::limit,"SRS payload exceeds 32 MiB"});
+        if(bytes.size()>max_input_bytes)return std::unexpected(Error{ErrorCode::limit,"SRS payload exceeds 256 MiB"});
         Reader reader{bytes,0,0,ip_cidr_match_source,lenient};auto count=reader.varint();
         if(!count || !*count || *count>max_rules)return failure("invalid SRS rule count");
         RuleSet result{{},2};

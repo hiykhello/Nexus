@@ -15,6 +15,8 @@ namespace state {
         File wal;
         std::vector<FakeIpRow> disk_rows;
         std::size_t wal_bytes;
+        std::size_t wal_limit;
+        std::uint64_t pool_capacity;
         std::uint64_t cursor;
         std::map<std::pair<std::uint64_t,std::string>,std::uint32_t> forward;
         std::mutex mutex;
@@ -24,9 +26,11 @@ namespace state {
         bool stopping=false, started=false, flushing=false, flush_requested=false;
         std::thread worker;
 
-        Impl(InstanceLock locked, FakeIpScope spec, FakeIpMeta header, CrashMode crash, File file, FakeIpReplay replay)
+        Impl(InstanceLock locked, FakeIpScope spec, FakeIpMeta header, CrashMode crash, File file, FakeIpReplay replay,
+             std::size_t wal_threshold)
             : directory(std::move(locked)),scope(std::move(spec)),meta(header),wal_identity(header),mode(crash),
               wal(std::move(file)),disk_rows(std::move(replay.rows)),wal_bytes(replay.wal_bytes),
+              wal_limit(wal_threshold),pool_capacity(std::uint64_t(scope.alloc_last)-scope.alloc_first+1),
               cursor(meta.reserved) {
             if (!disk_rows.empty()) cursor=std::max(cursor,std::uint64_t(disk_rows.back().address)-scope.alloc_first+1);
             for (auto const& row:disk_rows) forward.emplace(std::pair(row.view,row.domain),row.address);
@@ -68,8 +72,8 @@ namespace state {
             if (auto ok=sync_handle(wal.get(),Stage::sync_stage); !ok) return std::unexpected(ok.error());
             synced=true;
             rollback.committed=true;
-            if (wal_bytes<fakeip_wal_limit) return {};
-            auto compacted=compact_fakeip(directory,wal_identity,wal.get(),disk_rows);
+            if (wal_bytes<wal_limit) return {};
+            auto compacted=compact_fakeip(directory,wal_identity,wal.get(),disk_rows,pool_capacity);
             if (compacted) wal_bytes=0;
             return compacted;
         }
@@ -118,10 +122,13 @@ namespace state {
     FakeIpStore::FakeIpStore(std::unique_ptr<Impl> owner) noexcept : owner_(std::move(owner)) {}
     FakeIpStore::~FakeIpStore()=default;
 
-    auto FakeIpStore::open(std::filesystem::path const& root, FakeIpScope scope, CrashMode mode)
+    auto FakeIpStore::wal_limit() const noexcept -> std::size_t { return owner_ ? owner_->wal_limit : 0; }
+
+    auto FakeIpStore::open(std::filesystem::path const& root, FakeIpScope scope, CrashMode mode,
+                           std::optional<std::size_t> wal_limit)
         -> std::expected<std::unique_ptr<FakeIpStore>,StateError> {
         if (scope.first>scope.alloc_first || scope.alloc_first>scope.alloc_last || scope.alloc_last>scope.last ||
-            std::uint64_t(scope.last)-scope.first>=65536 || scope.exclude_cidrs.size()>256)
+            std::uint64_t(scope.last)-scope.first>=fakeip_max_pool_size || scope.exclude_cidrs.size()>256)
             return std::unexpected(StateError{Stage::validate});
         std::ranges::sort(scope.exclude_cidrs);
         for (std::size_t i=0;i<scope.exclude_cidrs.size();++i) {
@@ -129,16 +136,18 @@ namespace state {
             if (first<scope.first || last>scope.last || first>last || (i && scope.exclude_cidrs[i-1].second>=first))
                 return std::unexpected(StateError{Stage::validate});
         }
+        auto cidr_cap=std::uint64_t(scope.last)-scope.first+1;
+        auto effective_wal_limit=fakeip_wal_threshold(cidr_cap,wal_limit);
         auto lock=InstanceLock::open_child(root,"fakeip");
         if (!lock) return std::unexpected(lock.error());
         auto meta=fakeip_meta(*lock,scope);
         if (!meta) return std::unexpected(meta.error());
         auto wal=open_dir_append(lock->directory(),"fakeip.wal",Stage::open);
         if (!wal) return std::unexpected(wal.error());
-        auto replay=replay_fakeip(*lock,scope,*meta,wal->get());
+        auto replay=replay_fakeip(*lock,scope,*meta,wal->get(),effective_wal_limit);
         if (!replay) return std::unexpected(replay.error());
 
-        auto owner=std::make_unique<Impl>(std::move(*lock),std::move(scope),*meta,mode,std::move(*wal),std::move(*replay));
+        auto owner=std::make_unique<Impl>(std::move(*lock),std::move(scope),*meta,mode,std::move(*wal),std::move(*replay),effective_wal_limit);
         return std::unique_ptr<FakeIpStore>(new FakeIpStore(std::move(owner)));
     }
 

@@ -50,7 +50,7 @@ namespace relay {
             std::shared_ptr<tls::AtomicServerCredential> atomic_credential;
             std::vector<std::string> alpn;
             std::shared_ptr<tls::EchServerKeys const> ech_keys;
-            std::vector<anytls::PasswordKey> users;
+            anytls::UserTable users;
             std::vector<std::string> names;
             std::optional<httpupgrade::Profile> transport;
             std::optional<transport_detail::GrpcSettings> grpc;
@@ -379,12 +379,13 @@ namespace relay {
         std::optional<HttpUpgradeTransport> transport, std::optional<GrpcTransport> grpc_cfg,
         InboundTlsRuntime const& tls_rt)
         -> std::expected<InboundFactory, std::string> {
-        if (passwords.empty() || passwords.size() > 64 || (!names.empty() && names.size() != passwords.size()))
+        if (passwords.empty() || passwords.size() > max_tunnel_outbounds || (!names.empty() && names.size() != passwords.size()))
             return std::unexpected("invalid AnyTLS users");
         if (transport && grpc_cfg) return std::unexpected("AnyTLS inbound accepts at most one transport");
-        for (std::size_t i = 0; i < names.size(); ++i)
-            if (names[i].empty() || names[i].size() > 255 || names[i].find('\0') != std::string::npos ||
-                std::ranges::contains(names.first(i), names[i]))
+        std::unordered_set<std::string_view> seen_names;
+        seen_names.reserve(names.size());
+        for (auto const& n : names)
+            if (n.empty() || n.size() > 255 || n.find('\0') != std::string::npos || !seen_names.insert(n).second)
                 return std::unexpected("invalid or duplicate AnyTLS user name");
         auto profile = std::make_unique<Profile>();
         if (tls_rt.atomic_credential) {
@@ -410,13 +411,16 @@ namespace relay {
             if (!compiled) return std::unexpected(compiled.error());
             profile->grpc = std::move(*compiled);
         }
+        std::vector<anytls::PasswordKey> loaded_users;
+        loaded_users.reserve(passwords.size());
         for (auto const& path : passwords) {
             auto password = anytls::PasswordKey::load(path);
             if (!password) return std::unexpected(password.error());
-            if (anytls::authenticate(profile->users, password->view()))
-                return std::unexpected("duplicate AnyTLS password");
-            profile->users.push_back(std::move(*password));
+            loaded_users.push_back(std::move(*password));
         }
+        auto table = anytls::UserTable::create(std::move(loaded_users));
+        if (!table) return std::unexpected(std::move(table.error()));
+        profile->users = std::move(*table);
         profile->names.assign(names.begin(), names.end());
         return InboundFactory{[profile = std::move(profile)](Session& session, corosio::io_context& context,
             rules::RouteMatcher const& policy) {

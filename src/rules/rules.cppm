@@ -315,9 +315,9 @@ export namespace rules {
         // poll may still pause at another rule after a continuing action.
         [[nodiscard]] auto skip_unknown(std::size_t rule_index) noexcept -> std::expected<void, ProgramCursorError>;
     };
-    inline constexpr unsigned max_rules = 262144;
+    inline constexpr unsigned max_rules = 4000000;
     inline constexpr unsigned max_rule_depth = 32;
-    inline constexpr unsigned max_input_bytes = 33554432;
+    inline constexpr unsigned max_input_bytes = 268435456;
 
     // The lookup borrows the loaded sets for compilation only.
     using RuleSetLookup = functional::function_ref<RuleSet const*(std::string_view)>;
@@ -328,7 +328,8 @@ export namespace rules {
     [[nodiscard]] auto write_kdl(RuleSet const& set) -> std::expected<std::string, Error>;
     [[nodiscard]] auto parse_beve(std::string_view input) -> std::expected<RuleSet, Error>;
     [[nodiscard]] auto write_beve(RuleSet const& set) -> std::expected<std::string, Error>;
-    [[nodiscard]] auto compile_nxmm(RuleSet const& set, bool ip_cidr_match_source = false) -> std::expected<std::string, Error>;
+    [[nodiscard]] auto compile_nxmm(RuleSet const& set, bool ip_cidr_match_source = false,
+        std::size_t max_bytes = max_input_bytes) -> std::expected<std::string, Error>;
     [[nodiscard]] auto parse_nxmm(std::string_view input) -> std::expected<RuleSet, Error>;
     [[nodiscard]] auto nxmm_to_ruleset(MmapMatcher const& matcher) -> std::expected<RuleSet, Error>;
 }
@@ -338,8 +339,8 @@ export namespace policy {
     // places every prerequisite before its consumers; repeated edges are valid.
     struct DependencyEdge { std::size_t consumer, prerequisite; };
     enum class DependencyError { limit, invalid_edge, cycle };
-    inline constexpr std::size_t max_dependency_nodes = 4096;
-    inline constexpr std::size_t max_dependency_edges = 65536;
+    inline constexpr std::size_t max_dependency_nodes = 131072;
+    inline constexpr std::size_t max_dependency_edges = 2097152;
 
     [[nodiscard]] inline auto dependency_order(std::size_t count, std::span<DependencyEdge const> edges)
         -> std::expected<std::vector<std::size_t>, DependencyError> {
