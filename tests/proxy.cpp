@@ -260,7 +260,7 @@ static auto source_policy_test() -> bool {
     namespace r = ::rules;
     r::RuleSet source{{{"and","",{{"source-ip-cidr","127.0.0.0/8",{}},
         {"source-port-range","1-65535",{}},{"network","tcp",{}}}}},2};
-    auto policy=r::RouteMatcher::compile(std::array{r::RouteRule{source,1}},0,2,r::SourceMetadata::provided);
+    auto policy=r::RouteProgram::compile_policy(std::array{r::ProgramRule{source,{r::ProgramActionKind::route,1}}},0,2,r::SourceMetadata::provided);
     if (!policy || !policy->needs_source()) return false;
     relay::Server server;
     if (!server.set_source_policy_for_test(std::move(*policy))) return false;

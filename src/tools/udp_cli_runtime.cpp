@@ -41,39 +41,7 @@ namespace cli {
         }
         if (!ingress_ && (dynamic_users_ || std::ranges::any_of(keys_, [](auto const& keys) { return keys && !keys->users.empty(); })))
             stage_admission(nullptr, 1);
-        std::vector<rules::RouteRule> routes;
-        routes.reserve(config.routes.size());
-        std::size_t predicate_count = 0;
-        for (std::size_t i = 0; i < config.routes.size(); ++i) {
-            auto const& route = config.routes[i];
-            if (i >= rule_data_index.size()) return std::unexpected("UDP routing: missing rule data index");
-            auto idx = rule_data_index[i];
-            auto mmap = idx < rules_mmaps.size() ? rules_mmaps[idx] : std::shared_ptr<rules::MmapMatcher const>{};
-            if (!mmap && route.file.format == config::RuleFormat::nxmm) {
-                if (idx >= rules_data.size()) return std::unexpected("UDP routing: missing rule data");
-                auto opened = rules::MmapMatcher::open_bytes(std::string(rules_data[idx]));
-                if (!opened) return std::unexpected("UDP routing: " + opened.error());
-                mmap = std::make_shared<rules::MmapMatcher const>(std::move(*opened));
-            }
-            if (mmap) {
-                auto n = std::uint64_t(mmap->exact_count()) + mmap->suffix_count() + mmap->v4_count() + mmap->v6_count();
-                if (n > rules::max_rules - predicate_count) return std::unexpected("UDP routing: too many route predicates");
-                predicate_count += static_cast<std::size_t>(n);
-                if (mmap->has_domain() || mmap->has_ip() || mmap->tail_beve_bytes() > 0)
-                    routes.push_back({{}, route.outbound, i, std::move(mmap), route.file.ip_cidr_match_source});
-                continue;
-            }
-            if (idx >= rules_data.size()) return std::unexpected("UDP routing: missing rule data");
-            auto const& bytes = rules_data[idx];
-            auto format = cli::rule_input_format(route.file.format);
-            auto parsed = rules::parse_rule_input(bytes, format, route.file.ip_cidr_match_source);
-            if (!parsed) return std::unexpected("UDP routing: " + parsed.error().message);
-            if (parsed->rules.size() > rules::max_rules - predicate_count)
-                return std::unexpected("UDP routing: too many route predicates");
-            predicate_count += parsed->rules.size();
-            if (!parsed->rules.empty())
-                routes.push_back({std::move(*parsed), route.outbound, i});
-        }
+        (void)rules_data; (void)rule_data_index; (void)rules_mmaps;
         auto native_outbound = std::ranges::any_of(config.shadowsocks_outbounds, [](auto const& entry) { return entry.config.udp_native; });
         if (config.ordered_tcp || native_outbound || uses_proxy_dns(config.dns)) {
             if (!parent) return std::unexpected("UDP routing parent is unavailable");
@@ -103,7 +71,7 @@ namespace cli {
         for (std::size_t i = 0; i < config.inbounds.size(); ++i) {
             auto const& entry = config.inbounds[i];
             if (!entry.shadowsocks) continue;
-            auto policy = rules::RouteMatcher::compile(routes, config.default_outbound,
+            auto policy = rules::RouteProgram::compile_policy(ordered_rules, config.default_outbound,
                 2 + config.tunnel_count(),
                 rules::SourceMetadata::provided, entry.name, rules::AuthMetadata::provided);
             if (!policy) return std::unexpected("UDP routing: " + policy.error().message);

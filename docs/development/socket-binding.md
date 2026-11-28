@@ -1,6 +1,6 @@
 # 通用物理 socket 绑定
 
-状态：物理 socket 绑定与 UDP 分片字段已接入生产双后端；字段覆盖与支持范围见 [支持矩阵](../planning/proxy-kernel-support-matrix.md) 与 [拨号字段覆盖](../planning/dial-field-coverage.md)。
+状态：物理 socket 绑定与 UDP 分片字段已接入生产双后端；字段覆盖与支持范围见 [支持矩阵](../planning/proxy-kernel-support-matrix.md) 与 [配置规范](../configuration/spec.md)。
 
 ## 参数与归属
 

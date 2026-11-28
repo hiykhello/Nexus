@@ -43,6 +43,12 @@ enum class AndroidThemePreset(val wire: String) {
     }
 }
 
+enum class HostRuntimeAction {
+    NONE,
+    RELOAD_CORE,
+    RESTART_VPN,
+}
+
 data class HostCommonConfig(
     val schemaVersion: Int = SCHEMA_VERSION,
     val platform: String = "android",
@@ -81,6 +87,11 @@ data class AndroidHostSection(
     val runMode: AndroidRunMode = AndroidRunMode.VPN,
     val enableLocalProxy: Boolean = true,
     val localListen: String = "127.0.0.1:10808",
+    val enableHttp: Boolean = false,
+    val httpListen: String = "127.0.0.1:10809",
+    val enableSocks: Boolean = false,
+    val socksListen: String = "127.0.0.1:10806",
+    val allowLan: Boolean = false,
     val dynamicLocalPort: Boolean = false,
     val tunMtu: Int = 1400,
     val tunFdFromEnv: Boolean = true,
@@ -101,6 +112,7 @@ data class AndroidHostSection(
     val screenOffPauseStats: Boolean = true,
     val themePreset: AndroidThemePreset = AndroidThemePreset.SYSTEM,
     val dynamicColor: Boolean = false,
+    val surfaceAlpha: Float = 1.0f,
     // E2EE WebDAV Sync settings (strictly local Layer 3 0600 host.json; NEVER in workspace.json)
     val webdavUrl: String = "",
     val webdavUsername: String = "",
@@ -153,6 +165,11 @@ data class AndroidHostConfig(
                 put("run_mode", android.runMode.wire)
                 put("enable_local_proxy", android.enableLocalProxy)
                 put("local_listen", android.localListen)
+                put("enable_http", android.enableHttp)
+                put("http_listen", android.httpListen)
+                put("enable_socks", android.enableSocks)
+                put("socks_listen", android.socksListen)
+                put("allow_lan", android.allowLan)
                 put("dynamic_local_port", android.dynamicLocalPort)
                 put("tun_mtu", android.tunMtu.coerceIn(1280, 9000))
                 put("tun_fd_from_env", android.tunFdFromEnv)
@@ -172,6 +189,7 @@ data class AndroidHostConfig(
                 put("screen_off_pause_stats", android.screenOffPauseStats)
                 put("theme_preset", android.themePreset.wire)
                 put("dynamic_color", android.dynamicColor)
+                put("surface_alpha", android.surfaceAlpha.coerceIn(0.50f, 1.0f).toDouble())
                 put("webdav_url", android.webdavUrl)
                 put("webdav_username", android.webdavUsername)
                 if (includeSecrets) {
@@ -217,6 +235,11 @@ data class AndroidHostConfig(
                     runMode = AndroidRunMode.fromWire(a.optString("run_mode", AndroidRunMode.VPN.wire)),
                     enableLocalProxy = a.optBoolean("enable_local_proxy", true),
                     localListen = a.optString("local_listen", "127.0.0.1:10808"),
+                    enableHttp = a.optBoolean("enable_http", false),
+                    httpListen = a.optString("http_listen", "127.0.0.1:10809"),
+                    enableSocks = a.optBoolean("enable_socks", false),
+                    socksListen = a.optString("socks_listen", "127.0.0.1:10806"),
+                    allowLan = a.optBoolean("allow_lan", false),
                     dynamicLocalPort = a.optBoolean("dynamic_local_port", false),
                     tunMtu = a.optInt("tun_mtu", 1400).coerceIn(1280, 9000),
                     tunFdFromEnv = a.optBoolean("tun_fd_from_env", true),
@@ -236,6 +259,7 @@ data class AndroidHostConfig(
                     screenOffPauseStats = a.optBoolean("screen_off_pause_stats", true),
                     themePreset = AndroidThemePreset.fromWire(a.optString("theme_preset", AndroidThemePreset.SYSTEM.wire)),
                     dynamicColor = a.optBoolean("dynamic_color", false),
+                    surfaceAlpha = a.optDouble("surface_alpha", 1.0).let { if (it.isFinite()) it.toFloat().coerceIn(0.50f, 1.0f) else 1.0f },
                     webdavUrl = a.optString("webdav_url", ""),
                     webdavUsername = a.optString("webdav_username", ""),
                     webdavPassword = a.optString("webdav_password", ""),
@@ -304,6 +328,99 @@ data class AndroidHostConfig(
             val host = trimmed.substring(0, colon).removePrefix("[").removeSuffix("]")
             val port = trimmed.substring(colon + 1).toIntOrNull() ?: return null
             return if (host.isNotEmpty() && port in 1..65535) host to port else null
+        }
+
+        /**
+         * Selects the active HTTP-capable local proxy endpoint for Android 10+ `VpnService.Builder.setHttpProxy`,
+         * preferring dedicated `HTTP` inbound over `Mixed` inbound and mapping wildcard binds (`0.0.0.0`/`::`)
+         * to loopback for local apps.
+         */
+        fun selectHttpProxyEndpoint(host: AndroidHostSection): Pair<String, Int>? {
+            val candidate = when {
+                host.enableHttp && host.httpListen.isNotBlank() -> parseHostPort(host.httpListen)
+                host.enableLocalProxy && host.localListen.isNotBlank() -> parseHostPort(host.localListen)
+                else -> null
+            } ?: return null
+            val clientHost = when (candidate.first) {
+                "0.0.0.0" -> "127.0.0.1"
+                "::" -> "::1"
+                else -> candidate.first
+            }
+            return clientHost to candidate.second
+        }
+
+        fun formatActiveInboundsSummary(host: AndroidHostSection): String {
+            val parts = buildList {
+                if (host.enableLocalProxy) add("Mixed :" + (parseHostPort(host.localListen)?.second ?: 10808))
+                if (host.enableHttp) add("HTTP :" + (parseHostPort(host.httpListen)?.second ?: 10809))
+                if (host.enableSocks) add("SOCKS :" + (parseHostPort(host.socksListen)?.second ?: 10806))
+            }
+            return if (parts.isEmpty()) "本地监听关" else parts.joinToString(" · ")
+        }
+
+        fun selectActiveInboundTag(host: AndroidHostSection): String = when {
+            host.runMode == AndroidRunMode.VPN -> "tun-in"
+            host.enableLocalProxy -> "local-mixed"
+            host.enableHttp -> "local-http"
+            host.enableSocks -> "local-socks"
+            else -> "local-mixed"
+        }
+
+        fun normalizeForSave(cfg: AndroidHostConfig): Pair<AndroidHostConfig, String?> {
+            val a = cfg.android
+            val cleanMixed = a.localListen.trim().ifBlank { "127.0.0.1:10808" }
+            val cleanHttp = a.httpListen.trim().ifBlank { "127.0.0.1:10809" }
+            val cleanSocks = a.socksListen.trim().ifBlank { "127.0.0.1:10806" }
+            if (a.runMode == AndroidRunMode.PROXY_ONLY && !a.enableLocalProxy && !a.enableHttp && !a.enableSocks) {
+                return cfg.copy(
+                    android = a.copy(
+                        enableLocalProxy = true,
+                        localListen = cleanMixed,
+                        httpListen = cleanHttp,
+                        socksListen = cleanSocks,
+                    ),
+                ) to "仅本地代理模式需至少开启一个监听协议，已自动保留 Mixed 端口"
+            }
+            return cfg.copy(android = a.copy(localListen = cleanMixed, httpListen = cleanHttp, socksListen = cleanSocks)) to null
+        }
+
+        fun classifyRuntimeAction(prev: AndroidHostConfig, next: AndroidHostConfig): HostRuntimeAction {
+            val pa = prev.android
+            val na = next.android
+            val pc = prev.common
+            val nc = next.common
+            val httpProxyChangedUnderVpn = na.runMode == AndroidRunMode.VPN && na.appendHttpProxy &&
+                selectHttpProxyEndpoint(pa) != selectHttpProxyEndpoint(na)
+            if (pa.runMode != na.runMode ||
+                pa.tunMtu != na.tunMtu ||
+                pa.perAppMode != na.perAppMode ||
+                pa.perAppPackages.toSet() != na.perAppPackages.toSet() ||
+                pa.excludeSelfFromVpn != na.excludeSelfFromVpn ||
+                pa.allowBypass != na.allowBypass ||
+                pa.bypassLan != na.bypassLan ||
+                pa.enableIpv6 != na.enableIpv6 ||
+                pa.appendHttpProxy != na.appendHttpProxy ||
+                httpProxyChangedUnderVpn ||
+                pc.workers != nc.workers ||
+                pc.workersSpec != nc.workersSpec ||
+                pc.workersMax != nc.workersMax
+            ) {
+                return HostRuntimeAction.RESTART_VPN
+            }
+            if (pa.enableLocalProxy != na.enableLocalProxy ||
+                pa.localListen != na.localListen ||
+                pa.enableHttp != na.enableHttp ||
+                pa.httpListen != na.httpListen ||
+                pa.enableSocks != na.enableSocks ||
+                pa.socksListen != na.socksListen ||
+                pa.allowLan != na.allowLan ||
+                pc.logLevel != nc.logLevel ||
+                pc.includeSiblingNodesInSelector != nc.includeSiblingNodesInSelector ||
+                pc.maxSelectorMembers != nc.maxSelectorMembers
+            ) {
+                return HostRuntimeAction.RELOAD_CORE
+            }
+            return HostRuntimeAction.NONE
         }
     }
 }

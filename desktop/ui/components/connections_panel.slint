@@ -7,7 +7,7 @@ import { Theme } from "../theme.slint";
 import { ActiveConnectionItem } from "../types.slint";
 import { ConnectionInspectorCard } from "connection_inspector.slint";
 import { ConnectionsKpiStrip } from "connections_kpi_strip.slint";
-import { EmptyStateCard, NexusInput, SlidingSegmentBar } from "glass_primitives.slint";
+import { EmptyStateCard, NexusInput, SlidingSegmentBar } from "nexus_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusButton } from "nexus_buttons.slint";
 
@@ -89,7 +89,7 @@ export component ConnectionsPanel inherits VerticalLayout {
             min-width: 120px;
             search-icon: true;
             text <=> root.filter-text;
-            placeholder-text: I18n.t("搜索域名、IP、进程或规则...", "Search host, IP, app or rule...");
+            placeholder-text: I18n.t("搜索域名、IP、进程或规则…", "Search host, IP, app or rule…");
             edited(q) => { root.filter-changed(q); }
             accepted => { root.filter-changed(root.filter-text); }
         }
@@ -179,7 +179,7 @@ export component ConnectionsPanel inherits VerticalLayout {
             min-width: 0px;
             spacing: Theme.space-sm;
 
-            // Full-Height Matte Framed Connections Table Card
+            // Full-Height Fluent 2 Single-Level Connections Table Card
             Rectangle {
                 vertical-stretch: 1;
                 border-radius: Theme.radius-card;
@@ -192,26 +192,26 @@ export component ConnectionsPanel inherits VerticalLayout {
                     width: 100%;
                     height: 100%;
 
-                    // Aligned Bento Column Header Bar
-                    Rectangle {
+                    // Table Column Header Bar (only shown when rows exist)
+                    if root.connections.length > 0 : Rectangle {
                         vertical-stretch: 0;
                         height: 36px;
                         background: Theme.well-bg;
 
                         HorizontalLayout {
                             padding-left: 14px;
-                            padding-right: 12px;
+                            padding-right: 14px;
                             spacing: 8px;
 
-                            Text { width: 52px; text: I18n.t("协议", "PROTO"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
-                            Text { horizontal-stretch: 1; min-width: 0px; text: I18n.t("目标主机", "TARGET HOST"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; overflow: elide; }
-                            if root.show-rule-col : Text { width: 94px; text: I18n.t("规则", "RULE"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
-                            Text { width: 84px; text: I18n.t("出口", "OUTBOUND"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
-                            Text { width: 82px; text: I18n.t("流量", "TRAFFIC"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; horizontal-alignment: right; vertical-alignment: center; }
+                            Text { width: 52px; text: I18n.t("协议", "PROTO"); font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                            Text { horizontal-stretch: 1; min-width: 0px; text: I18n.t("目标主机", "TARGET HOST"); font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; overflow: elide; }
+                            if root.show-rule-col : Text { width: 94px; text: I18n.t("规则", "RULE"); font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                            Text { width: 84px; text: I18n.t("出口", "OUTBOUND"); font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                            Text { width: 82px; text: I18n.t("流量", "TRAFFIC"); font-size: 11px; font-weight: 700; color: Theme.text-muted; horizontal-alignment: right; vertical-alignment: center; }
                             Rectangle { width: 22px; }
                         }
 
-                        Rectangle { x: 0px; y: parent.height - 1px; width: 100%; height: 1px; background: Theme.hairline-subtle; }
+                        Rectangle { x: 0px; y: parent.height - 1px; width: 100%; height: 1px; background: Theme.card-border; }
                     }
 
                     if root.connections.length == 0 : VerticalLayout {
@@ -235,7 +235,7 @@ export component ConnectionsPanel inherits VerticalLayout {
                     if root.connections.length > 0 : lv := ListView {
                         vertical-stretch: 1;
                         for conn[idx] in root.connections : Rectangle {
-                            property <bool> is-direct: conn.outbound == "direct";
+                            property <bool> is-direct: conn.outbound == "direct" || conn.outbound == "DIRECT" || conn.path == "direct";
                             property <bool> is-selected: root.disp-id != "" && root.disp-id == conn.id;
                             property <bool> is-udp: conn.protocol == "udp/quic" || conn.protocol == "udp";
                             property <bool> is-tls: conn.protocol == "tcp/tls";
@@ -293,27 +293,24 @@ export component ConnectionsPanel inherits VerticalLayout {
                                     }
                                 }
 
-                                if is-selected : Rectangle {
-                                    x: 0px; y: 6px; width: 3px; height: parent.height - 12px;
-                                    border-radius: 1.5px; background: Theme.accent;
-                                }
-
                                 HorizontalLayout {
                                     padding-left: 14px;
-                                    padding-right: 12px;
+                                    padding-right: 14px;
                                     spacing: 8px;
 
-                                    // Col 1: Protocol pill
+                                    // Col 1: Protocol Badge
                                     Rectangle {
                                         width: 52px;
                                         Rectangle {
                                             x: 0px; y: (parent.height - self.height) / 2;
-                                            width: 46px; height: 22px; border-radius: 11px;
-                                            background: is-udp ? Theme.proto-quic-bg : is-tls ? Theme.proto-tls-bg : Theme.proto-direct-bg;
+                                            width: 44px; height: 22px; border-radius: Theme.radius-sm;
+                                            border-width: 1px;
+                                            border-color: is-udp ? Theme.warn-border : is-tls ? Theme.selected-border : Theme.card-border;
+                                            background: is-udp ? Theme.proto-quic-bg : is-tls ? Theme.proto-tls-bg : Theme.well-bg;
                                             Text {
                                                 width: 100%; height: 100%;
                                                 text: proto-label; font-size: 10px; font-weight: 800; font-family: Theme.mono-font;
-                                                color: is-udp ? Theme.proto-quic-fg : is-tls ? Theme.proto-tls-fg : Theme.proto-direct-fg;
+                                                color: is-udp ? Theme.proto-quic-fg : is-tls ? Theme.proto-tls-fg : Theme.text-primary;
                                                 horizontal-alignment: center; vertical-alignment: center;
                                             }
                                         }
@@ -324,6 +321,7 @@ export component ConnectionsPanel inherits VerticalLayout {
                                         horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 2px;
                                         Text {
                                             text: display-host; font-size: 13px; font-weight: is-selected ? 700 : 600;
+                                            font-family: Theme.mono-font;
                                             color: Theme.text-primary; overflow: elide;
                                         }
                                         Text {
@@ -335,18 +333,18 @@ export component ConnectionsPanel inherits VerticalLayout {
                                         }
                                     }
 
-                                    // Col 3: Rule badge
+                                    // Col 3: Rule Pill
                                     if root.show-rule-col : Rectangle {
                                         width: 94px;
                                         if conn.route-rule != "" : Rectangle {
                                             x: 0px; y: (parent.height - self.height) / 2;
-                                            width: min(parent.width, rule-lbl.preferred-width + 14px);
-                                            height: 21px; border-radius: 10px;
-                                            background: is-direct ? Theme.proto-direct-bg : Theme.accent-soft;
+                                            width: min(parent.width, rule-lbl.preferred-width + 12px);
+                                            height: 22px; border-radius: Theme.radius-sm;
+                                            background: is-direct ? Theme.live-emerald-soft : Theme.well-bg;
                                             rule-lbl := Text {
-                                                x: 7px; width: max(0px, parent.width - 14px); height: 100%;
-                                                text: conn.route-rule; font-size: 10px; font-weight: 700;
-                                                color: is-direct ? Theme.proto-direct-fg : Theme.nav-active-fg;
+                                                x: 6px; width: max(0px, parent.width - 12px); height: 100%;
+                                                text: conn.route-rule; font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
+                                                color: is-direct ? Theme.live-emerald : Theme.nav-active-fg;
                                                 vertical-alignment: center; overflow: elide;
                                             }
                                         }
@@ -355,43 +353,43 @@ export component ConnectionsPanel inherits VerticalLayout {
                                         }
                                     }
 
-                                    // Col 4: Semantic Outbound pill
+                                    // Col 4: Outbound Pill
                                     Rectangle {
-                                        property <bool> is-reject: conn.outbound == "reject" || conn.outbound == "block";
+                                        property <bool> is-reject: conn.outbound == "reject" || conn.outbound == "REJECT" || conn.outbound == "block" || conn.outbound == "BLOCK" || conn.path == "block" || conn.path == "reject";
                                         property <string> ob-text: conn.outbound != "" ? conn.outbound : conn.path;
                                         width: 84px;
                                         Rectangle {
                                             x: 0px; y: (parent.height - self.height) / 2;
                                             width: min(parent.width, ob-lbl.preferred-width + 12px);
-                                            height: 21px; border-radius: Theme.radius-xs;
+                                            height: 22px; border-radius: Theme.radius-sm;
                                             background: is-direct ? Theme.live-emerald-soft : is-reject ? Theme.error-bg : Theme.well-bg;
                                             ob-lbl := Text {
                                                 x: 6px; width: max(0px, parent.width - 12px); height: 100%;
                                                 text: ob-text;
                                                 font-size: 10px; font-weight: 700; font-family: Theme.mono-font;
-                                                color: is-direct ? Theme.live-emerald : is-reject ? Theme.error-fg : Theme.text-secondary;
+                                                color: is-direct ? Theme.live-emerald : is-reject ? Theme.error-fg : Theme.text-primary;
                                                 vertical-alignment: center; overflow: elide;
                                             }
                                         }
                                     }
 
-                                    // Col 5: Right-aligned DL / UL traffic + 2px RX/TX proportion micro-bar
+                                    // Col 5: Right-aligned DL / UL traffic + 3px Cobalt/Emerald RX/TX micro-bar
                                     VerticalLayout {
                                         width: 82px; alignment: center; spacing: 2px;
                                         Text { text: "↓ " + conn.download-text; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.telemetry-down; horizontal-alignment: right; overflow: elide; }
                                         Text { text: "↑ " + conn.upload-text; font-size: 10px; font-weight: 600; font-family: Theme.mono-font; color: Theme.telemetry-up; horizontal-alignment: right; overflow: elide; }
                                         if conn.has-traffic : Rectangle {
-                                            height: 2px;
-                                            border-radius: 1px;
+                                            height: 3px;
+                                            border-radius: 1.5px;
                                             background: Theme.inset-bg;
                                             clip: true;
                                             Rectangle {
-                                                x: 0px; y: 0px; height: 2px;
+                                                x: 0px; y: 0px; height: 3px;
                                                 width: parent.width * (1.0 - clamp(conn.up-ratio, 0.0, 1.0));
                                                 background: Theme.telemetry-down;
                                             }
                                             Rectangle {
-                                                x: parent.width * (1.0 - clamp(conn.up-ratio, 0.0, 1.0)); y: 0px; height: 2px;
+                                                x: parent.width * (1.0 - clamp(conn.up-ratio, 0.0, 1.0)); y: 0px; height: 3px;
                                                 width: parent.width * clamp(conn.up-ratio, 0.0, 1.0);
                                                 background: Theme.telemetry-up;
                                             }
@@ -416,7 +414,7 @@ export component ConnectionsPanel inherits VerticalLayout {
                             }
 
                             Rectangle {
-                                x: 14px; y: parent.height - 1px; width: max(0px, parent.width - 28px); height: 1px;
+                                x: 0px; y: parent.height - 1px; width: 100%; height: 1px;
                                 background: Theme.hairline-subtle;
                             }
                         }

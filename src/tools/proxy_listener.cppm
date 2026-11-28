@@ -189,7 +189,7 @@ export namespace cli::run_detail {
     }
 
     inline auto configure_listener(relay::Server& server, config::Config const& config, config::InboundConfig const& entry,
-        std::vector<DnsProtection> const& dns_transports, RouteFiles const& route_files, auto const& indexed_routes,
+        std::vector<DnsProtection> const& dns_transports, RouteFiles const& route_files,
         std::shared_ptr<relay::SnellReplayRegistry>& snell_replay,
         functional::function_ref<void(std::span<std::uint8_t const>, std::span<relay::ShadowsocksUserKey const>)> remember_ss,
         relay::PrincipalRegistry& principals, std::shared_ptr<void> const& acme_credential = {},
@@ -335,7 +335,7 @@ export namespace cli::run_detail {
             auto prepared = server.prepare_snell_inbound(entry.snell->psk_file, user, entry.snell->replay_window_seconds, snell_replay, entry.snell->http_obfs);
             if (!prepared) { return std::unexpected("Snell inbound: " + prepared.error()); }
         }
-        auto result = server.set_indexed_routes(indexed_routes, config.default_outbound, entry.name);
+        auto result = server.set_indexed_routes({}, config.default_outbound, entry.name);
         if (!result) { return std::unexpected("invalid routing: " + result.error()); }
         if (config.ordered_tcp) {
             auto const& program = *config.ordered_tcp;

@@ -23,8 +23,8 @@ def configure(root, ports, dns, ordered, use_fetch):
     rule action="route" outbound="direct"
   }''' if ordered else '''
   rules {
-    - kind="rule-set" value="primary" outbound="deny"
-    - kind="rule-set" value="secondary" outbound="deny"
+    - rule-set="primary" to="deny"
+    - rule-set="secondary" to="deny"
   }'''
     http_client = f'''
 http-clients {{

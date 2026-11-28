@@ -67,7 +67,7 @@ auto run(int family,std::size_t chunk,bool domain) -> bool {
     for (auto frame:{x::Frame{1,x::Kind::open,true,false,target,{},data},x::Frame{1,x::Kind::end},x::Frame{99,x::Kind::data,true,false,{}, {},data}}) {
         auto wire=x::encode(frame); if (!wire) return false; stream.input.insert(stream.input.end(),wire->begin(),wire->end());
     }
-    auto policy=::rules::RouteMatcher::compile(std::span<::rules::RouteRule const>{},0,3); if (!policy) return false;
+    auto policy=::rules::RouteProgram::compile_policy(std::span<::rules::ProgramRule const>{},0,3); if (!policy) return false;
     Resolver resolver; resolver.candidate=candidate; Server server(stream,resolver,*policy,2); io::io_context context(io::epoll); bool ok=false;
     capy::run_async(context.get_executor())(execute(server,stream,fd,ok)); (void)context.run_for(2s); return context.stopped() && ok && resolver.calls==int(domain);
 }
@@ -83,7 +83,7 @@ auto blocked_write(bool cancel) -> bool {
     for (auto frame:{x::Frame{1,x::Kind::open,true,false,target,{},data},x::Frame{1,x::Kind::end}}) {
         auto wire=x::encode(frame); if (!wire) return false; stream.input.insert(stream.input.end(),wire->begin(),wire->end());
     }
-    auto policy=::rules::RouteMatcher::compile(std::span<::rules::RouteRule const>{},0,3); if (!policy) return false;
+    auto policy=::rules::RouteProgram::compile_policy(std::span<::rules::ProgramRule const>{},0,3); if (!policy) return false;
     Resolver resolver; Server server(stream,resolver,*policy,2); io::io_context context(io::epoll);
     bool done=false,ok=false; capy::run_async(context.get_executor())(read_step(server,done,ok)); (void)context.run_for(1s);
     if (!done || !ok) return false;
@@ -109,7 +109,7 @@ auto resolve_failure() -> bool {
     std::ranges::copy(std::string_view("example.org"),domain.bytes.begin());
     Bytes payload{1}; auto wire=x::encode(x::Frame{1,x::Kind::open,true,false,domain,{},payload}); if (!wire) return false;
     Stream stream; stream.input=*wire; Resolver resolver;
-    auto policy=::rules::RouteMatcher::compile(std::span<::rules::RouteRule const>{},0,3); if (!policy) return false;
+    auto policy=::rules::RouteProgram::compile_policy(std::span<::rules::ProgramRule const>{},0,3); if (!policy) return false;
     Server server(stream,resolver,*policy,2); io::io_context context(io::epoll); bool ok=false;
     capy::run_async(context.get_executor())(resolve_failure_step(server,stream,ok)); (void)context.run_for(1s);
     return context.stopped() && ok && resolver.calls==1 && !stream.canceled;
@@ -135,7 +135,7 @@ auto reject_then_new() -> bool {
         auto wire=x::encode(frame); if (!wire) return false; stream.input.insert(stream.input.end(),wire->begin(),wire->end());
     }
     ::rules::RuleSet rules{{{"ip-cidr","127.0.0.2/32",{}}}};
-    auto policy=::rules::RouteMatcher::compile(std::array{::rules::RouteRule{rules,1}},0,2); if (!policy) return false;
+    auto policy=::rules::RouteProgram::compile_policy(std::array{::rules::ProgramRule{rules,{::rules::ProgramActionKind::route,1}}},0,2); if (!policy) return false;
     Resolver resolver; Server server(stream,resolver,*policy,2); io::io_context context(io::epoll); bool ok=false;
     capy::run_async(context.get_executor())(reject_then_new_step(server,stream,fd,ok)); (void)context.run_for(1s);
     return context.stopped() && ok;
@@ -160,7 +160,7 @@ auto cancel_resolve() -> bool {
     Bytes payload{1}; auto wire=x::encode(x::Frame{1,x::Kind::open,true,false,domain,{},payload}); if (!wire) return false;
     Stream stream; stream.input=*wire; WaitingResolver resolver;
     net::UdpEndpoint candidate{4,{},53}; candidate.address[0]=127; candidate.address[3]=1; resolver.candidate=candidate;
-    auto policy=::rules::RouteMatcher::compile(std::span<::rules::RouteRule const>{},0,3); if (!policy) return false;
+    auto policy=::rules::RouteProgram::compile_policy(std::span<::rules::ProgramRule const>{},0,3); if (!policy) return false;
     WaitingServer server(stream,resolver,*policy,2); io::io_context context(io::epoll); bool done=false,failed=false;
     capy::run_async(context.get_executor())(waiting_read(server,done,failed)); (void)context.run_for(30ms);
     if (!resolver.entered || done) { server.cancel(); return false; }
@@ -177,7 +177,7 @@ auto expire_during_resolve() -> bool {
     Bytes payload{1}; auto wire=x::encode(x::Frame{1,x::Kind::open,true,false,domain,{},payload}); if (!wire) return false;
     Stream stream; stream.input=*wire; WaitingResolver resolver;
     net::UdpEndpoint candidate{4,{},53}; candidate.address[0]=127; candidate.address[3]=1; resolver.candidate=candidate;
-    auto policy=::rules::RouteMatcher::compile(std::span<::rules::RouteRule const>{},0,3); if (!policy) return false;
+    auto policy=::rules::RouteProgram::compile_policy(std::span<::rules::ProgramRule const>{},0,3); if (!policy) return false;
     WaitingServer server(stream,resolver,*policy,2); io::io_context context(io::epoll); bool done=false,failed=false,expired=false,ok=false;
     capy::run_async(context.get_executor())(waiting_read(server,done,failed)); (void)context.run_for(30ms);
     if (!resolver.entered || done) { server.cancel(); return false; }
@@ -209,7 +209,7 @@ auto backpressure(int mode) -> bool {
     x::Address target; target.length=4; target.bytes[0]=127; target.bytes[3]=1; target.port=ntohs(addr.sin_port);
     Bytes data{1,2}; auto wire=x::encode(x::Frame{1,x::Kind::open,true,false,target,{},data}); if (!wire) return false;
     Stream stream; stream.input=*wire; Resolver resolver;
-    auto policy=::rules::RouteMatcher::compile(std::span<::rules::RouteRule const>{},0,3); if (!policy) return false;
+    auto policy=::rules::RouteProgram::compile_policy(std::span<::rules::ProgramRule const>{},0,3); if (!policy) return false;
     BackpressureServer server(stream,resolver,*policy,2); io::io_context context(io::epoll); bool done=false,ok=false;
     BackpressuredDirect::attempts=0; BackpressuredDirect::failures=mode?1000:2;
     capy::run_async(context.get_executor())(backpressure_read(server,done,ok)); (void)context.run_for(mode==1?2ms:2s);
@@ -264,7 +264,7 @@ template<class Backend> auto socket_backpressure(Backend backend,bool cancel) ->
     auto filled=fill(server_socket.native_handle()); if (!filled || !*filled) return false;
     Bytes payload{1}; auto frame=x::encode(x::Frame{99,x::Kind::data,true,false,{}, {},payload}); if (!frame) return false;
     if (::send(peer.native_handle(),frame->data(),frame->size(),MSG_NOSIGNAL)!=static_cast<ssize_t>(frame->size())) return false;
-    auto policy=::rules::RouteMatcher::compile(std::span<::rules::RouteRule const>{},0,3); if (!policy) return false;
+    auto policy=::rules::RouteProgram::compile_policy(std::span<::rules::ProgramRule const>{},0,3); if (!policy) return false;
     SocketStream stream{server_socket}; Resolver resolver; SocketServer server(stream,resolver,*policy,2);
     bool read_done=false,read_ok=false,poll_done=false,poll_ok=false;
     capy::run_async(context.get_executor())(socket_read(server,read_done,read_ok));

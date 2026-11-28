@@ -102,6 +102,12 @@ namespace openconnect {
             if (ec != std::errc{} || p != val.data() + val.size() || parsed < min_v || parsed > max_v) return std::nullopt;
             return static_cast<std::uint16_t>(parsed);
         }
+
+        // Cisco ASA sends "disabled" for a timer that is turned off.
+        [[nodiscard]] auto parse_timer_s(std::string_view val) noexcept -> std::optional<std::uint16_t> {
+            if (eq_icase(val, "disabled")) return std::uint16_t{0};
+            return parse_u16(val, 0, 3600);
+        }
     }
 
     ClientMtlsAuth::ClientMtlsAuth(tls::ServerCredential&& cred, std::array<std::uint8_t, 32> fp, std::string hex) noexcept
@@ -309,15 +315,15 @@ namespace openconnect {
             } else if (eq_icase(key, "X-DTLS-MTU")) {
                 if (auto m = parse_u16(val, 576, 9000)) res.dtls_mtu = *m;
             } else if (eq_icase(key, "X-DTLS-DPD")) {
-                if (auto d = parse_u16(val, 0, 3600)) res.dtls_dpd_s = *d;
+                if (auto d = parse_timer_s(val)) res.dtls_dpd_s = *d;
             } else if (eq_icase(key, "X-DTLS-Keepalive")) {
-                if (auto k = parse_u16(val, 0, 3600)) res.dtls_keepalive_s = *k;
+                if (auto k = parse_timer_s(val)) res.dtls_keepalive_s = *k;
             } else if (eq_icase(key, "X-CSTP-MTU")) {
                 if (auto m = parse_u16(val, 576, 9000)) res.mtu = *m;
             } else if (eq_icase(key, "X-CSTP-DPD")) {
-                if (auto d = parse_u16(val, 0, 3600)) res.dpd_s = *d;
+                if (auto d = parse_timer_s(val)) res.dpd_s = *d;
             } else if (eq_icase(key, "X-CSTP-Keepalive")) {
-                if (auto k = parse_u16(val, 0, 3600)) res.keepalive_s = *k;
+                if (auto k = parse_timer_s(val)) res.keepalive_s = *k;
             } else if (eq_icase(key, "X-CSTP-DNS") && !val.empty()) {
                 res.dns_servers.emplace_back(val);
             }

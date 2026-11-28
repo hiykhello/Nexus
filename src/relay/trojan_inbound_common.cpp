@@ -75,7 +75,7 @@ namespace relay::trojan_in {
         }
     }
 
-    auto serve_trojan_stream(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto serve_trojan_stream(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
         TrojanInboundProfile const& profile, TrojanInboundRef& incoming, Clock::time_point deadline,
         std::optional<trojan::detail::AcceptedRequest> pre_accepted)
         -> capy::task<> {

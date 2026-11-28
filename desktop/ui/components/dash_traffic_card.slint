@@ -1,0 +1,230 @@
+import { TelemetryWaveState } from "../command_palette_state.slint";
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
+
+export component DashboardTrafficCard inherits Rectangle {
+    in property <bool> compact: false;
+    in property <bool> core-running: false;
+    in property <int> active-sessions: 0;
+    in property <string> down-speed-value: "0.0";
+    in property <string> down-speed-unit: "KB/s";
+    in property <string> up-speed-value: "0.0";
+    in property <string> up-speed-unit: "KB/s";
+    in property <string> download-total: "0 B";
+    in property <string> upload-total: "0 B";
+
+    callback open-connections();
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        // Card Header
+        HorizontalLayout {
+            height: 28px;
+            spacing: 8px;
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: I18n.t("网络速率", "Speed");
+                font-size: 16px;
+                font-weight: 800;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Rectangle {
+                height: 28px;
+                border-radius: Theme.radius-sm;
+                background: conn-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+                conn-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open-connections(); }
+                }
+                HorizontalLayout {
+                    padding-left: 10px;
+                    padding-right: 8px;
+                    spacing: 4px;
+                    Text {
+                        text: "\{root.active-sessions} " + I18n.t("连接", "Active");
+                        font-size: 12px;
+                        font-weight: 700;
+                        font-family: Theme.mono-font;
+                        color: Theme.nav-active-fg;
+                        vertical-alignment: center;
+                    }
+                    Image {
+                        width: 13px;
+                        height: 13px;
+                        y: (parent.height - self.height) / 2;
+                        source: @image-url("../icons/chevron-right.svg");
+                        colorize: Theme.nav-active-fg;
+                    }
+                }
+            }
+        }
+
+        // Dual Tabular KPI Strip (Download Cobalt + Upload Emerald + Scale/Memory)
+        HorizontalLayout {
+            spacing: root.compact ? 12px : 18px;
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                spacing: 3px;
+                Text {
+                    text: "↓ " + root.down-speed-value + " " + root.down-speed-unit;
+                    font-size: root.compact ? 19px : 22px;
+                    font-weight: 800;
+                    font-family: Theme.mono-font;
+                    color: Theme.telemetry-down;
+                    overflow: elide;
+                }
+                Text {
+                    text: I18n.t("总下载 ", "Total RX ") + root.download-total;
+                    font-size: 12px;
+                    font-family: Theme.mono-font;
+                    color: Theme.text-muted;
+                    overflow: elide;
+                }
+            }
+
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                spacing: 3px;
+                Text {
+                    text: "↑ " + root.up-speed-value + " " + root.up-speed-unit;
+                    font-size: root.compact ? 19px : 22px;
+                    font-weight: 800;
+                    font-family: Theme.mono-font;
+                    color: Theme.telemetry-up;
+                    overflow: elide;
+                }
+                Text {
+                    text: I18n.t("总上传 ", "Total TX ") + root.upload-total;
+                    font-size: 12px;
+                    font-family: Theme.mono-font;
+                    color: Theme.text-muted;
+                    overflow: elide;
+                }
+            }
+
+            if !root.compact : VerticalLayout {
+                horizontal-stretch: 0.7;
+                min-width: 0px;
+                spacing: 3px;
+                alignment: end;
+                Text {
+                    text: TelemetryWaveState.scale-peak-text;
+                    font-size: 13px;
+                    font-weight: 700;
+                    font-family: Theme.mono-font;
+                    color: Theme.text-secondary;
+                    horizontal-alignment: right;
+                    overflow: elide;
+                }
+                Text {
+                    text: I18n.t("峰值", "Peak");
+                    font-size: 11px;
+                    color: Theme.text-muted;
+                    horizontal-alignment: right;
+                    overflow: elide;
+                }
+            }
+        }
+
+        // Recessed Dual-Track Bezier Waveform Surface (fills remaining height cleanly)
+        Rectangle {
+            vertical-stretch: 1;
+            min-height: 112px;
+            border-radius: Theme.radius-md;
+            background: Theme.well-bg;
+            clip: true;
+
+            chart-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.open-connections(); }
+            }
+
+            Rectangle { x: 0px; y: parent.height * 0.25; width: 100%; height: 1px; background: Theme.hairline-subtle; }
+            Rectangle { x: 0px; y: parent.height * 0.50; width: 100%; height: 1px; background: Theme.hairline-subtle; }
+            Rectangle { x: 0px; y: parent.height * 0.75; width: 100%; height: 1px; background: Theme.hairline-subtle; }
+            Rectangle { x: parent.width * 0.25; y: 0px; width: 1px; height: 100%; background: Theme.hairline-subtle.with-alpha(0.6); }
+            Rectangle { x: parent.width * 0.50; y: 0px; width: 1px; height: 100%; background: Theme.hairline-subtle.with-alpha(0.6); }
+            Rectangle { x: parent.width * 0.75; y: 0px; width: 1px; height: 100%; background: Theme.hairline-subtle.with-alpha(0.6); }
+
+            if TelemetryWaveState.rx-area != "" : Path {
+                viewbox-width: 560; viewbox-height: 56;
+                commands: TelemetryWaveState.rx-area;
+                fill: Theme.telemetry-down.with-alpha(Theme.dark ? 0.22 : 0.13);
+            }
+
+            if TelemetryWaveState.rx-line != "" : Path {
+                viewbox-width: 560; viewbox-height: 56;
+                commands: TelemetryWaveState.rx-line;
+                stroke: Theme.telemetry-down;
+                stroke-width: 2.2px;
+            }
+
+            if TelemetryWaveState.tx-dashed-line != "" : Path {
+                viewbox-width: 560; viewbox-height: 56;
+                commands: TelemetryWaveState.tx-dashed-line;
+                stroke: Theme.telemetry-up;
+                stroke-width: 1.8px;
+            }
+
+            if TelemetryWaveState.rx-line == "" : Rectangle {
+                x: 0px;
+                y: parent.height - 6px;
+                width: 100%;
+                height: 2px;
+                background: Theme.telemetry-down.with-alpha(0.32);
+            }
+
+            if !root.core-running && TelemetryWaveState.rx-line == "" : Text {
+                width: 100%;
+                height: 100%;
+                text: I18n.t("启动核心后显示实时曲线", "Start core for live traffic");
+                font-size: 12px;
+                font-weight: 600;
+                color: Theme.text-muted;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            if TelemetryWaveState.has-onset && TelemetryWaveState.onset-ratio >= 0.0 : Rectangle {
+                x: clamp(TelemetryWaveState.onset-ratio, 0.04, 0.96) * parent.width;
+                y: 0px;
+                width: 1.5px;
+                height: 100%;
+                background: Theme.warn-fg;
+            }
+
+            if TelemetryWaveState.has-onset && TelemetryWaveState.onset-label != "" : Rectangle {
+                x: 8px;
+                y: 8px;
+                width: onset-lbl.preferred-width + 14px;
+                height: 22px;
+                border-radius: Theme.radius-xs;
+                border-width: 1px;
+                border-color: Theme.warn-border;
+                background: Theme.dark ? #332512 : #fef3c7;
+                onset-lbl := Text {
+                    x: 7px;
+                    height: 100%;
+                    text: I18n.t("切换 · ", "Switch · ") + TelemetryWaveState.onset-label;
+                    font-size: 11px;
+                    font-weight: 700;
+                    color: Theme.dark ? #fbbf24 : #92400e;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}

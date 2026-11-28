@@ -49,7 +49,7 @@ export namespace socks5 {
     // complete or discard a pending domain, and close it with the TCP session.
     class UdpIngress {
         UdpAssociation& association_;
-        rules::RouteMatcher const& policy_;
+        rules::RouteProgram const& policy_;
         std::optional<std::string_view> auth_user_;
         UdpDirect direct_;
         net::stream_relay::Delivery delivery_;
@@ -100,7 +100,7 @@ export namespace socks5 {
         capy::async_event changed_,work_;
     public:
         // auth_user is borrowed until this driver and its pending work are destroyed.
-        UdpIngress(UdpAssociation& association, rules::RouteMatcher const& policy, bool allow_domains=false, bool allow_tunnels=false,
+        UdpIngress(UdpAssociation& association, rules::RouteProgram const& policy, bool allow_domains=false, bool allow_tunnels=false,
                    std::optional<std::string_view> auth_user={},platform::SocketBinding const* binding=nullptr,bool external_route=false,
                    net::stream_relay::Delivery delivery={},UdpRouteDelivery route_delivery={}) noexcept
             : association_(association),policy_(policy),auth_user_(auth_user),direct_(association,policy,auth_user,binding),

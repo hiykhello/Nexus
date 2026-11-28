@@ -205,7 +205,7 @@ namespace relay {
         SplicePipePool* splice_pipe_pool = nullptr;
         std::size_t splice_max_idle_pipes = SplicePipePool::kMaxIdlePipes;
         std::array<bool, 2> splice_wait_busy{};
-        auto inspect_source_owner(rules::RouteMatcher const&, std::optional<io::endpoint> original = {}) -> void;
+        auto inspect_source_owner(rules::RouteProgram const&, std::optional<io::endpoint> original = {}) -> void;
         io::tcp_socket client;
         io::tcp_socket target;
         // The parent server holds the registry until all workers drain.
@@ -364,7 +364,7 @@ namespace relay {
     auto ingress_metadata(platform::network::Monitor const*, net::UdpEndpoint const&,
         std::optional<std::uint8_t> dscp = {}, std::uint32_t index = 0) noexcept -> rules::IngressMetadata;
 
-    inline auto source_endpoint(Session& session, rules::RouteMatcher const& policy) -> std::optional<net::UdpEndpoint> {
+    inline auto source_endpoint(Session& session, rules::RouteProgram const& policy) -> std::optional<net::UdpEndpoint> {
         return source_endpoint(session, policy.needs_source() || session.dns_requirements().source);
     }
 

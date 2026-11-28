@@ -29,8 +29,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.nexus.android.bridge.core.CoreProcessSupervisor
 import org.nexus.android.bridge.ipc.CachedTokenReader
@@ -61,8 +59,6 @@ class MainActivity : ComponentActivity() {
     private lateinit var syncCoordinator: WorkspaceSyncCoordinator
     private val ioScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val trimInFlight = AtomicBoolean(false)
-    private val dashSaveMutex = Mutex()
-    @Volatile private var pendingDashVisibility: DashboardCardVisibility? = null
     @Volatile private var controlHttpBaseUrl: String = "http://127.0.0.1:9090"
     private var ownerResolver: ConnectionOwnerResolver? = null
     private var askedNotificationPermission = false
@@ -115,7 +111,6 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val scope = rememberCoroutineScope()
-            var dashVisibility by remember { mutableStateOf(DashboardCardVisibility()) }
             var workspaceState by remember { mutableStateOf(WorkspaceUiState()) }
             var composeLaunchError by remember { mutableStateOf("") }
 
@@ -134,7 +129,6 @@ class MainActivity : ComponentActivity() {
             }
 
             LaunchedEffect(Unit) {
-                dashVisibility = withContext(Dispatchers.IO) { DashboardLayoutPrefs.load(db) }
                 val initial = workspaceCoordinator.loadInitialState()
                 applyWorkspace(initial)
                 if (!socketPaths.composedConfigFile.isFile && initial.activeProfileId.isNotEmpty()) {
@@ -157,6 +151,7 @@ class MainActivity : ComponentActivity() {
             NexusTheme(
                 themePreset = themePreset,
                 dynamicColor = workspaceState.host.android.dynamicColor,
+                surfaceAlpha = workspaceState.host.android.surfaceAlpha,
             ) {
                 val running by NexusVpnService.runningState.collectAsStateWithLifecycle()
                 val tunnelState by NexusVpnService.tunnelState.collectAsStateWithLifecycle()
@@ -196,29 +191,47 @@ class MainActivity : ComponentActivity() {
                             workspaceCoordinator.selectProfile(id, running) { launchRestartAsync() }.let { (n, m) -> applyWorkspace(n); m }
                         },
                         onAddProfile = { item -> workspaceCoordinator.addProfile(item, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onSaveProfile = { item, isEdit -> workspaceCoordinator.saveProfile(item, isEdit, running).let { (n, m) -> applyWorkspace(n); m } },
                         onDeleteProfile = { id -> workspaceCoordinator.deleteProfile(id, running).let { (n, m) -> applyWorkspace(n); m } },
                         onAddSubscription = { name, url ->
                             workspaceState = workspaceState.copy(isRefreshingSub = true)
                             try { workspaceCoordinator.addAndRefreshSubscription(name, url, running).let { (n, m) -> applyWorkspace(n); m } }
                             finally { workspaceState = workspaceState.copy(isRefreshingSub = false) }
                         },
+                        onSaveSubscription = { sub, fetchNow ->
+                            workspaceState = workspaceState.copy(isRefreshingSub = fetchNow)
+                            try { workspaceCoordinator.saveSubscription(sub, fetchNow, running).let { (n, m) -> applyWorkspace(n); m } }
+                            finally { workspaceState = workspaceState.copy(isRefreshingSub = false) }
+                        },
+                        onDeleteSubscription = { subId -> workspaceCoordinator.deleteSubscription(subId, running).let { (n, m) -> applyWorkspace(n); m } },
                         onRefreshSubscription = { subId ->
                             workspaceState = workspaceState.copy(isRefreshingSub = true)
                             try { workspaceCoordinator.refreshSubscription(subId, running).let { (n, m) -> applyWorkspace(n); m } }
+                            finally { workspaceState = workspaceState.copy(isRefreshingSub = false) }
+                        },
+                        onRefreshAllSubscriptions = {
+                            workspaceState = workspaceState.copy(isRefreshingSub = true)
+                            try { workspaceCoordinator.refreshAllSubscriptions(running).let { (n, m) -> applyWorkspace(n); m } }
                             finally { workspaceState = workspaceState.copy(isRefreshingSub = false) }
                         },
                         onUpdateSubscriptionChain = { subId, prevId, nextId ->
                             workspaceCoordinator.updateSubscriptionChain(subId, prevId, nextId, running).let { (n, m) -> applyWorkspace(n); m }
                         },
                         onSelectRoutingProfile = { routingId -> workspaceCoordinator.selectRoutingProfile(routingId, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onSaveRoutingStrategy = { newName, domStrat, defOut, autoIf, findProc ->
+                            workspaceCoordinator.saveRoutingStrategy(newName, domStrat, defOut, autoIf, findProc, running).let { (n, m) -> applyWorkspace(n); m }
+                        },
                         onAddRoutingRule = { rule -> workspaceCoordinator.addRoutingRule(rule, running).let { (n, m) -> applyWorkspace(n); m } },
                         onToggleRoutingRule = { ruleId, en -> workspaceCoordinator.toggleRoutingRule(ruleId, en, running).let { (n, m) -> applyWorkspace(n); m } },
                         onDeleteRoutingRule = { ruleId -> workspaceCoordinator.deleteRoutingRule(ruleId, running).let { (n, m) -> applyWorkspace(n); m } },
                         onUpdateRoutingFlags = { autoIf, findProc ->
                             workspaceCoordinator.updateRoutingProfileFlags(autoIf, findProc, running).let { (n, m) -> applyWorkspace(n); m }
                         },
+                        onSaveRuleSetAsset = { asset -> workspaceCoordinator.saveRuleSetAsset(asset, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onDeleteRuleSetAsset = { tag -> workspaceCoordinator.deleteRuleSetAsset(tag, running).let { (n, m) -> applyWorkspace(n); m } },
                         onUpdateDns = { dns -> workspaceCoordinator.updateDns(dns, running).let { (n, m) -> applyWorkspace(n); m } },
-                        onUpdateHost = { host -> workspaceCoordinator.updateHost(host).let { (n, m) -> applyWorkspace(n); m } },
+                        onUpdateFullTemplate = { tpl -> workspaceCoordinator.updateFullTemplate(tpl, running).let { (n, m) -> applyWorkspace(n); m } },
+                        onUpdateHost = { host -> workspaceCoordinator.updateHost(host, running) { launchRestartAsync() }.let { (n, m) -> applyWorkspace(n); m } },
                         onUpdateSyncSettings = { u, user, pw, pass, dev ->
                             workspaceCoordinator.mutateHost { cur ->
                                 cur.copy(android = cur.android.copy(webdavUrl = u, webdavUsername = user, webdavPassword = pw, syncPassphrase = pass, syncDeviceLabel = dev))
@@ -256,12 +269,6 @@ class MainActivity : ComponentActivity() {
                     localLogs = localLogs,
                     activeProfileName = workspaceState.activeProfileTitle,
                     excludedPackages = perAppPackages,
-                    dashVisibility = dashVisibility,
-                    onDashVisibilityChange = { next ->
-                        dashVisibility = next
-                        pendingDashVisibility = next
-                        ioScope.launch { dashSaveMutex.withLock { pendingDashVisibility?.let { DashboardLayoutPrefs.save(db, it) } } }
-                    },
                     workspaceState = workspaceState,
                     workspaceActions = workspaceActions,
                     onShareLogs = { text ->
@@ -283,7 +290,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onBypassFromConnection = { pkg ->
                         scope.launch {
-                            applyWorkspace(workspaceCoordinator.mutateHost { cur ->
+                            applyWorkspace(workspaceCoordinator.mutateHost(running = running, onRestartNeeded = { launchRestartAsync() }) { cur ->
                                 MainTunnelCoordinator.applyBypassFromConnection(cur, pkg)
                             }.first)
                         }
@@ -372,7 +379,7 @@ class MainActivity : ComponentActivity() {
                     onQueryDns = { name, type, server -> controlClient.queryDns(name, type, server) },
                     onFlushFakeIp = { controlClient.flushFakeIp() },
                     onExplainRule = { target, routeMode ->
-                        val inbound = if (workspaceState.host.android.runMode == AndroidRunMode.PROXY_ONLY) "local-mixed" else "tun-in"
+                        val inbound = AndroidHostConfig.selectActiveInboundTag(workspaceState.host.android)
                         if (!socketPaths.composedConfigFile.isFile && workspaceState.activeProfileId.isNotEmpty()) {
                             workspaceCoordinator.composeForLaunch(workspaceState.activeProfileId)
                         }

@@ -104,7 +104,7 @@ export namespace cli::run_detail {
             if (queue_.size() + (active_ ? 1u : 0u) >= kMaxPending)
                 return std::unexpected("probe-busy");
 
-            auto matcher = rules::RouteMatcher::compile({}, *idx, 2 + cfg.tunnel_count());
+            auto matcher = rules::RouteProgram::compile_policy({}, *idx, 2 + cfg.tunnel_count());
             if (!matcher) return std::unexpected("probe-unavailable");
 
             auto probe = std::make_shared<relay::OutboundProbe>();

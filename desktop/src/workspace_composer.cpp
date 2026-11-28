@@ -13,6 +13,7 @@ module;
 #include <csignal>
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -20,6 +21,7 @@ module;
 module desktop.workspace_composer;
 
 import std;
+import desktop.desktop_host_config;
 import desktop.mini_json;
 import desktop.workspace_models;
 
@@ -349,5 +351,139 @@ namespace desktop {
             if (res.errors.empty()) res.errors.push_back(std::format("nexus workspace compose exited with code {}", code));
         }
         return res;
+    }
+
+    namespace {
+        auto kdl_escape_cmp(std::string_view s) -> std::string {
+            std::string out{"\""};
+            for (char ch : s) {
+                if (ch == '\\' || ch == '"') out.push_back('\\');
+                out.push_back(ch);
+            }
+            out.push_back('"');
+            return out;
+        }
+
+        auto split_ip_port_cmp(std::string_view raw) -> std::optional<std::pair<std::string, std::uint16_t>> {
+            while (!raw.empty() && (raw.front() == ' ' || raw.front() == '\t')) raw.remove_prefix(1);
+            while (!raw.empty() && (raw.back() == ' ' || raw.back() == '\t')) raw.remove_suffix(1);
+            if (raw.empty()) return std::nullopt;
+            std::string host;
+            std::string_view port_sv;
+            if (raw.front() == '[') {
+                auto close = raw.find(']');
+                if (close == std::string_view::npos || close + 2 > raw.size() || raw[close + 1] != ':') return std::nullopt;
+                host = std::string(raw.substr(1, close - 1));
+                port_sv = raw.substr(close + 2);
+            } else {
+                auto colon = raw.rfind(':');
+                if (colon == std::string_view::npos || colon == 0 || raw.find(':') != colon) return std::nullopt;
+                host = std::string(raw.substr(0, colon));
+                port_sv = raw.substr(colon + 1);
+            }
+            unsigned long p = 0;
+            auto [ptr, ec] = std::from_chars(port_sv.data(), port_sv.data() + port_sv.size(), p);
+            if (ec != std::errc{} || ptr != port_sv.data() + port_sv.size() || p == 0 || p > 65535 || host.empty()) return std::nullopt;
+            return std::pair{std::move(host), static_cast<std::uint16_t>(p)};
+        }
+
+        auto write_lan_pass_secret_cmp(std::filesystem::path const& secrets_dir, std::string_view pass) -> std::optional<std::string> {
+            if (secrets_dir.empty()) return "/etc/nexus/secrets/in-pass-lan.sec";
+            std::error_code ec;
+            std::filesystem::create_directories(secrets_dir, ec);
+            auto full = std::filesystem::absolute(secrets_dir, ec) / "in-pass-lan.sec";
+#ifndef _WIN32
+            (void)::chmod(secrets_dir.c_str(), 0700);
+            int fd = ::open(full.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+            if (fd < 0) return std::nullopt;
+            (void)::fchmod(fd, 0600);
+            for (std::size_t off = 0; off < pass.size();) {
+                auto n = ::write(fd, pass.data() + off, pass.size() - off);
+                if (n <= 0) { if (n < 0 && errno == EINTR) continue; ::close(fd); return std::nullopt; }
+                off += static_cast<std::size_t>(n);
+            }
+            if (::close(fd) != 0) return std::nullopt;
+#else
+            std::ofstream out(full, std::ios::binary | std::ios::trunc);
+            if (!out || !(out.write(pass.data(), static_cast<std::streamsize>(pass.size())).good())) return std::nullopt;
+#endif
+            return path_to_utf8_cmp(full);
+        }
+    }
+
+    auto apply_desktop_inbounds_overlay(
+        std::string_view composed_kdl, DesktopHostConfig const& host,
+        std::filesystem::path const& secrets_dir, std::vector<std::string>& secret_files)
+        -> std::expected<std::string, std::string> {
+        auto const start_pos = composed_kdl.find("\ninbounds {\n");
+        std::size_t const blk_start = (start_pos != std::string_view::npos) ? (start_pos + 1)
+            : (composed_kdl.starts_with("inbounds {\n") ? 0u : std::string_view::npos);
+        if (blk_start == std::string_view::npos) return std::string(composed_kdl);
+        int depth = 0;
+        std::size_t blk_end = std::string_view::npos;
+        bool in_str = false;
+        for (std::size_t i = blk_start; i < composed_kdl.size(); ++i) {
+            char c = composed_kdl[i];
+            if (c == '"' && (i == 0 || composed_kdl[i - 1] != '\\')) in_str = !in_str;
+            if (in_str) continue;
+            if (c == '{') ++depth;
+            else if (c == '}' && --depth == 0) {
+                blk_end = (i + 1 < composed_kdl.size() && composed_kdl[i + 1] == '\n') ? (i + 2) : (i + 1);
+                break;
+            }
+        }
+        if (blk_end == std::string_view::npos) return std::string(composed_kdl);
+        auto const orig_blk = composed_kdl.substr(blk_start, blk_end - blk_start);
+        std::string preserved_tun;
+        if (auto tun_pos = orig_blk.find("  inbound \"tun-in\""); tun_pos != std::string_view::npos && host.enable_tun) {
+            for (std::size_t i = tun_pos, td = 0; i < orig_blk.size(); ++i) {
+                if (orig_blk[i] == '{') ++td;
+                else if (orig_blk[i] == '}' && --td == 0) {
+                    auto end_i = (i + 1 < orig_blk.size() && orig_blk[i + 1] == '\n') ? (i + 2) : (i + 1);
+                    preserved_tun = std::string(orig_blk.substr(tun_pos, end_i - tun_pos));
+                    break;
+                }
+            }
+        }
+        bool const linux_strict = (host.platform == "desktop-linux") && host.enable_tun && host.tun_strict_route;
+        std::ostringstream ins;
+        std::size_t count = preserved_tun.empty() ? 0u : 1u;
+        std::string pass_file;
+        auto emit_one = [&](std::string_view name, std::string_view proto, std::string_view spec, bool allow_lan_bind, bool force_auth) -> std::expected<void, std::string> {
+            auto hp = split_ip_port_cmp(spec);
+            if (!hp) return std::unexpected(std::format("Invalid inbound listen address '{}' for {}", spec, name));
+            bool is_loop = (hp->first == "127.0.0.1" || hp->first == "::1");
+            std::string eff_host = (allow_lan_bind && is_loop) ? ((hp->first == "::1") ? "::" : "0.0.0.0") : hp->first;
+            if (allow_lan_bind && is_loop) is_loop = false;
+            if (linux_strict && !is_loop) return {};
+            ins << "  inbound " << kdl_escape_cmp(name) << " type=" << kdl_escape_cmp(proto)
+                << " {\n    listen host=" << kdl_escape_cmp(eff_host) << " port=" << hp->second << '\n';
+            if ((!is_loop || force_auth) && !host.lan_username.empty() && !host.lan_password.empty()) {
+                if (pass_file.empty()) {
+                    auto pf = write_lan_pass_secret_cmp(secrets_dir, host.lan_password);
+                    if (!pf) return std::unexpected("Failed to write LAN inbound secret file");
+                    pass_file = std::move(*pf);
+                    if (std::ranges::find(secret_files, pass_file) == secret_files.end()) secret_files.push_back(pass_file);
+                }
+                ins << "    authentication \"password\" username=" << kdl_escape_cmp(host.lan_username)
+                    << " password-file=" << kdl_escape_cmp(pass_file) << '\n';
+            } else ins << "    authentication \"none\"\n";
+            ins << "  }\n";
+            ++count;
+            return {};
+        };
+        if (host.enable_mixed && !host.mixed_listen.empty())
+            if (auto ok = emit_one("mixed-in", "mixed", host.mixed_listen, host.allow_lan, false); !ok) return std::unexpected(ok.error());
+        if (host.enable_http && !host.http_listen.empty())
+            if (auto ok = emit_one("http-in", "http", host.http_listen, host.allow_lan, false); !ok) return std::unexpected(ok.error());
+        if (host.enable_socks && !host.socks_listen.empty())
+            if (auto ok = emit_one("socks-in", "socks5", host.socks_listen, host.allow_lan, false); !ok) return std::unexpected(ok.error());
+        if (!host.enable_socks && !host.second_local_listen.empty())
+            if (auto ok = emit_one("local-in-2", "mixed", host.second_local_listen, false, false); !ok) return std::unexpected(ok.error());
+        if (!host.lan_listen.empty())
+            if (auto ok = emit_one("lan-in", "mixed", host.lan_listen, false, true); !ok) return std::unexpected(ok.error());
+        ins << preserved_tun;
+        if (count == 0) return std::unexpected("No inbound enabled (enable Mixed, HTTP, SOCKS5, or TUN)");
+        return std::string(composed_kdl.substr(0, blk_start)) + "inbounds {\n" + ins.str() + "}\n" + std::string(composed_kdl.substr(blk_end));
     }
 }

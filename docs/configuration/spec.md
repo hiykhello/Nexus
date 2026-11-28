@@ -101,7 +101,7 @@ DoT、DoH 和 DoQ 上游可用 `detour="egress"` 指定配置中的具名 direct
 `dns-fakeip` 为 SOCKS5、Mixed、透明 TCP、Linux UDP TPROXY 和普通 Linux TUN 提供显式 FakeIP 配置。在启用 `dns.listen` 的配置中加入：
 
 ```kdl
-fake-ip server="business" ipv4-pool="198.18.0.0/16" ipv6-pool="fd15:4231::/96" ttl-seconds=60 state-directory="/var/lib/nexus/fakeip"
+fake-ip server="business" ipv4-pool="198.18.0.0/16" ipv6-pool="fd15:4231::/96" ttl-seconds=60
 ```
 
 DNS 规则终止于选定的 `business` 上游时，专用 TCP/UDP 监听器为符合条件的 IN/A 和 IN/AAAA 生成租约。IPv6 池可省略，配置后 A 与 AAAA 共享映射容量。预定义及拒绝规则照常生效，DNSSEC、ECS 和其他未支持的查询选项沿上游路径处理。内部和引导解析仍向上游查询真实地址。池已满或启动隔离期内返回 SERVFAIL。有序流量规则可用 `domain-source="fakeip"` 匹配反查结果。
@@ -110,7 +110,7 @@ SOCKS5 UDP 的 FakeIP 回复保留请求中的合成地址和端口。经 Trojan
 
 启用 `tproxy-udp` 时，UDP TPROXY 可对合成地址使用 indexed 或有序路由，通过原始合成端点向客户端回包。DNS 规则集重载产生新的策略视图。旧流继续使用原视图，新流使用新视图发布的地址。
 
-状态目录要求当前进程用户拥有且权限为 `0700`，预置权限为 `0600` 的二进制 `instance.id`（16 字节）和 `history.key`（32 字节）。首次启动加 `initialize=#true`，成功后移除此项再重启。重启后的隔离期覆盖历史 TTL、租约宽限和在途缓冲。已记录的 IPv4 范围继续保留，已经写入历史的 IPv6 池须沿用原配置。
+FakeIP 持久化统一使用顶层 `state { directory "..."; }` 下的 `fakeip/` 子目录（见下文[持久状态与缓存](#持久状态与缓存)），要求当前进程用户拥有且权限为 `0700`，自动初始化 `fakeip.meta` / `fakeip.wal` / `fakeip.ckpt`。重启后保留已记录的池范围并按 `fakeip-crash-mode`（`range-reserve` 或 `per-mapping`）恢复映射。
 
 内部 A/AAAA 解析的有序 DNS 规则可使用 `rule domain-suffix="example.test" query-type="AAAA" server="remote"`；`domain` 与 `domain-suffix` 二选一，query type 可单独使用。query type 支持 `"A"`、`"AAAA"` 或 1..65535 的整数，当前地址解析只产生 A/AAAA。省略 query type 的旧规则继续作用于两种问题，同一条的条件同时满足后首命中选择服务器。不同服务器的结果须通过规范名、正负答复和地址数量检查后才合并；local 的 hosts、搜索域及在途快照继续保留。DNS 还支持 `domain-keyword` 和 `domain-wildcard`（`*.example.test` 只匹配一层标签），四种域名条件同条最多一个。`action="route"` 选择 server，省略 action 兼容旧行为；`action="reject"` 不带 server，令内部地址解析直接失败。显式 action 可无条件首命中。实际查询的一族被拒绝时整次解析不读缓存、不发上游问题，SOCKS 报规则拒绝、HTTP 报 403；单族策略不会检查未查询的另一族。显式 bootstrap 不应用业务拒绝规则，上游 REFUSED 保持 DNS 错误。执行边界见 [支持矩阵](../planning/proxy-kernel-support-matrix.md)。
 
@@ -201,8 +201,6 @@ control http-listen="127.0.0.1:9090" bearer-token-file="/etc/nexus/secrets/contr
 
 `control` 可用 `selector-state-directory="/var/lib/nexus/selectors"` 保存手动选择。目录须已创建，由运行账户所有，权限为 `0700`。为每个运行实例使用独立目录，运行中保留稳定的 `instance.lock`。有效的已保存选择覆盖启动和重载配置中的 `selected`。可读取既有 NXSEL1 快照，下一次成功选择会写入带 BLAKE3 校验的 NXST01 封装。损坏或未知版本的选择快照保留在原处并拒绝启动。目录同步失败时，已替换的选择仍会发布，控制端收到 `selector-active-persistence-uncertain`。要改用配置基线，可在进程停止时迁出该目录的 `selectors.state`。
 
-可在 `dns` 中设置 `message-cache-directory "/var/cache/nexus/messages"` 保存独立 DNS 监听器的应答缓存。开启消息缓存时，可以为多个无显式接口绑定的数值 UDP/TCP 上游及内联 DNS 规则保存视图。旧入口与 FakeIP、系统或加密 DNS 上游和外部 DNS 规则集互斥。统一缓存见下一节。目录须已创建，归运行账户所有且为私有。宿主持有目录独占锁，正常关闭前原子替换至多 1 MiB 的 NXDNS2 快照。每条记录保留所属上游，恢复时校验 DNS 策略与快照完整性并扣除停机时间。策略或上游变化、快照损坏时从空缓存开始。
-
 ## 持久状态与缓存
 
 ```kdl
@@ -215,11 +213,11 @@ state {
 }
 ```
 
-`state` 是可选顶层块。两个目录均为绝对路径，须归运行账户所有，权限为 `0700`。可在已存在的父目录下自动创建最后一级。旧的 `control selector-state-directory` 显式配置优先。启用 DNS FakeIP 并省略其旧 `state-directory` 时，使用 `directory/fakeip/`。显式指定旧 `state-directory` 时，继续使用原有认证历史和凭据。
+`state` 是可选顶层块。两个目录均为绝对路径，须归运行账户所有，权限为 `0700`。可在已存在的父目录下自动创建最后一级。`control selector-state-directory` 显式配置优先。启用 DNS FakeIP 时必须配置 `state { directory "..."; }`，状态统一存于 `directory/fakeip/`。
 
 统一 FakeIP 存储将池范围、保留地址、持久实例身份和分配高水位写入 `fakeip.meta`。默认 `range-reserve` 在应答前同步预留最多 256 个地址，段内新映射由后台批写 `fakeip.wal`，达到约 2 MiB 时发布 `fakeip.ckpt` 并截断 WAL。崩溃后重放完整记录，跳过未落盘的预留地址。该范围内缺少映射的地址会明确拒绝反查。小池可能因预留段用尽而停止分配。需要在每次应答前同步确认映射的实例可设置 `per-mapping`。统一存储在普通运行期间单向推进地址游标，池耗尽时拒绝分配。
 
-`cache-directory/dns/` 保存独立 DNS 监听器的 NXDN03 快照。每份快照最多 1 MiB，默认总预算 4 MiB，按 DNS 策略、上游类型、TLS 身份与信任文件、外部规则集内容分片，正常停机时保存，恢复时扣除停机时间。系统本地视图和经运行期代理 detour 的视图仍使用内存缓存。仅使用旧配置时继续读写原格式。远程规则下载使用 `cache-directory/rulesets/`，默认预算 64 MiB，可通过下载命令覆盖。
+`cache-directory/dns/` 保存独立 DNS 监听器的 NXDN03 快照。每份快照最多 1 MiB，默认总预算 4 MiB，按 DNS 策略、上游类型、TLS 身份与信任文件、外部规则集内容分片，正常停机时保存，恢复时扣除停机时间。系统本地视图仍使用内存缓存。远程规则下载使用 `cache-directory/rulesets/`，默认预算 64 MiB，可通过下载命令覆盖。
 
 - `nexus state inspect --config <文件>` 只读输出各组件的存储版本、条目数、字节数及健康状态。输出仅含固定组件名和统计。
 - `nexus state clear-cache --config <文件> [--dns] [--rulesets]` 清理选定的 Tier 3 缓存，省略开关时清理两者。清除代次在删除前持久化，阻止清除前开始的磁盘写入重新发布旧数据。运行中 DNS 进程的内存条目继续随 TTL 过期。
@@ -239,7 +237,7 @@ SS 和 VLESS 出站可添加 `detour "entry"`，通过名为 `entry` 的出站�
 
 整条链使用路由所选末节点的 `connect-timeout-ms`：目标解析、各节点解析、连接和握手持续消耗同一预算；依赖节点不会重新开始计时，也不会用自己的配置期限截短此次建立。流承载 UDP 的每次 UoT/XUDP 建立同样使用末节点的一次期限；承载方式由末节点决定，中间节点只承载 TCP。已验证两/三层 SS、普通 TLS、Reality、Vision 链路及 SOCKS UDP 的 UoT/XUDP，测试入口为 `tests/detour_network.py` 和 `tests/detour_reality.py`；Vision 直通切换的独立观测、更多异步分配故障和性能对照仍待验证。原生 SS UDP 的有序路径可使用代理数据报出站，其 detour 链路仍待验证；TUN UDP 尚未接入该能力。
 
-链内 TLS 节点在尚未发送该节点的 VLESS 请求时，可以在握手失败后尝试其后续解析地址；各次尝试继续消耗原截止时间，不重放已经发送的业务数据。下层已耗尽自己的节点候选时，失败向上传递；同一次业务拨号不会因其他目标地址再次建立同一耗尽出站，仍按规则检查后续地址和其他出站。构造分配故障与双后端验证范围见 [拨号字段覆盖](../planning/dial-field-coverage.md)。
+链内 TLS 节点在尚未发送该节点的 VLESS 请求时，可以在握手失败后尝试其后续解析地址；各次尝试继续消耗原截止时间，不重放已经发送的业务数据。下层已耗尽自己的节点候选时，失败向上传递；同一次业务拨号不会因其他目标地址再次建立同一耗尽出站，仍按规则检查后续地址和其他出站。支持范围与验证基线见 [支持矩阵](../planning/proxy-kernel-support-matrix.md) 与 [验证体系](../planning/validation.md)。
 
 direct、SS 和 VLESS 的 TCP 拨号支持 `tcp-keepalive #true` 或 `#false`、`tcp-keepalive-idle-seconds 17`、`tcp-keepalive-interval-seconds 3`、`tcp-keepalive-count 5`。秒数为 1..32767，次数为 1..127；单独指定探测参数会启用保活，显式关闭与探测参数冲突，重复字段拒绝。未配置时保留系统现状且不增加这些 socket 操作。参数在每个候选的物理 TCP socket 连接前生效，失败则拒绝此次拨号，不静默忽略；不会配置上游代理服务端为目标建立的 socket。
 

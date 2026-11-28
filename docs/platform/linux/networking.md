@@ -72,4 +72,4 @@ Nexus 对外部防火墙（如 Docker 网桥与 OpenWrt `fw4`）提供独立适�
 
 系统 FD 上限不替代连接和内存预算，不为追求吞吐自动修改全局 sysctl。需要调整的参数必须与实际队列、conntrack、socket 缓冲及工作负载一起测量。
 
-验收见 [Linux 验证计划](../../planning/linux-validation.md)，工程要点见 [多平台集成与运维原则](../../design-principles/platform-and-operations.md)。
+验收见 [验证体系与实机基线](../../planning/validation.md#3-linux-系统集成验证)，工程要点见 [多平台集成与运维原则](../../design-principles/platform-and-operations.md)。

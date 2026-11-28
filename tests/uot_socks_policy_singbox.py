@@ -65,7 +65,7 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
 outbound "off" type="shadowsocks" {{ server host="127.0.0.1" port={front}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; }}
-routing {{ rulesets {{ "block" path="block.kdl" format="kdl"; "off" path="disabled.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="block" outbound="reject"; - kind="rule-set" value="off" outbound="off"; }}; final "edge"; }}
+routing {{ rulesets {{ "block" path="block.kdl" format="kdl"; "off" path="disabled.kdl" format="kdl"; }}; rules {{ - rule-set="block" to="reject"; - rule-set="off" to="off"; }}; final "edge"; }}
 ''')
     subprocess.run(["sing-box","check","-c",root/"box.json"],capture_output=True,check=True)
     box=subprocess.Popen(["sing-box","run","-c",root/"box.json"],stderr=subprocess.PIPE); proxy=None

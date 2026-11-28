@@ -1,0 +1,314 @@
+import { ScrollView } from "std-widgets.slint";
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { OutboundGroupItem, OutboundMemberItem } from "../types.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { IconActionButton } from "icon_button.slint";
+import { NexusButton, NexusChip } from "nexus_buttons.slint";
+
+component BentoNodeTile inherits Rectangle {
+    in property <string> badge;
+    in property <string> name;
+    in property <string> subtitle;
+    in property <int> latency-ms: -1;
+    in property <string> state: "healthy";
+    in property <bool> active: false;
+    callback clicked();
+
+    forward-focus: tile-fs;
+    height: 58px;
+    border-radius: Theme.radius-md;
+    border-width: tile-fs.has-focus ? 2px : root.active ? 1.5px : 1px;
+    border-color: tile-fs.has-focus ? Theme.accent : root.active ? Theme.selected-border : tile-ta.has-hover ? Theme.hairline-strong : transparent;
+    background: root.active ? Theme.selected-bg : tile-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+    transform-scale: tile-ta.pressed ? 0.98 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    accessible-role: button;
+    accessible-label: root.name;
+    accessible-action-default => { root.clicked(); }
+
+    tile-fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.Return || ev.text == " ") { root.clicked(); return accept; }
+            reject
+        }
+    }
+
+    tile-ta := TouchArea {
+        mouse-cursor: root.active ? default : pointer;
+        clicked => { root.clicked(); }
+    }
+
+    VerticalLayout {
+        padding-left: 11px;
+        padding-right: 11px;
+        padding-top: 8px;
+        padding-bottom: 8px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            spacing: 6px;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 3.5px;
+                background: root.active ? Theme.live-emerald
+                    : root.latency-ms > 0 ? Theme.latency-fg(root.latency-ms, root.state)
+                    : Theme.offline-fg;
+            }
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: root.name;
+                font-size: 12.5px;
+                font-weight: root.active ? 800 : 600;
+                color: root.active ? Theme.nav-active-fg : Theme.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: root.latency-ms > 0 ? "\{root.latency-ms} ms" : "--";
+                font-size: 11px;
+                font-weight: 700;
+                font-family: Theme.mono-font;
+                color: root.latency-ms > 0 ? Theme.latency-fg(root.latency-ms, root.state) : Theme.text-muted;
+                vertical-alignment: center;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 6px;
+            if root.badge != "" : Text {
+                text: root.badge;
+                font-size: 10px;
+                font-weight: 800;
+                font-family: Theme.mono-font;
+                color: root.active ? Theme.nav-active-fg : Theme.text-muted;
+                vertical-alignment: center;
+            }
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: root.subtitle;
+                font-size: 10.5px;
+                font-family: Theme.mono-font;
+                color: Theme.text-secondary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+export component DashboardServersCard inherits Rectangle {
+    in property <bool> compact: false;
+    in property <bool> core-running: false;
+    in property <[OutboundGroupItem]> groups: [];
+    in property <[OutboundMemberItem]> members: [];
+    in property <string> selected-group: "";
+    in property <bool> groups-probing: false;
+
+    callback choose-group(string);
+    callback select-member(string, string);
+    callback probe-group(string);
+    callback import-clipboard();
+    callback open-profiles();
+    callback open-groups();
+
+    property <bool> show-live-members: root.core-running && root.members.length > 0;
+    property <bool> compact-hdr: root.compact;
+    property <length> grid-inner-w: max(220px, root.width - 36px);
+    property <int> node-cols: root.grid-inner-w >= 860px ? 4 : root.grid-inner-w >= 580px ? 3 : root.grid-inner-w >= 340px ? 2 : 1;
+    property <length> node-tile-w: 1px * Math.floor(((root.grid-inner-w - (root.node-cols - 1) * 8px) / root.node-cols) / 1px);
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        // Card Header
+        HorizontalLayout {
+            height: 28px;
+            spacing: 8px;
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: I18n.t("快速选点", "Quick Nodes");
+                font-size: 16px;
+                font-weight: 800;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            if !root.compact-hdr : NexusButton {
+                btn-height: 28px;
+                has-icon: true;
+                icon: @image-url("../icons/download.svg");
+                label: I18n.t("导入", "Import");
+                clicked => { root.import-clipboard(); }
+            }
+            if root.compact-hdr : IconActionButton {
+                size: 28px;
+                icon: @image-url("../icons/download.svg");
+                label: I18n.t("剪贴板导入", "Import Clipboard");
+                clicked => { root.import-clipboard(); }
+            }
+            if root.show-live-members && root.selected-group != "" : NexusButton {
+                btn-height: 28px;
+                has-icon: true;
+                icon: @image-url("../icons/bolt.svg");
+                label: root.groups-probing ? I18n.t("测速中", "Probing") : I18n.t("测速", "Probe");
+                active: root.groups-probing;
+                clicked => { if (!root.groups-probing) { root.probe-group(root.selected-group); } }
+            }
+            NexusButton {
+                btn-height: 28px;
+                label: I18n.t("配置", "Profiles");
+                has-trailing-icon: true;
+                trailing-icon: @image-url("../icons/chevron-right.svg");
+                clicked => { root.open-profiles(); }
+            }
+        }
+
+        if root.show-live-members && root.groups.length > 1 : HorizontalLayout {
+            spacing: 6px;
+            alignment: start;
+            for g in root.groups : NexusChip {
+                chip-height: 24px;
+                label: g.tag;
+                active: g.tag == root.selected-group;
+                clicked => { root.choose-group(g.tag); }
+            }
+        }
+
+        // Multi-Column Responsive Node Tile Grid (2 / 3 / 4 columns — never full-width strips!)
+        if !root.show-live-members && WorkspaceState.profiles.length == 0 : Rectangle {
+            vertical-stretch: 1;
+            min-height: 128px;
+            border-radius: Theme.radius-md;
+            background: Theme.well-bg;
+
+            VerticalLayout {
+                padding: Theme.space-lg;
+                spacing: Theme.space-sm;
+                alignment: center;
+
+                HorizontalLayout {
+                    alignment: center;
+                    Rectangle {
+                        width: 38px;
+                        height: 38px;
+                        border-radius: 19px;
+                        border-width: 1px;
+                        border-color: Theme.accent.with-alpha(0.28);
+                        background: Theme.accent-soft;
+                        Image {
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            width: 18px;
+                            height: 18px;
+                            source: @image-url("../icons/groups.svg");
+                            colorize: Theme.accent;
+                        }
+                    }
+                }
+
+                Text {
+                    text: I18n.t("暂无节点", "No nodes");
+                    font-size: 13px;
+                    font-weight: 700;
+                    color: Theme.text-primary;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: I18n.t("粘贴链接导入，或前往配置文件添加", "Paste a link or add in Profiles");
+                    font-size: 11.5px;
+                    color: Theme.text-muted;
+                    horizontal-alignment: center;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    padding-top: 4px;
+                    spacing: Theme.space-sm;
+                    NexusButton {
+                        btn-height: 28px;
+                        primary: true;
+                        has-icon: true;
+                        icon: @image-url("../icons/download.svg");
+                        label: I18n.t("剪贴板导入", "Import");
+                        clicked => { root.import-clipboard(); }
+                    }
+                    NexusButton {
+                        btn-height: 28px;
+                        label: I18n.t("配置文件", "Profiles");
+                        clicked => { root.open-profiles(); }
+                    }
+                }
+            }
+        }
+
+        if root.show-live-members || WorkspaceState.profiles.length > 0 : Rectangle {
+            vertical-stretch: 1;
+            min-height: 128px;
+            clip: true;
+
+            srv-sv := ScrollView {
+                vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                content-width: self.visible-width;
+                content-height: max(self.visible-height, srv-col.preferred-height);
+
+                srv-col := VerticalLayout {
+                    x: 0px;
+                    y: 0px;
+                    width: srv-sv.visible-width;
+                    alignment: start;
+
+                    if root.show-live-members : FlexboxLayout {
+                        spacing: 8px;
+                        for m in root.members : BentoNodeTile {
+                            width: root.node-tile-w;
+                            badge: root.selected-group != "" ? root.selected-group : "LIVE";
+                            name: m.name;
+                            subtitle: m.ewma-ms > 0 ? ("EWMA \{m.ewma-ms} ms") : m.state;
+                            latency-ms: m.latency-ms;
+                            state: m.state;
+                            active: m.selected;
+                            clicked => {
+                                if (!m.selected && root.selected-group != "") {
+                                    root.select-member(root.selected-group, m.name);
+                                }
+                            }
+                        }
+                    }
+
+                    if !root.show-live-members : FlexboxLayout {
+                        spacing: 8px;
+                        for p in WorkspaceState.profiles : BentoNodeTile {
+                            width: root.node-tile-w;
+                            badge: p.proto-badge != "" ? p.proto-badge
+                                : (p.kind == "policy_group" ? "GROUP" : p.kind == "proxy_chain" ? "CHAIN" : p.kind == "node" ? "NODE" : "RAW");
+                            name: p.remarks != "" ? p.remarks : p.id;
+                            subtitle: p.endpoint != "" ? p.endpoint : p.subtitle;
+                            latency-ms: p.delay-ms;
+                            active: p.active;
+                            clicked => { WorkspaceState.activate-profile(p.id); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

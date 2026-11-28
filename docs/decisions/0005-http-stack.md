@@ -15,4 +15,4 @@ HTTP/HTTPS 自研不自动包括通用 Web 服务器、缓存代理、透明 TLS
 
 协议核心与 OS、Corosio 驱动、应用用途分开。nghttp2 仅核心库进入未来依赖候选，不把其工具/示例的 TLS 和事件循环栈一并引入。
 
-详细设计见 [HTTP 栈](../architecture/http.md)，验证见[网络路线](../planning/network-validation.md)。
+详细设计见 [HTTP 栈](../architecture/http.md)，验证见 [验证体系与实机基线](../planning/validation.md)。

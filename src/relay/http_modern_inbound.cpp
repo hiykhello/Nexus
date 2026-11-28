@@ -49,7 +49,7 @@ namespace relay::http_modern_detail {
             return std::string(authority);
         }
 
-        auto handle_h2_stream(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto handle_h2_stream(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy,
                               HttpModernProfile const& profile,
                               naive::H2ServerStream<tls::detail::ByteStream<corosio::tcp_socket>>& stream) -> capy::task<> {
             auto until = Clock::now() + std::chrono::seconds(10);
@@ -111,7 +111,7 @@ namespace relay::http_modern_detail {
                 stream_relay::direction(child, stream_relay::download(child, stream)));
         }
 
-        auto serve_http_modern(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto serve_http_modern(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
                                HttpModernProfile const& profile) -> capy::task<> {
             struct Done { Session& s; ~Done() { s.close(); s.done = true; } } done{session};
             auto ms = [](Clock::time_point t) {
@@ -207,7 +207,7 @@ namespace relay {
         profile->creds = creds;
         profile->http2 = cfg.http2;
         profile->handshake_timeout_ms = cfg.handshake_timeout_ms;
-        return InboundFactory{[profile = std::move(profile)](Session& s, corosio::io_context& ctx, rules::RouteMatcher const& policy) {
+        return InboundFactory{[profile = std::move(profile)](Session& s, corosio::io_context& ctx, rules::RouteProgram const& policy) {
             return http_modern_detail::serve_http_modern(s, ctx, policy, *profile);
         }};
     }

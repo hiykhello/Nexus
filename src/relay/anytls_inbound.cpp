@@ -172,7 +172,7 @@ namespace relay {
             }
         }
 
-        auto dial_stream(Session& child, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto dial_stream(Session& child, corosio::io_context& context, rules::RouteProgram const& policy,
             socks5::Request const& target, Incoming& incoming) -> capy::task<capy::results<std::uint8_t>> {
             std::uint8_t code = 1;
             if (child.ordered_tcp) {
@@ -182,7 +182,7 @@ namespace relay {
             co_return capy::results<std::uint8_t>{std::make_error_code(std::errc::operation_canceled), code};
         }
 
-        auto datagrams(Session& child, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto datagrams(Session& child, corosio::io_context& context, rules::RouteProgram const& policy,
             Incoming& incoming, Clock::time_point deadline) -> capy::task<> {
             if (child.ordered_tcp && !child.ordered_tcp->udp) {
                 (void)co_await incoming.protocol.acknowledge(incoming.channel.id(), false, deadline);
@@ -216,7 +216,7 @@ namespace relay {
             catch (...) { child.close(); state.cancel(); throw; }
         }
 
-        auto serve_stream(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto serve_stream(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy,
             Protocol& protocol, std::uint32_t id) -> capy::task<> {
             auto lease = parent.quota ? parent.quota->try_acquire() : std::nullopt;
             if (parent.quota && !lease) {
@@ -258,7 +258,7 @@ namespace relay {
                 stream_relay::direction(child, stream_relay::download(child, incoming)));
         }
 
-        auto worker(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto worker(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy,
             Protocol& protocol) -> capy::task<capy::results<>> {
             while (!parent.closed) {
                 auto accepted = co_await protocol.accept();
@@ -273,7 +273,7 @@ namespace relay {
             co_return co_await protocol.run();
         }
 
-        auto serve_anytls_lower(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto serve_anytls_lower(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy,
             Profile const& profile, ErasedLowerStream& lower, Clock::time_point deadline, bool close_parent,
             unsigned workers_n) -> capy::task<> {
             auto padding = anytls::PaddingScheme::parse(anytls::default_padding_scheme);
@@ -289,7 +289,7 @@ namespace relay {
             (void)co_await capy::when_all(std::move(tasks));
         }
 
-        auto serve(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy, Profile const& profile)
+        auto serve(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy, Profile const& profile)
             -> capy::task<> {
             ParentGuard guard{parent};
             auto deadline = parent.started + std::chrono::seconds(10);
@@ -423,7 +423,7 @@ namespace relay {
         profile->users = std::move(*table);
         profile->names.assign(names.begin(), names.end());
         return InboundFactory{[profile = std::move(profile)](Session& session, corosio::io_context& context,
-            rules::RouteMatcher const& policy) {
+            rules::RouteProgram const& policy) {
             return serve(session, context, policy, *profile);
         }};
     }

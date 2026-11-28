@@ -14,7 +14,6 @@ export namespace config::routing_detail {
     using namespace config::kdl;
 
     struct NamedRouteFile { std::string name; BlockRules file; };
-    struct PendingRouteRule { std::string set, outbound; bool ip_cidr_match_source; };
     struct PendingOrderedTcpRule {
         std::optional<std::string> set;
         std::optional<std::string> outbound;
@@ -39,7 +38,6 @@ export namespace config::routing_detail {
     struct PendingOrderedTcp { std::uint32_t timeout; bool skip; bool udp; std::vector<PendingOrderedTcpRule> rules; };
     struct Route {
         std::vector<NamedRouteFile> files;
-        std::vector<PendingRouteRule> rules;
         std::optional<std::string> default_outbound;
         std::optional<std::string> default_http_client;
         std::optional<PendingOrderedTcp> ordered_tcp;
@@ -53,7 +51,6 @@ export namespace config::routing_detail {
                 return server.upstream && server.upstream->detour == name;
             })) ||
             route.default_outbound == name ||
-            std::ranges::any_of(route.rules, [&](auto const& rule) { return rule.outbound == name; }) ||
             (route.ordered_tcp && std::ranges::any_of(route.ordered_tcp->rules, [&](auto const& rule) {
                 return rule.outbound && *rule.outbound == name;
             })) ||
@@ -193,15 +190,6 @@ export namespace config::routing_detail {
                 if (route.default_http_client || !value || !valid_name(*value))
                     return error("invalid or duplicate default-http-client");
                 route.default_http_client = *value;
-            } else if (child.name == "rule") {
-                auto kind = text_property(child, "kind"), value = text_property(child, "value"), outbound = text_property(child, "outbound");
-                auto ip_source_value = property(child, "ip-cidr-match-source");
-                auto ip_source = ip_source_value && !ip_source_value->tag ? std::get_if<bool>(&ip_source_value->data) : nullptr;
-                if (child.tag || !child.arguments.empty() || !child.children.empty() || child.properties.size() != 3 + bool(ip_source_value) ||
-                    (ip_source_value && !ip_source) || !kind || *kind != "rule-set" || !value || !valid_name(*value) ||
-                    !outbound || !valid_name(*outbound) || route.rules.size() >= max_tunnel_outbounds)
-                    return error("invalid rule-set rule");
-                route.rules.push_back({*value, *outbound, ip_source && *ip_source});
             } else if (child.name == "tcp-program") {
                 auto timeout = property(child, "sniff-timeout-ms");
                 auto number = timeout ? integer(*timeout) : std::nullopt;
@@ -442,13 +430,7 @@ export namespace config::routing_detail {
                 return error("outbounds network-type cannot equal network-strategy fallback");
         }
         if (!route.default_outbound) return error("routing requires final");
-        for (auto const& rule : route.rules)
-            if (auto file = std::ranges::find(route.files, rule.set, &NamedRouteFile::name); file == route.files.end())
-                return error("rule-set reference not found");
-            else if (rule.ip_cidr_match_source && file->file.format != RuleFormat::srs && file->file.format != RuleFormat::nxmm)
-                return error("ip-cidr-match-source requires SRS or NXMM format");
         if (route.ordered_tcp) {
-            if (!route.rules.empty()) return error("tcp-program cannot be combined with rule-set routing rules");
             for (auto const& rule : route.ordered_tcp->rules)
                 if (rule.set) {
                     auto file = std::ranges::find(route.files, *rule.set, &NamedRouteFile::name);

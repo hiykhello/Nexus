@@ -18,7 +18,7 @@ export namespace xudp {
     class ServerDirect {
         using Clock=std::chrono::steady_clock;
         struct Slot { ServerToken token; net::UdpDialSockets socket; Clock::time_point touched; explicit Slot(::platform::SocketBinding const* binding) : socket(binding) {} };
-        ::rules::RouteMatcher const& policy_;
+        ::rules::RouteProgram const& policy_;
         ::platform::SocketBinding const* binding_;
         std::optional<net::UdpEndpoint> source_;
         std::optional<std::string_view> auth_user_;
@@ -43,7 +43,7 @@ export namespace xudp {
         }
     public:
         // auth_user is borrowed for the lifetime of this stream owner.
-        ServerDirect(::rules::RouteMatcher const& policy,std::size_t limit,net::UdpEndpoint const* source=nullptr,
+        ServerDirect(::rules::RouteProgram const& policy,std::size_t limit,net::UdpEndpoint const* source=nullptr,
                      std::optional<std::string_view> auth_user={},::platform::SocketBinding const* binding=nullptr)
             : policy_(policy),binding_(binding),source_(source ? std::optional(*source) : std::nullopt),auth_user_(auth_user),sessions_(limit) { slots_.reserve(std::min(limit,std::size_t{65535})); }
         ServerDirect(ServerDirect const&)=delete;

@@ -61,10 +61,10 @@ import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 
 internal enum class NexusTab(val label: String, @param:DrawableRes val iconRes: Int) {
-    OVERVIEW("概览", R.drawable.ic_nav_overview),
-    GROUPS("策略组", R.drawable.ic_nav_groups),
+    OVERVIEW("仪表盘", R.drawable.ic_nav_overview),
+    GROUPS("代理组", R.drawable.ic_nav_groups),
     CONNECTIONS("连接", R.drawable.ic_nav_connections),
-    CONFIG("档案", R.drawable.ic_nav_config),
+    CONFIG("配置文件", R.drawable.ic_nav_config),
     LOGS("日志", R.drawable.ic_nav_logs),
 }
 
@@ -77,10 +77,8 @@ internal fun NexusTopAppBar(
     windowSizeClass: NexusWindowSizeClass,
     heroState: HeroConnectionState,
     activeProfileName: String,
-    dashEditing: Boolean,
     scrollBehavior: TopAppBarScrollBehavior,
     onOpenConfig: () -> Unit,
-    onToggleDashEditing: () -> Unit,
     onCloseSplitTunnel: () -> Unit,
     onOpenQuickCommand: (() -> Unit)? = null,
 ) {
@@ -173,33 +171,7 @@ internal fun NexusTopAppBar(
                             }
                         }
                     }
-                    if (currentTab == NexusTab.OVERVIEW) {
-                        val editInteraction = remember { MutableInteractionSource() }
-                        Surface(
-                            onClick = {
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onToggleDashEditing()
-                            },
-                            interactionSource = editInteraction,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .liquidPress(editInteraction, pressedScale = 0.94f),
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (dashEditing) MaterialTheme.colorScheme.primaryContainer else ext.wellSurface,
-                            border = BorderStroke(
-                                1.dp,
-                                if (dashEditing) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else ext.hairlineStrong,
-                            ),
-                        ) {
-                            Text(
-                                text = if (dashEditing) "完成" else "自定义",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = FontWeight.Bold,
-                                color = if (dashEditing) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            )
-                        }
-                    } else {
+                    if (currentTab != NexusTab.OVERVIEW) {
                         val (pillBg, pillFg, pillLabel) = when (heroState) {
                             HeroConnectionState.CONNECTED -> Triple(ext.successContainer, ext.success, "已连接")
                             HeroConnectionState.STARTING -> Triple(ext.warningContainer, ext.warning, "连接中")
@@ -347,6 +319,7 @@ internal fun ExpandedDrawerContent(
     heroState: HeroConnectionState,
     downloadRateBps: Long,
     uploadRateBps: Long,
+    showQuickPower: Boolean = true,
     onSelectTab: (Int) -> Unit,
     onStartStop: () -> Unit,
 ) {
@@ -388,60 +361,63 @@ internal fun ExpandedDrawerContent(
                 )
             }
             Spacer(Modifier.weight(1f))
-            HorizontalDivider(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
-                color = ext.hairline,
-            )
-            Surface(
-                onClick = onStartStop,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
-                shape = RoundedCornerShape(12.dp),
-                color = ext.wellSurface,
-                border = BorderStroke(1.dp, if (running) ext.success.copy(alpha = 0.45f) else ext.hairline),
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+            if (showQuickPower) {
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                    color = ext.hairline,
+                )
+                Surface(
+                    onClick = onStartStop,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    color = ext.cardSurface,
+                    border = BorderStroke(1.dp, ext.hairline),
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .background(if (running) ext.success else ext.muted, CircleShape),
-                        )
-                        Text(
-                            text = if (running) "已连接 · 点击断开" else "未连接 · 点击连接",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        Text(
-                            text = "↓ ${formatTrafficRate(downloadRateBps)}",
-                            style = NexusNumericStyles.monoBadge,
-                            color = ext.telemetryDownload,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Text(
-                            text = "↑ ${formatTrafficRate(uploadRateBps)}",
-                            style = NexusNumericStyles.monoBadge,
-                            color = ext.telemetryUpload,
-                            maxLines = 1,
-                            softWrap = false,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(8.dp)
+                                    .background(if (running) ext.success else ext.muted, CircleShape),
+                            )
+                            Text(
+                                text = if (running) "已连接 · 点击断开" else "未连接 · 点击连接",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = "↓ ${formatTrafficRate(downloadRateBps)}",
+                                style = NexusNumericStyles.monoBadge,
+                                color = ext.telemetryDownload,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = "↑ ${formatTrafficRate(uploadRateBps)}",
+                                style = NexusNumericStyles.monoBadge,
+                                color = ext.telemetryUpload,
+                                maxLines = 1,
+                                softWrap = false,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
                     }
                 }
             }
@@ -466,14 +442,14 @@ internal fun NexusPrismMark(modifier: Modifier = Modifier) {
             val glowCenter = Offset(w * 0.50f, h * 0.56f)
             val glowBrush = Brush.radialGradient(
                 0.0f to Color(0xFF38BDF8).copy(alpha = if (isDark) 0.42f else 0.24f),
-                0.65f to Color(0xFF6366F1).copy(alpha = if (isDark) 0.14f else 0.08f),
+                0.65f to Color(0xFF10B981).copy(alpha = if (isDark) 0.14f else 0.08f),
                 1.0f to Color.Transparent,
                 center = glowCenter,
                 radius = w * 0.62f,
             )
-            val leftBrush = Brush.linearGradient(listOf(Color(0xFF67E8F9), Color(0xFF38BDF8), Color(0xFF3B82F6)), start = apex, end = left)
-            val rightBrush = Brush.linearGradient(listOf(Color(0xFF60A5FA), Color(0xFF818CF8), Color(0xFF8B5CF6)), start = apex, end = right)
-            val baseBrush = Brush.linearGradient(listOf(Color(0xFF2563EB), Color(0xFF4F46E5)), start = left, end = right)
+            val leftBrush = Brush.linearGradient(listOf(Color(0xFF38BDF8), Color(0xFF2563EB), Color(0xFF1D4ED8)), start = apex, end = left)
+            val rightBrush = Brush.linearGradient(listOf(Color(0xFF60A5FA), Color(0xFF10B981), Color(0xFF059669)), start = apex, end = right)
+            val baseBrush = Brush.linearGradient(listOf(Color(0xFF2563EB), Color(0xFF0EA5E9), Color(0xFF10B981)), start = left, end = right)
             val ridgeStroke = Stroke(width = 0.9.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
             val ridgeColor = Color.White.copy(alpha = if (isDark) 0.72f else 0.85f)
             onDrawBehind {

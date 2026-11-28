@@ -23,10 +23,10 @@ export namespace net {
     // Check target/candidate consistency and normalize mapped IPv4, without
     // making a routing decision. Used after an ordered policy selects a route.
     [[nodiscard]] auto udp_validate_candidate(UdpTarget,UdpEndpoint) -> std::expected<UdpEndpoint,UdpRouteError>;
-    [[nodiscard]] auto udp_select_preflight(rules::RouteMatcher const&,UdpTarget,UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={},std::optional<std::string_view> source_interface={},rules::IngressMetadata ingress={})
+    [[nodiscard]] auto udp_select_preflight(rules::RouteProgram const&,UdpTarget,UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={},std::optional<std::string_view> source_interface={},rules::IngressMetadata ingress={})
         -> std::expected<std::optional<std::size_t>,UdpRouteError>;
-    [[nodiscard]] auto udp_select(rules::RouteMatcher const&,UdpTarget,UdpEndpoint,UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={},std::optional<std::string_view> source_interface={},rules::IngressMetadata ingress={})
+    [[nodiscard]] auto udp_select(rules::RouteProgram const&,UdpTarget,UdpEndpoint,UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={},std::optional<std::string_view> source_interface={},rules::IngressMetadata ingress={})
         -> std::expected<UdpSelection,UdpRouteError>;
-    [[nodiscard]] auto udp_preflight(rules::RouteMatcher const&,UdpTarget,UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={}) -> std::expected<void,UdpRouteError>;
-    [[nodiscard]] auto udp_route(rules::RouteMatcher const&,UdpTarget,UdpEndpoint,UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={}) -> std::expected<UdpEndpoint,UdpRouteError>;
+    [[nodiscard]] auto udp_preflight(rules::RouteProgram const&,UdpTarget,UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={}) -> std::expected<void,UdpRouteError>;
+    [[nodiscard]] auto udp_route(rules::RouteProgram const&,UdpTarget,UdpEndpoint,UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={}) -> std::expected<UdpEndpoint,UdpRouteError>;
 }

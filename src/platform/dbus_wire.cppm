@@ -405,6 +405,8 @@ export namespace platform::dbus {
             Entry{"org.freedesktop.resolve1.NoSuchLink", ENXIO},
             Entry{"org.freedesktop.resolve1.LinkBusy", EBUSY},
             Entry{"org.freedesktop.DBus.Error.UnknownObject", ENOENT},
+            Entry{"org.freedesktop.DBus.Error.UnknownMethod", ENOSYS},
+            Entry{"org.freedesktop.DBus.Error.NotSupported", EOPNOTSUPP},
             Entry{"org.freedesktop.DBus.Error.AccessDenied", EACCES},
             Entry{"org.freedesktop.DBus.Error.InvalidArgs", EINVAL},
             Entry{"org.freedesktop.DBus.Error.NoReply", ETIMEDOUT},
@@ -421,6 +423,7 @@ export namespace platform::dbus {
                 Entry{"ENXIO", ENXIO}, Entry{"ENODEV", ENODEV}, Entry{"EINVAL", EINVAL}, Entry{"EPERM", EPERM},
                 Entry{"EACCES", EACCES}, Entry{"EBUSY", EBUSY}, Entry{"ENOENT", ENOENT}, Entry{"ENOMEM", ENOMEM},
                 Entry{"EAGAIN", EAGAIN}, Entry{"EWOULDBLOCK", EAGAIN}, Entry{"ETIMEDOUT", ETIMEDOUT},
+                Entry{"ENOSYS", ENOSYS}, Entry{"EOPNOTSUPP", EOPNOTSUPP},
             };
             for (auto const& [k, v] : kSys) if (e == k) return v;
         }

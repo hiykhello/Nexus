@@ -206,17 +206,8 @@ namespace config {
             return std::unexpected("selector change alters a running detour and requires restart");
 
         auto lookup=[&](std::string_view name) {return *outbound_index(next,direct,block,name);};
-        auto action=[](std::size_t index) {
-            return index==0 ? RouteAction::direct : index==1 ? RouteAction::block : RouteAction::vless;
-        };
         next.default_outbound=lookup(next.default_outbound_name);
         if (next.default_outbound==1) return std::unexpected("default-outbound cannot select block");
-        next.default_action=action(next.default_outbound);
-        for (auto& route : next.routes) {
-            route.outbound=lookup(route.outbound_name);
-            route.action=action(route.outbound);
-        }
-        if (!next.routes.empty()) next.rule_action=next.routes.front().action;
         if (next.ordered_tcp)
             for (auto& rule : next.ordered_tcp->rules)
                 if (rule.outbound_name) rule.outbound=lookup(*rule.outbound_name);

@@ -26,11 +26,12 @@ dns {{
   final "protected"
 }}"""),
         ("FakeIP requires the dns-fakeip",f"""
+state {{ directory "/tmp/nexus-closed-fakeip"; }}
 dns {{
   listen host="127.0.0.1" port={dns_port}
   server "business" type="local"
   final "business"
-  fake-ip server="business" ipv4-pool="198.18.0.0/29" state-directory="/missing"
+  fake-ip server="business" ipv4-pool="198.18.0.0/29"
 }}"""),
     ]
     args=[binary,"run","--config",str(config)]

@@ -32,15 +32,15 @@ auto run(int family) -> bool {
         return p;
     };
     auto good_peer=make_peer(good.fd), bad_peer=make_peer(bad.fd);
-    auto direct_policy=r::RouteMatcher::compile(std::span<r::RouteRule const>{},0,3);
-    auto block_policy=r::RouteMatcher::compile(std::span<r::RouteRule const>{},1,3);
-    auto tunnel_policy=r::RouteMatcher::compile(std::span<r::RouteRule const>{},2,3);
+    auto direct_policy=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},0,3);
+    auto block_policy=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},1,3);
+    auto tunnel_policy=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},2,3);
     if (!direct_policy || !block_policy || !tunnel_policy) return false;
     n::UdpTarget packet{family==AF_INET ? n::UdpTargetKind::ipv4 : n::UdpTargetKind::ipv6,
         std::span{good_peer.address}.first(family==AF_INET ? 4 : 16),good_peer.port};
     std::array<std::uint8_t,2> data{'o','k'};
     r::RuleSet source_rules{{{"source-port","1234",{}}},2};
-    auto source_policy=r::RouteMatcher::compile(std::array{r::RouteRule{source_rules,1}},0,2,r::SourceMetadata::provided);
+    auto source_policy=r::RouteProgram::compile_policy(std::array{r::ProgramRule{source_rules,{r::ProgramActionKind::route,1}}},0,2,r::SourceMetadata::provided);
     if (!source_policy) return false;
     n::UdpEndpoint source{4,{127,0,0,1},1234};
     u::Direct source_blocked(*source_policy);

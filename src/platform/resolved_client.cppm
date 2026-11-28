@@ -245,6 +245,18 @@ export namespace platform::resolved {
             return {};
         }
 
+        template<bool ObserveCancellation = true>
+        [[nodiscard]] auto set_dns_over_tls(std::string_view mode, Clock::time_point deadline)
+            -> std::expected<void, Failure> {
+            auto request = setting("SetLinkDNSOverTLS");
+            if (!request) return std::unexpected(request.error());
+            if (!request->append_string(mode)) return fail(Error::capacity);
+            auto reply = invoke<ObserveCancellation>(*request, deadline);
+            if (!reply) return std::unexpected(reply.error());
+            if (!reply->signature().empty()) return fail(Error::protocol, 0, true);
+            return {};
+        }
+
         [[nodiscard]] auto process(Clock::time_point deadline) -> std::expected<bool, Failure> {
             return bus_.process(deadline);
         }

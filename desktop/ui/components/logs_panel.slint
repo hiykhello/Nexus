@@ -1,7 +1,7 @@
 import { ListView } from "std-widgets.slint";
 import { ControlInspectState } from "../control_inspect_state.slint";
 import { ToastState } from "../feedback.slint";
-import { NexusInput } from "glass_primitives.slint";
+import { NexusInput } from "nexus_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSelect } from "nexus_select.slint";
 import { LogLineItem } from "../types.slint";
@@ -99,7 +99,7 @@ export component LogsPanel inherits VerticalLayout {
             min-width: 140px;
             search-icon: true;
             text <=> root.search-text;
-            placeholder-text: I18n.t("搜索日志...", "Search logs...");
+            placeholder-text: I18n.t("搜索日志…", "Search logs…");
             edited(q) => { root.search-changed(q); }
             accepted => { root.refresh-logs(); }
         }
@@ -153,7 +153,7 @@ export component LogsPanel inherits VerticalLayout {
                 min-width: 160px;
                 search-icon: true;
                 text <=> root.search-text;
-                placeholder-text: I18n.t("搜索日志...", "Search logs...");
+                placeholder-text: I18n.t("搜索日志…", "Search logs…");
                 edited(q) => { root.search-changed(q); }
                 accepted => { root.refresh-logs(); }
             }
@@ -210,7 +210,7 @@ export component LogsPanel inherits VerticalLayout {
         }
     }
 
-    // Full-Height Matte Framed Log Console Card
+    // Full-Height Fluent 2 Single-Level Log Console Card
     Rectangle {
         vertical-stretch: 1;
         border-radius: Theme.radius-card;
@@ -223,27 +223,26 @@ export component LogsPanel inherits VerticalLayout {
             width: 100%;
             height: 100%;
 
-            // Crisp aligned column header strip
-            Rectangle {
+            if root.logs.length > 0 : Rectangle {
                 vertical-stretch: 0;
-                height: 34px;
+                height: 36px;
                 background: Theme.well-bg;
                 HorizontalLayout {
                     padding-left: 14px;
                     padding-right: 14px;
                     spacing: Theme.space-sm;
-                    Text { width: 46px; text: I18n.t("级别", "LVL"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
-                    Text { width: 70px; text: I18n.t("域", "DOMAIN"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
-                    Text { horizontal-stretch: 1; text: I18n.t("消息", "MESSAGE"); font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { width: 46px; text: I18n.t("级别", "LVL"); font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { width: 70px; text: I18n.t("域", "DOMAIN"); font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                    Text { horizontal-stretch: 1; text: I18n.t("消息", "MESSAGE"); font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
                     Rectangle {
-                        height: 18px; y: (parent.height - self.height) / 2; border-radius: Theme.radius-xs; background: Theme.inset-bg;
+                        height: 20px; y: (parent.height - self.height) / 2; border-radius: Theme.radius-sm; background: Theme.inset-bg;
                         HorizontalLayout {
-                            padding-left: 7px; padding-right: 7px;
-                            Text { text: "\{root.logs.length}"; font-size: 10px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center; }
+                            padding-left: 8px; padding-right: 8px;
+                            Text { text: "\{root.logs.length}"; font-size: 10.5px; font-weight: 700; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center; }
                         }
                     }
                 }
-                Rectangle { x: 0px; y: parent.height - 1px; width: 100%; height: 1px; background: Theme.hairline-subtle; }
+                Rectangle { x: 0px; y: parent.height - 1px; width: 100%; height: 1px; background: Theme.card-border; }
             }
 
             if root.logs.length == 0 : VerticalLayout {
@@ -270,21 +269,7 @@ export component LogsPanel inherits VerticalLayout {
                     width: lv.visible-width;
                     height: row-body.preferred-height;
                     clip: true;
-                    background: Math.mod(idx, 2) == 0 ? Theme.row-bg : Theme.row-alt-bg;
-
-                    // 2px leading severity vertical rail
-                    Rectangle {
-                        x: 0px;
-                        y: 0px;
-                        width: 2px;
-                        height: parent.height;
-                        background:
-                            entry.level == "error" ? Theme.error-fg
-                            : entry.level == "warn" ? Theme.warn-fg
-                            : entry.level == "info" ? Theme.telemetry-down
-                            : entry.level == "trace" ? Theme.telemetry-up
-                            : transparent;
-                    }
+                    background: Math.mod(idx, 2) == 0 ? transparent : Theme.row-alt-bg;
 
                     ContextMenuArea {
                         Menu {

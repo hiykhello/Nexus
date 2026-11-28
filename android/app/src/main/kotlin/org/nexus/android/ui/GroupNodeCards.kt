@@ -55,19 +55,17 @@ internal fun GroupSummaryStrip(
 
     OpticalCard(
         modifier = modifier.fillMaxWidth(),
-        cornerRadius = 16.dp,
-        borderColor = if (isProbing) MaterialTheme.colorScheme.primary.copy(alpha = 0.55f) else ext.hairline,
-        accentTint = if (isProbing) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else Color.Transparent,
+        cornerRadius = 12.dp,
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 15.dp, vertical = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -76,7 +74,7 @@ internal fun GroupSummaryStrip(
                         Text(
                             text = group.tag,
                             style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                            fontWeight = FontWeight.ExtraBold,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -89,7 +87,7 @@ internal fun GroupSummaryStrip(
                         )
                     }
                     Text(
-                        text = if (isProbing) "正在测速…" else "当前 ${group.active.ifEmpty { "-" }}",
+                        text = if (isProbing) "正在探测节点延迟…" else "当前出口 ${group.active.ifEmpty { "-" }}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -112,8 +110,8 @@ internal fun GroupSummaryStrip(
                                 mono = true,
                             )
                         }
-                        if (activeMember != null) {
-                            SignalBarsIndicator(latencyMs = activeMember.latencyMs, state = activeMember.state)
+                        if (activeMember != null && activeMember.latencyMs > 0L) {
+                            LatencyReadoutText(latencyMs = activeMember.latencyMs, state = activeMember.state)
                         }
                     }
                     StatusPill(
@@ -126,7 +124,7 @@ internal fun GroupSummaryStrip(
             }
             if (isProbing) {
                 LinearProgressIndicator(
-                    modifier = Modifier.fillMaxWidth().height(2.dp),
+                    modifier = Modifier.fillMaxWidth().height(3.dp),
                     color = MaterialTheme.colorScheme.primary,
                     trackColor = ext.wellSurface,
                 )
@@ -134,7 +132,6 @@ internal fun GroupSummaryStrip(
                 LatencySpectrumBar(
                     stats = stats,
                     height = 3.dp,
-                    modifier = Modifier.padding(start = 15.dp, end = 15.dp, bottom = 10.dp),
                 )
             }
         }
@@ -150,7 +147,7 @@ internal fun GroupRailCard(
     val ext = NexusTheme.colors
     val stats = remember(group) { computeGroupLatencyStats(group.members) }
     OpticalCard(
-        cornerRadius = 16.dp,
+        cornerRadius = 12.dp,
         borderColor = if (selected) MaterialTheme.colorScheme.primary else ext.hairline,
         borderWidth = if (selected) 1.5.dp else 1.dp,
         accentTint = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f) else Color.Transparent,
@@ -223,10 +220,10 @@ internal fun GroupMemberCard(
 
     OpticalCard(
         modifier = Modifier.fillMaxWidth(),
-        cornerRadius = 16.dp,
+        cornerRadius = 12.dp,
         borderColor = if (selected) primary.copy(alpha = 0.80f) else ext.hairline,
         borderWidth = if (selected) 1.5.dp else 1.dp,
-        accentTint = if (selected) primary.copy(alpha = if (ext.isDark) 0.12f else 0.06f) else Color.Transparent,
+        accentTint = if (selected) primary.copy(alpha = if (ext.isDark) 0.14f else 0.07f) else Color.Transparent,
         onClick = if (!selected) onSelect else null,
     ) {
         Row(
@@ -281,13 +278,12 @@ internal fun GroupMemberCard(
                 if (member.overridden) {
                     StatusPill(
                         text = "手动",
-                        containerColor = ext.warningContainer,
-                        contentColor = ext.warning,
+                        containerColor = ext.ruleVermilionContainer,
+                        contentColor = ext.ruleVermilion,
                     )
                 }
             }
-            SignalBarsIndicator(latencyMs = member.latencyMs, state = member.state)
-            LatencyBadge(latencyMs = member.latencyMs, state = member.state)
+            LatencyReadoutText(latencyMs = member.latencyMs, state = member.state)
             if (onProbe != null) {
                 IconButton(
                     onClick = onProbe,

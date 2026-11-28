@@ -21,6 +21,11 @@
         -webkit-tap-highlight-color: transparent;
         text-rendering: optimizeLegibility;
       }
+      @media (pointer: fine) {
+        html {
+          overscroll-behavior: none;
+        }
+      }
       @media (prefers-color-scheme: light) {
         html:not([data-theme='obsidian']):not([data-theme='amber']):not([data-theme='dark']),
         html:not([data-theme='obsidian']):not([data-theme='amber']):not([data-theme='dark']) body {

@@ -1,6 +1,7 @@
 package org.nexus.android.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -66,8 +67,6 @@ internal fun NexusRootScreen(
     localLogs: List<UiLogLine>,
     activeProfileName: String = "默认直连",
     excludedPackages: Set<String>,
-    dashVisibility: DashboardCardVisibility = DashboardCardVisibility(),
-    onDashVisibilityChange: (DashboardCardVisibility) -> Unit = {},
     workspaceState: WorkspaceUiState = WorkspaceUiState(),
     workspaceActions: WorkspaceUiActions = WorkspaceUiActions(),
     onToggleExcluded: (String, Boolean) -> Unit,
@@ -112,7 +111,6 @@ internal fun NexusRootScreen(
     previewActiveExit: ActiveExitSummary? = null,
     previewQuickNodes: List<OutboundMemberSnapshot>? = null,
     previewMemoryText: String? = null,
-    previewDashEditing: Boolean = false,
     previewOnsetMarkers: List<SparklineOnset>? = null,
     previewCachedGroups: List<OutboundGroupSnapshot>? = null,
 ) {
@@ -128,10 +126,9 @@ internal fun NexusRootScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     var showSplitTunnel by rememberSaveable { mutableStateOf(false) }
     var showDiagnostics by rememberSaveable { mutableStateOf(false) }
-    var showQuickCommand by remember { mutableStateOf(false) }
-    var quickCommandInitialQuery by remember { mutableStateOf("") }
+    var showQuickCommand by rememberSaveable { mutableStateOf(false) }
+    var quickCommandInitialQuery by rememberSaveable { mutableStateOf("") }
     var diagnostic by remember { mutableStateOf("") }
-    var dashEditing by rememberSaveable { mutableStateOf(previewDashEditing) }
     var isProbingOverview by remember { mutableStateOf(false) }
 
     LaunchedEffect(commandShortcutNonce) {
@@ -203,10 +200,8 @@ internal fun NexusRootScreen(
                     windowSizeClass = windowSizeClass,
                     heroState = heroState,
                     activeProfileName = activeProfileName,
-                    dashEditing = dashEditing,
                     scrollBehavior = scrollBehavior,
                     onOpenConfig = { selectedTab = NexusTab.CONFIG.ordinal },
-                    onToggleDashEditing = { dashEditing = !dashEditing },
                     onCloseSplitTunnel = { showSplitTunnel = false },
                     onOpenQuickCommand = {
                         quickCommandInitialQuery = ""
@@ -252,15 +247,16 @@ internal fun NexusRootScreen(
                             onAddExcludedBatch = onAddExcludedBatch,
                         )
                     } else {
-                        when (currentTab) {
+                        val reducedMotion = isReducedMotionEnabled()
+                        AnimatedContent(
+                            targetState = currentTab,
+                            transitionSpec = { nexusPageTransition(reducedMotion) },
+                            label = "nexusTabTransition",
+                        ) { tab ->
+                        when (tab) {
                             NexusTab.OVERVIEW -> {
                                 val activeRouting = workspaceState.document.activeRoutingProfile()
                                 val dnsCfg = workspaceState.document.dns
-                                val dnsLabel = when {
-                                    dnsCfg.mode == "raw_kdl" -> "高级 DNS · ${activeRouting.rules.size} 条规则"
-                                    dnsCfg.simple.fakeIpEnabled -> "FakeIP · ${activeRouting.rules.size} 条规则"
-                                    else -> "标准 DNS · ${activeRouting.rules.size} 条规则"
-                                }
                                 OverviewScreen(
                                     heroState = heroState,
                                     powerSave = powerSave,
@@ -270,14 +266,12 @@ internal fun NexusRootScreen(
                                     hasRemoteOutbound = hasRemoteOutbound,
                                     activeExit = telemetry.activeExit,
                                     quickNodes = telemetry.quickNodes,
+                                    workspaceState = workspaceState,
                                     memoryText = telemetry.memoryText,
                                     isProbing = isProbingOverview,
-                                    dashEditing = dashEditing,
-                                    dashVisibility = dashVisibility,
                                     metrics = telemetry.metrics,
                                     downloadRateBps = telemetry.downloadRateBps,
                                     uploadRateBps = telemetry.uploadRateBps,
-                                    peakRateBps = telemetry.peakRateBps,
                                     downloadSamples = telemetry.downloadSamples,
                                     uploadSamples = telemetry.uploadSamples,
                                     excludedCount = excludedPackages.size,
@@ -290,7 +284,6 @@ internal fun NexusRootScreen(
                                     onSwitchOutboundMode = { m ->
                                         scope.launch { diagnostic = onSwitchOutboundMode(m); if (running) telemetry.recordOnset(if (m == "global") "全局" else if (m == "direct") "直连" else "规则") }
                                     },
-                                    onDashVisibilityChange = onDashVisibilityChange,
                                     onQuickPasteImport = { raw ->
                                         scope.launch {
                                             diagnostic = importClipboardPayload(raw, workspaceActions.onImportShareUri, workspaceActions.onImportWorkspaceJson, onImportCustomConfig, onImportSubscription, onImportShareLink)
@@ -304,6 +297,9 @@ internal fun NexusRootScreen(
                                             diagnostic = if (ok) "已切换至 ${node.name}" else "切换失败"
                                             if (ok) { telemetry.recordOnset(node.name); telemetry.applyPrimaryGroups(onFetchGroups(), tag) }
                                         }
+                                    },
+                                    onSelectWorkspaceProfile = { profileId ->
+                                        scope.launch { diagnostic = workspaceActions.onSelectProfile(profileId) }
                                     },
                                     onProbeActiveGroup = {
                                         val tag = telemetry.activeExit.groupTag.ifEmpty { return@OverviewScreen }
@@ -321,21 +317,19 @@ internal fun NexusRootScreen(
                                     onOpenSplitTunnel = { showSplitTunnel = true },
                                     onOpenDiagnostics = { showDiagnostics = true },
                                     routingProfileName = activeRouting.name,
-                                    dnsSummaryText = dnsLabel,
                                     runMode = workspaceState.host.android.runMode,
                                     bypassLan = workspaceState.host.android.bypassLan,
                                     fakeIpEnabled = dnsCfg.mode == "simple" && dnsCfg.simple.fakeIpEnabled,
                                     onsetMarkers = telemetry.onsetMarkers,
+                                    onUpdateHostSection = { next ->
+                                        scope.launch { diagnostic = workspaceActions.onUpdateHost(workspaceState.host.copy(android = next)) }
+                                    },
                                 )
                             }
                             NexusTab.GROUPS -> GroupsScreen(
                                 onFetchGroups = onFetchGroups,
-                                onSelectMember = { g, m ->
-                                    onSelectMember(g, m).also { ok -> if (ok && running) telemetry.recordOnset(m) }
-                                },
-                                onResetAuto = { g ->
-                                    onResetAuto(g).also { ok -> if (ok && running) telemetry.recordOnset("自动") }
-                                },
+                                onSelectMember = { g, m -> onSelectMember(g, m).also { ok -> if (ok && running) telemetry.recordOnset(m) } },
+                                onResetAuto = { g -> onResetAuto(g).also { ok -> if (ok && running) telemetry.recordOnset("自动") } },
                                 onProbeGroup = onProbeGroup,
                                 onProbeOutbound = onProbeOutbound,
                                 windowSizeClass = windowSizeClass,
@@ -356,17 +350,9 @@ internal fun NexusRootScreen(
                                 onResolveOwnerPackage = onResolveOwnerPackage,
                                 onCloseConnection = onCloseConnection,
                                 onCloseAllConnections = onCloseAllConnections,
-                                onCreateRuleFromConnection = { host, action, outbound ->
-                                    onCreateRuleFromConnection(host, action, outbound)
-                                },
-                                onBypassPackage = { pkg ->
-                                    if (onBypassFromConnection != null) onBypassFromConnection(pkg)
-                                    else onToggleExcluded(pkg, true)
-                                },
-                                onDiagnoseHost = { host ->
-                                    quickCommandInitialQuery = host
-                                    showQuickCommand = true
-                                },
+                                onCreateRuleFromConnection = onCreateRuleFromConnection,
+                                onBypassPackage = { pkg -> onBypassFromConnection?.invoke(pkg) ?: onToggleExcluded(pkg, true) },
+                                onDiagnoseHost = { host -> quickCommandInitialQuery = host; showQuickCommand = true },
                                 windowSizeClass = windowSizeClass,
                                 contentPadding = innerPadding,
                                 downloadRateBps = telemetry.downloadRateBps,
@@ -382,6 +368,17 @@ internal fun NexusRootScreen(
                                 contentPadding = screenPadding,
                                 onOpenSplitTunnel = { showSplitTunnel = true },
                                 onOpenDiagnostics = { showDiagnostics = true },
+                                profileLatencies = remember(telemetry.cachedGroups) { deriveLiveLatencies(telemetry.cachedGroups) },
+                                isProbingProfiles = isProbingOverview,
+                                onProbeProfiles = {
+                                    findProbeableGroupTag(telemetry.cachedGroups, telemetry.activeExit.groupTag)?.let { tag ->
+                                        scope.launch {
+                                            isProbingOverview = true
+                                            if (onProbeGroup(tag)) { delay(650L); telemetry.applyPrimaryGroups(onFetchGroups(), tag); diagnostic = "节点延迟测速已更新" }
+                                            isProbingOverview = false
+                                        }
+                                    } ?: run { diagnostic = if (running) "请在策略组测速" else "启动连接后可实时探测延迟" }
+                                },
                                 workspaceState = workspaceState,
                                 workspaceActions = workspaceActions,
                             )
@@ -399,6 +396,7 @@ internal fun NexusRootScreen(
                                 coreLogLevel = workspaceState.host.common.logLevel,
                                 onSetCoreLogLevel = onSetCoreLogLevel,
                             )
+                        }
                         }
                     }
                 }
@@ -427,6 +425,7 @@ internal fun NexusRootScreen(
                         heroState = heroState,
                         downloadRateBps = telemetry.downloadRateBps,
                         uploadRateBps = telemetry.uploadRateBps,
+                        showQuickPower = showSplitTunnel || currentTab != NexusTab.OVERVIEW,
                         onSelectTab = { idx -> haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); showSplitTunnel = false; selectedTab = idx },
                         onStartStop = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onStartStop(running) },
                     )
@@ -454,26 +453,17 @@ internal fun NexusRootScreen(
 
     if (showDiagnostics) {
         DiagnosticsSheet(
-            running = running,
-            workspaceState = workspaceState,
-            workspaceActions = workspaceActions,
-            onFetchLiveRules = onFetchLiveRules,
-            onQueryDns = onQueryDns,
-            onFlushFakeIp = onFlushFakeIp,
+            running = running, workspaceState = workspaceState, workspaceActions = workspaceActions,
+            onFetchLiveRules = onFetchLiveRules, onQueryDns = onQueryDns, onFlushFakeIp = onFlushFakeIp,
             onClearCacheTarget = { target -> onClearCacheTarget?.invoke(target) ?: onClearCache() },
-            onFeedback = { diagnostic = it },
-            onDismiss = { showDiagnostics = false },
+            onFeedback = { diagnostic = it }, onDismiss = { showDiagnostics = false },
         )
     }
 
     if (showQuickCommand) {
         QuickCommandSheet(
-            initialQuery = quickCommandInitialQuery,
-            running = running,
-            outboundMode = outboundMode,
-            groups = telemetry.cachedGroups,
-            windowSizeClass = windowSizeClass,
-            onDismiss = { showQuickCommand = false },
+            initialQuery = quickCommandInitialQuery, running = running, outboundMode = outboundMode,
+            groups = telemetry.cachedGroups, windowSizeClass = windowSizeClass, onDismiss = { showQuickCommand = false },
             onSwitchMode = { m -> scope.launch { diagnostic = onSwitchOutboundMode(m); if (running) telemetry.recordOnset(if (m == "global") "全局" else if (m == "direct") "直连" else "规则") } },
             onSelectNode = { g, m -> scope.launch { if (onSelectMember(g, m)) { telemetry.recordOnset(m); telemetry.applyPrimaryGroups(onFetchGroups(), g); diagnostic = "已切换至 $m" } } },
             onProbeAll = { findProbeableGroupTag(telemetry.cachedGroups, telemetry.activeExit.groupTag)?.let { t -> scope.launch { if (onProbeGroup(t)) { delay(650L); telemetry.applyPrimaryGroups(onFetchGroups(), t) } } } ?: run { diagnostic = "当前仅有手动选择组，请进入策略组对单个节点测速" } },

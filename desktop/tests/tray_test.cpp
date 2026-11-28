@@ -335,9 +335,6 @@ namespace {
         expect(def.close_to_tray && !def.start_minimized && def.tray_show_nodes &&
                def.tray_show_speed && def.tray_click_action == "toggle",
             "UiPrefs tray defaults match frozen contract");
-        expect(def.dash_show_speed && def.dash_show_quick_nodes && def.dash_show_network &&
-               def.dash_show_ports && def.dash_show_traffic && def.dash_show_memory,
-            "UiPrefs dashboard widget visibility defaults all true");
 
         auto tmp = std::filesystem::temp_directory_path() / "nexus-desktop-tray-prefs-test.conf";
         std::error_code ec;
@@ -349,21 +346,12 @@ namespace {
         custom.tray_show_nodes = false;
         custom.tray_show_speed = false;
         custom.tray_click_action = "toggle_proxy";
-        custom.dash_show_speed = false;
-        custom.dash_show_quick_nodes = true;
-        custom.dash_show_network = false;
-        custom.dash_show_ports = false;
-        custom.dash_show_traffic = true;
-        custom.dash_show_memory = false;
-        expect(desktop::save_ui_prefs(tmp, custom), "save tray & dashboard UiPrefs");
+        expect(desktop::save_ui_prefs(tmp, custom), "save tray UiPrefs");
 
         auto loaded = desktop::load_ui_prefs(tmp);
         expect(!loaded.close_to_tray && loaded.start_minimized && !loaded.tray_show_nodes &&
                !loaded.tray_show_speed && loaded.tray_click_action == "toggle_proxy",
             "roundtrip all 5 tray UiPrefs fields");
-        expect(!loaded.dash_show_speed && loaded.dash_show_quick_nodes && !loaded.dash_show_network &&
-               !loaded.dash_show_ports && loaded.dash_show_traffic && !loaded.dash_show_memory,
-            "roundtrip all 6 dashboard widget visibility UiPrefs fields");
 
         custom.tray_click_action = "show";
         expect(desktop::save_ui_prefs(tmp, custom), "save tray_click_action=show");

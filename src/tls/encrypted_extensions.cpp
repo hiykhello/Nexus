@@ -53,7 +53,6 @@ namespace tls {
                     if (!quic) return std::unexpected(E::unsupported);
                     *parameters=data; break;
                 case 0x44cd:
-                case 0x4469:
                     if (quic || result.application_settings_code) return std::unexpected(E::invalid_selection);
                     result.application_settings_code=type;
                     result.application_settings.assign(data.begin(),data.end());
@@ -64,6 +63,19 @@ namespace tls {
                         u16(data,0)!=data.size()-2) return std::unexpected(E::malformed);
                     result.ech_retry_configs.assign(data.begin(),data.end());
                     break;
+                case 0xca34: {
+                    // draft-ietf-tls-trust-anchor-ids: uint16 list length + 0..N uint8-prefixed non-empty IDs.
+                    if (data.size()<2 || u16(data,0)!=data.size()-2) return std::unexpected(E::malformed);
+                    for (std::size_t j=2;j<data.size();) {
+                        auto n=data[j++];
+                        if (!n || n>data.size()-j) return std::unexpected(E::malformed);
+                        result.peer_trust_anchors.emplace_back(
+                            data.begin()+static_cast<std::ptrdiff_t>(j),
+                            data.begin()+static_cast<std::ptrdiff_t>(j+n));
+                        j+=n;
+                    }
+                    break;
+                }
                 case 28:
                     if (quic) return std::unexpected(E::unsupported);
                     if (data.size()!=2 || offered->data.size()!=2 || u16(offered->data,0)<64 || u16(offered->data,0)>16385)

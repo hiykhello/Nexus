@@ -350,31 +350,9 @@ namespace rules {
         }
         case Kind::all:
         case Kind::any: {
+            if (entry.kind == Kind::any && entry.children.any_index < any_indexes_.size())
+                return eval_any_index(any_indexes_[entry.children.any_index], input);
             bool unknown = false;
-            if (entry.kind == Kind::any && entry.children.any_index < any_indexes_.size()) {
-                auto const& idx = any_indexes_[entry.children.any_index];
-                if (idx.has_domain) {
-                    if (input.input.domain) {
-                        if (any_detail::match_any_domain(entries_, idx, *input.input.domain)) return Truth::yes;
-                    } else if (!input.domain_absent) unknown = true;
-                }
-                if (idx.has_ip) {
-                    if (input.candidates) {
-                        for (auto const& c : *input.candidates)
-                            if (any_detail::match_any_ip_one(idx, c.bytes, c.size == 4 ? af_inet : af_inet6, input.match_mapped_ipv4))
-                                return Truth::yes;
-                    } else if (input.input.ip) {
-                        if (any_detail::match_any_ip_one(idx, input.address, input.family, input.match_mapped_ipv4))
-                            return Truth::yes;
-                    } else unknown = true;
-                }
-                for (auto cid : idx.remainder) {
-                    auto value = evaluate(cid, input);
-                    if (value == Truth::yes) return Truth::yes;
-                    unknown |= value == Truth::unknown;
-                }
-                return unknown ? Truth::unknown : Truth::no;
-            }
             auto last = entry.children.first + entry.children.count;
             for (auto child = entry.children.first; child < last; ++child) {
                 auto value = evaluate(children_[child], input);
@@ -388,8 +366,35 @@ namespace rules {
         std::terminate();
     }
 
-    auto Matcher::first_indexed_match(Prepared const& prepared, std::size_t first, std::size_t last) const noexcept
-        -> std::size_t {
+    auto Matcher::eval_any_index(AnyIndex const& idx, Prepared const& input) const noexcept -> Truth {
+        using namespace matcher_detail;
+        bool unknown = false;
+        if (idx.has_domain) {
+            if (input.input.domain) {
+                if (any_detail::match_any_domain(entries_, idx, *input.input.domain, input.domain_normalized))
+                    return Truth::yes;
+            } else if (!input.domain_absent) unknown = true;
+        }
+        if (idx.has_ip) {
+            if (input.candidates) {
+                for (auto const& c : *input.candidates)
+                    if (any_detail::match_any_ip_one(idx, c.bytes, c.size == 4 ? af_inet : af_inet6, input.match_mapped_ipv4))
+                        return Truth::yes;
+            } else if (input.input.ip) {
+                if (any_detail::match_any_ip_one(idx, input.address, input.family, input.match_mapped_ipv4))
+                    return Truth::yes;
+            } else unknown = true;
+        }
+        for (auto cid : idx.remainder) {
+            auto value = evaluate(cid, input);
+            if (value == Truth::yes) return Truth::yes;
+            unknown |= value == Truth::unknown;
+        }
+        return unknown ? Truth::unknown : Truth::no;
+    }
+
+    auto Matcher::first_indexed_match(Prepared const& prepared, std::size_t first, std::size_t last,
+        std::uint8_t idx_mask) const noexcept -> std::size_t {
         auto best = last;
         auto domain_lookup = [&](auto const& index, std::string_view key) {
             auto found = std::lower_bound(index.begin(), index.end(), key,
@@ -398,18 +403,19 @@ namespace rules {
                 });
             if (found != index.end() && found->text == key && found->rule < last) best = std::min(best, found->rule);
         };
-        if (prepared.input.domain && (!domains_.empty() || !suffixes_.empty())) {
+        if (prepared.input.domain && (idx_mask & 0x03u) &&
+            (((idx_mask & 0x01u) && !domains_.empty()) || ((idx_mask & 0x02u) && !suffixes_.empty()))) {
             std::array<char, 253> normalized;
             auto name = *prepared.input.domain;
-            if (std::ranges::any_of(name, [](char c) { return c >= 'A' && c <= 'Z'; })) {
+            if (!prepared.domain_normalized && std::ranges::any_of(name, [](char c) { return c >= 'A' && c <= 'Z'; })) {
                 for (std::size_t i = 0; i < name.size(); ++i) {
                     auto c = name[i];
                     normalized[i] = c >= 'A' && c <= 'Z' ? static_cast<char>(c + ('a' - 'A')) : c;
                 }
                 name = std::string_view(normalized.data(), name.size());
             }
-            domain_lookup(domains_, name);
-            if (!suffixes_.empty()) for (;;) {
+            if ((idx_mask & 0x01u) && !domains_.empty()) domain_lookup(domains_, name);
+            if ((idx_mask & 0x02u) && !suffixes_.empty()) for (;;) {
                 domain_lookup(suffixes_, name);
                 auto dot = name.find('.');
                 if (dot == std::string_view::npos) break;
@@ -423,21 +429,30 @@ namespace rules {
                     [first](IndexedIp const& item, auto const& value) {
                         return item.address < value || (item.address == value && item.rule < first);
                     });
-                if (found != group.entries.end() && found->address == network && found->rule < last)
-                    best = std::min(best, found->rule);
+                if (found != group.entries.end() && found->address == network && found->rule < best)
+                    best = found->rule;
             }
         };
-        if (prepared.input.ip) {
-            if (prepared.family == matcher_detail::af_inet) ip_lookup(ipv4_, prepared.address);
-            else {
-                ip_lookup(ipv6_, prepared.address);
-                if (prepared.match_mapped_ipv4 &&
-                    std::all_of(prepared.address.begin(), prepared.address.begin() + 10, [](auto byte) { return byte == 0; }) &&
-                    prepared.address[10] == 0xff && prepared.address[11] == 0xff) {
+        auto probe_ip = [&](std::array<std::uint8_t, 16> const& addr, unsigned fam) {
+            if (fam == matcher_detail::af_inet) {
+                if ((idx_mask & 0x04u) && !ipv4_.empty()) ip_lookup(ipv4_, addr);
+            } else {
+                if ((idx_mask & 0x08u) && !ipv6_.empty()) ip_lookup(ipv6_, addr);
+                if ((idx_mask & 0x04u) && !ipv4_.empty() && prepared.match_mapped_ipv4 &&
+                    std::all_of(addr.begin(), addr.begin() + 10, [](auto byte) { return byte == 0; }) &&
+                    addr[10] == 0xff && addr[11] == 0xff) {
                     std::array<std::uint8_t, 16> mapped{};
-                    std::copy(prepared.address.begin() + 12, prepared.address.end(), mapped.begin());
+                    std::copy(addr.begin() + 12, addr.end(), mapped.begin());
                     ip_lookup(ipv4_, mapped);
                 }
+            }
+        };
+        if ((idx_mask & 0x0cu) && best > first && !ip_roots_.empty() && ip_roots_.front() < best) {
+            if (prepared.candidates) {
+                for (auto const& c : *prepared.candidates)
+                    probe_ip(c.bytes, c.size == 4 ? matcher_detail::af_inet : matcher_detail::af_inet6);
+            } else if (prepared.input.ip) {
+                probe_ip(prepared.address, prepared.family);
             }
         }
         return best;

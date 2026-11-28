@@ -24,11 +24,13 @@ inbounds {
     }
 }
 outbounds { outbound "direct" type="direct"; }
+state {
+    cache-directory "/tmp/nexus-b147-dns-cache"
+}
 dns {
     listen host="127.0.0.1" port=5353
     reverse-mapping #true
     cache-flush-interval-ms 5000
-    message-cache-directory "/tmp/nexus-b147-dns-cache"
     servers { server "up" type="udp" host="127.0.0.1" port=5300; }
     rulesets {
         inline-block {
@@ -213,8 +215,8 @@ routing {
         r2 url="https://rules.example/b.kdl" format="kdl" http-client="alt-http"
     }
     rules {
-        - kind="rule-set" value="r1" outbound="block"
-        - kind="rule-set" value="r2" outbound="direct"
+        - rule-set="r1" to="block"
+        - rule-set="r2" to="direct"
     }
     final "direct"
 }
@@ -222,9 +224,9 @@ routing {
         auto parsed = config::parse_kdl(cfg);
         check(parsed.has_value(), parsed ? "" : "3-tier http-clients remote rule-set rejected: " + parsed.error());
         check(parsed->default_http_client == "direct-http", "default_http_client mismatch");
-        check(parsed->routes.size() == 2, "expected 2 routes");
-        check(parsed->routes[0].file.http_client == "direct-http", "r1 did not inherit default-http-client");
-        check(parsed->routes[1].file.http_client == "alt-http", "r2 did not override http-client");
+        check(parsed->ordered_tcp && parsed->ordered_tcp->rules.size() == 2, "expected 2 routes");
+        check(parsed->ordered_tcp->rules[0].file && parsed->ordered_tcp->rules[0].file->http_client == "direct-http", "r1 did not inherit default-http-client");
+        check(parsed->ordered_tcp->rules[1].file && parsed->ordered_tcp->rules[1].file->http_client == "alt-http", "r2 did not override http-client");
         auto files = cli::load_route_files(*parsed, "/tmp/c.kdl", true);
         check(files.has_value(), "nexus check offline remote placeholder failed");
     }
@@ -237,7 +239,7 @@ routing {
         std::filesystem::create_directories(wd);
         std::filesystem::create_directories(cfgd);
         {
-            std::ofstream(wd / "rel.kdl") << "version 2\ndomain \"from-wd.example\"\n";
+            std::ofstream(wd / "rel.kdl") << "schema-version 2\nkind \"predicate\"\nrule type=\"domain\" value=\"from-wd.example\"\n";
             std::ofstream(cfgd / "00-base.kdl") << "schema-version 1\nrole \"client\"\n";
             std::ofstream(cfgd / "10-net.kdl") << R"kdl(
 inbounds { inbound "socks" type="socks5" { listen host="127.0.0.1" port=1080; authentication "none"; }; }
@@ -250,7 +252,7 @@ routing {
         local path="rel.kdl" format="kdl"
     }
     rules {
-        - kind="rule-set" value="local" outbound="block"
+        - rule-set="local" to="block"
     }
     final "direct"
 }

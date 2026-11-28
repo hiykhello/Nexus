@@ -203,7 +203,7 @@ public struct WorkspaceView: View {
                 }
             }
         }
-        .bentoCard(padding: 12, cornerRadius: 14)
+        .bentoCard(padding: 12)
     }
 
     private var bannerMeta: some View {
@@ -323,7 +323,7 @@ public struct WorkspaceView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .bentoCard(padding: 12, cornerRadius: 14)
+                .bentoCard(padding: 12)
 
                 VStack(alignment: .leading, spacing: 6) {
                     Text("DNS 配置（\(workspace.dns.displayModeTitle)）")
@@ -341,7 +341,7 @@ public struct WorkspaceView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .bentoCard(padding: 12, cornerRadius: 14)
+                .bentoCard(padding: 12)
             }
         }
     }

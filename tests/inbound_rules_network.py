@@ -46,7 +46,7 @@ inbounds {{
 }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rulesets {{ "rules" path="rules.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="rules" outbound="reject"; }}; final "direct"; }}
+routing {{ rulesets {{ "rules" path="rules.kdl" format="kdl"; }}; rules {{ - rule-set="rules" to="reject"; }}; final "direct"; }}
 ''')
     server=subprocess.Popen([binary,'run','--config',root/'server.kdl'],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:

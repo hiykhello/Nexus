@@ -59,7 +59,7 @@ import org.nexus.android.ui.theme.NexusTheme
 @Composable
 fun OpticalCard(
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = 16.dp,
+    cornerRadius: Dp = 12.dp,
     borderColor: Color = NexusTheme.colors.hairline,
     borderWidth: Dp = 1.dp,
     accentTint: Color = Color.Transparent,
@@ -115,10 +115,11 @@ fun OpticalSegmentedControl(
     val reducedMotion = isReducedMotionEnabled()
     val count = options.size.coerceAtLeast(1)
     val selectedIdx = options.indexOfFirst { it.first == selectedKey }.coerceAtLeast(0)
-    val pillShape = RoundedCornerShape(999.dp)
+    val pillShape = RoundedCornerShape(8.dp)
+    val slotShape = RoundedCornerShape(6.dp)
     val primary = MaterialTheme.colorScheme.primary
-    val primaryContainer = MaterialTheme.colorScheme.primaryContainer
-    val onPrimaryContainer = MaterialTheme.colorScheme.onPrimaryContainer
+    val activeFill = if (ext.isDark) MaterialTheme.colorScheme.primaryContainer else Color.White
+    val activeInk = if (ext.isDark) MaterialTheme.colorScheme.onPrimaryContainer else primary
     val onSurfaceVariant = MaterialTheme.colorScheme.onSurfaceVariant
 
     val animatedIndexState = animateFloatAsState(
@@ -134,26 +135,25 @@ fun OpticalSegmentedControl(
         modifier = modifier.fillMaxWidth(),
         shape = pillShape,
         color = ext.wellSurface,
-        border = BorderStroke(1.dp, ext.hairline),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(4.dp)
+                .padding(3.dp)
                 .drawWithCache {
                     val slotW = size.width / count.toFloat()
                     val h = size.height
-                    val cr = CornerRadius(h * 0.5f, h * 0.5f)
+                    val cr = CornerRadius(6.dp.toPx(), 6.dp.toPx())
                     val strokePx = 1.dp.toPx()
                     val halfStroke = strokePx * 0.5f
-                    val innerCr = CornerRadius((h * 0.5f - halfStroke).coerceAtLeast(0f))
+                    val innerCr = CornerRadius((6.dp.toPx() - halfStroke).coerceAtLeast(0f))
                     val rimStroke = Stroke(width = strokePx)
-                    val rimColor = primary.copy(alpha = if (ext.isDark) 0.36f else 0.28f)
+                    val rimColor = primary.copy(alpha = if (ext.isDark) 0.42f else 0.24f)
                     onDrawBehind {
                         val idx = animatedIndexState.value.coerceIn(0f, (count - 1).toFloat())
                         val left = slotW * idx
                         drawRoundRect(
-                            color = primaryContainer,
+                            color = activeFill,
                             topLeft = Offset(left, 0f),
                             size = Size(slotW, h),
                             cornerRadius = cr,
@@ -174,8 +174,8 @@ fun OpticalSegmentedControl(
                 Box(
                     modifier = Modifier
                         .weight(1f)
-                        .heightIn(min = 40.dp)
-                        .clip(pillShape)
+                        .heightIn(min = 42.dp)
+                        .clip(slotShape)
                         .clickable(enabled = enabled && !selected) {
                             haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                             onSelect(key)
@@ -187,7 +187,7 @@ fun OpticalSegmentedControl(
                         text = label,
                         style = MaterialTheme.typography.labelLarge,
                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                        color = if (selected) onPrimaryContainer else onSurfaceVariant,
+                        color = if (selected) activeInk else onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )

@@ -107,7 +107,7 @@ namespace relay {
         };
 
         auto serve_local(std::unique_ptr<Session> session,io::local_stream_socket source,io::io_context& context,
-            rules::RouteMatcher const& policy,socks5::Request const* tcp,std::string_view target) -> capy::task<> {
+            rules::RouteProgram const& policy,socks5::Request const* tcp,std::string_view target) -> capy::task<> {
             FinishLocal finish{*session};
             session->begin_traffic(TrafficProtocol::fixed_tcp,tcp ? tcp->port : 0);
             if (target.empty()) {

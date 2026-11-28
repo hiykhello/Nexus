@@ -78,7 +78,7 @@ dns {{ server "upstream" type="{'tcp' if tcp else 'udp'}" host="127.0.0.1" port=
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rulesets {{ "deny" path="deny.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; final "direct"; }}
+routing {{ rulesets {{ "deny" path="deny.kdl" format="kdl"; }}; rules {{ - rule-set="deny" to="reject"; }}; final "direct"; }}
 ''')
     proc = subprocess.Popen([binary, 'run', '--config', str(config)], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

@@ -41,7 +41,7 @@ for ordered in (False, True):
         while ss == front:
             ss = free_port()
         rule = ('tcp-program sniff-timeout-ms=100 unknown="skip" udp=#true { rule action="reject" rule-set="deny"; rule action="reject" rule-set="source"; rule action="reject" rule-set="source" ip-cidr-match-source=#true; }'
-                if ordered else 'rules { - kind="rule-set" value="deny" outbound="reject"; - kind="rule-set" value="source" outbound="reject"; - kind="rule-set" value="source" outbound="reject" ip-cidr-match-source=#true; }')
+                if ordered else 'rules { - rule-set="deny" to="reject"; - rule-set="source" to="reject"; - rule-set="source" to="reject" ip-cidr-match-source=#true; }')
         config = root / 'config.kdl'
         config.write_text(f'''schema-version 1
 role "server"

@@ -71,7 +71,7 @@ export namespace net::stream_datagrams {
             std::optional<Clock::time_point> active_deadline;
         };
         Session& session; io::io_context& context; Stream& incoming;
-        rules::RouteMatcher const& policy; Resolver resolver; OrderedRouter ordered;
+        rules::RouteProgram const& policy; Resolver resolver; OrderedRouter ordered;
         UdpDirect direct; DirectSocketWait direct_wake;
         std::optional<UdpEndpoint> source; DatagramFraming framing; ProxyAddress destination;
         static constexpr std::size_t ordinary_slots=4096, fixed_slots=512;
@@ -81,7 +81,7 @@ export namespace net::stream_datagrams {
         std::deque<Packet> pending; std::size_t pending_bytes=0;
         bool resolving=false,canceled=false; Clock::time_point deadline{}; Slot* forwarding=nullptr;
         capy::async_event pending_wake,space_wake,timeout_wake;
-        Server(Session& owner,io::io_context& executor,Stream& stream,rules::RouteMatcher const& rules,Resolver resolve,
+        Server(Session& owner,io::io_context& executor,Stream& stream,rules::RouteProgram const& rules,Resolver resolve,
             DatagramFraming format,ProxyAddress target={},std::optional<UdpEndpoint> peer={},OrderedRouter router={},
             std::size_t routed_cap=ordinary_slots,std::size_t fixed_cap=fixed_slots)
             : session(owner),context(executor),incoming(stream),policy(rules),resolver(std::move(resolve)),ordered(std::move(router)),direct(rules,owner.direct_tcp_options ? &owner.direct_tcp_options->binding : nullptr),direct_wake(executor),source(peer),framing(format),destination(target),routed(routed_cap),fixed(fixed_cap),readers(routed_cap+fixed_cap) {}

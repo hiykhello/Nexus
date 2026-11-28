@@ -32,7 +32,7 @@ namespace relay::session_udp_detail {
 
     auto udp_send_alias(Session& session, socks5::UdpIngress& ingress, UdpResolution& resolution,
         socks5::UdpDatagram const& domain, std::span<io::endpoint const> endpoints,
-        std::shared_ptr<UdpFakeIpLease> const& lease, rules::RouteMatcher const* legacy, socks5::UdpPeer const& source,
+        std::shared_ptr<UdpFakeIpLease> const& lease, rules::RouteProgram const* legacy, socks5::UdpPeer const& source,
         std::optional<std::size_t> rule, std::size_t outbound) -> capy::task<void> {
         for (auto const& endpoint : endpoints) {
             if (endpoint.address().is_v6() && endpoint.address().to_v6().scope_id()) continue;
@@ -62,7 +62,7 @@ namespace relay::session_udp_detail {
     }
 
     auto udp_resolve_alias(Session& session, io::io_context& context, socks5::UdpIngress& ingress,
-        UdpResolution& resolution, rules::RouteMatcher const& policy) -> capy::task<void> {
+        UdpResolution& resolution, rules::RouteProgram const& policy) -> capy::task<void> {
         auto original = ingress.pending_route();
         auto peer = ingress.pending_route_source();
         if (!original || !peer || !session.fakeip) co_return;

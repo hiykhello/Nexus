@@ -32,8 +32,7 @@ export namespace cli::run_detail {
             std::optional<::rules::RuleSet> parsed;
             if (reference.file.inline_rules) {
                 parsed = *reference.file.inline_rules;
-                if (!routing.unified_cache_root.empty() || !routing.message_cache_directory.empty() ||
-                    (routing.fakeip && routing.fakeip->unified)) {
+                if (!routing.unified_cache_root.empty() || routing.fakeip) {
                     auto hash = ::state::fingerprint(std::as_bytes(std::span(reference.file.inline_kdl)));
                     routing.cache_rule_fingerprints.append(reinterpret_cast<char const*>(hash.data()), hash.size());
                 }
@@ -50,8 +49,7 @@ export namespace cli::run_detail {
                     if (total > ::rules::max_input_bytes) return std::unexpected("DNS rule sets exceed 256 MiB total");
                     keys.push_back(key);
                 }
-                if (!routing.unified_cache_root.empty() || !routing.message_cache_directory.empty() ||
-                    (routing.fakeip && routing.fakeip->unified)) {
+                if (!routing.unified_cache_root.empty() || routing.fakeip) {
                     auto hash = ::state::fingerprint(std::as_bytes(std::span(*data)));
                     routing.cache_rule_fingerprints.append(reinterpret_cast<char const*>(hash.data()), hash.size());
                 }
@@ -134,8 +132,6 @@ export namespace cli::run_detail {
                 out.push_back(spec);
                 return {};
             };
-            for (auto const& r : config.routes)
-                if (auto ok = add(r.file); !ok) return std::unexpected(std::move(ok.error()));
             if (config.ordered_tcp) {
                 for (auto const& [tag, spec] : config.ordered_tcp->sets)
                     if (auto ok = add(spec); !ok) return std::unexpected(std::move(ok.error()));

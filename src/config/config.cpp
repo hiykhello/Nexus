@@ -427,23 +427,14 @@ namespace config {
         if (!fallback || *fallback==1) return error("default-outbound must name a direct or tunnel outbound");
         if (std::ranges::any_of(result.inbounds,[](auto const& entry) {
             return !entry.unix_path.empty() || (entry.fixed_tcp && !entry.fixed_tcp->unix_path.empty());
-        }) && (*fallback!=0 || !route->rules.empty() || route->ordered_tcp ||
+        }) && (*fallback!=0 || route->ordered_tcp ||
                result.direct_tcp_options.configured() || result.direct_network))
             return error("fixed-tcp Unix streams require a plain direct outbound");
         result.default_outbound=*fallback;
         result.default_outbound_name=*route->default_outbound;
         result.direct_outbound_name=*direct;
         result.block_outbound_name=block;
-        result.default_action=*fallback>=2 ? RouteAction::vless : RouteAction::direct;
         if (!result.vless_outbounds.empty()) result.vless=result.vless_outbounds.front().config;
-        for (auto const& rule : route->rules) {
-            auto selected=outbound(rule.outbound);
-            if (!selected) return error("rule outbound not found");
-            auto file=std::ranges::find(route->files,rule.set,&NamedRouteFile::name);
-            auto action=*selected==0 ? RouteAction::direct : *selected==1 ? RouteAction::block : RouteAction::vless;
-            auto selected_file=file->file;selected_file.ip_cidr_match_source=rule.ip_cidr_match_source;
-            result.routes.push_back({std::move(selected_file),action,*selected,rule.outbound});
-        }
         if (auto checked=valid_fakeip_routing(result,*route); !checked) return std::unexpected(std::move(checked.error()));
         auto tun_dns_tcp=std::ranges::any_of(result.inbounds,[](auto const& entry) {
             return entry.tun && entry.tun->dns_hijack_tcp;
@@ -456,14 +447,10 @@ namespace config {
         {
             std::vector<std::string> avail, used_r;
             avail.reserve(route->files.size()); for (auto const& f : route->files) avail.push_back(f.name);
-            used_r.reserve(route->rules.size()); for (auto const& r : route->rules) used_r.push_back(r.set);
             if (auto ok=validate_tun_rule_set_refs(result,avail,!route->ordered_tcp,used_r); !ok) return std::unexpected(ok.error());
         }
         if(route->ordered_tcp) {
-            auto bad_in=[](auto const& e){return e.type!=Inbound::socks5&&e.type!=Inbound::mixed&&e.type!=Inbound::http&&e.type!=Inbound::naive&&e.type!=Inbound::fixed_tcp&&e.type!=Inbound::fixed_udp&&e.type!=Inbound::trojan&&e.type!=Inbound::anytls&&e.type!=Inbound::vless&&e.type!=Inbound::shadowsocks&&e.type!=Inbound::redirect&&e.type!=Inbound::tproxy&&!(e.tun&&!e.tun->connect_ip_outbound);};
-            if(std::ranges::any_of(result.inbounds,bad_in)) return error("tcp-program requires SOCKS5, Mixed, HTTP, fixed-tcp/udp, Trojan, AnyTLS, Shadowsocks, ordinary VLESS, transparent TCP or routed TUN inbounds");
-            if(std::ranges::any_of(result.inbounds,[](auto const& e){return e.vless&&(e.vless->vision||e.vless->grpc||e.vless->xhttp);})) return error("tcp-program does not support VLESS Vision, gRPC or XHTTP");
-            auto dns_udp_in=[](auto const& e){return e.type==Inbound::socks5||e.type==Inbound::mixed||e.type==Inbound::fixed_udp||e.type==Inbound::trojan||e.type==Inbound::vless||e.type==Inbound::anytls||(e.type==Inbound::tproxy&&e.transparent_udp)||(e.tun&&!e.tun->connect_ip_outbound);};
+            auto dns_udp_in=[](auto const& e){return e.type==Inbound::socks5||e.type==Inbound::mixed||e.type==Inbound::fixed_udp||e.type==Inbound::trojan||e.type==Inbound::vless||e.type==Inbound::anytls||e.type==Inbound::snell||(e.type==Inbound::tproxy&&e.transparent_udp)||(e.tun&&!e.tun->connect_ip_outbound);};
             auto dns_udp_inbounds=std::ranges::all_of(result.inbounds,dns_udp_in);
             if (dns_hijack && (!result.dns || (!route->ordered_tcp->udp && !tun_dns_tcp) ||
                 (route->ordered_tcp->udp && !dns_udp_inbounds)))
@@ -483,12 +470,8 @@ namespace config {
         // This MASQUE slice uses its explicit CIDR allowlist and system local
         // resolver; other routing/DNS programs are not yet wired to it.
         if(std::ranges::any_of(result.inbounds,[](auto const& entry){return entry.masque.has_value();}) &&
-           (result.inbounds.size()!=1 || result.dns || !result.routes.empty() || result.ordered_tcp || result.default_outbound!=0 || result.tunnel_count() || block || result.direct_network || result.direct_tcp_options.configured() || result.direct_connect_timeout_ms!=10000))
+           (result.inbounds.size()!=1 || result.dns || result.ordered_tcp || result.default_outbound!=0 || result.tunnel_count() || block || result.direct_network || result.direct_tcp_options.configured() || result.direct_connect_timeout_ms!=10000))
             return error("MASQUE currently requires a single inbound, direct default, local DNS and no global routing options");
-        if (!result.routes.empty()) {
-            result.block_rules=result.routes.front().file;
-            result.rule_action=result.routes.front().action;
-        }
         return result;
     }
 }

@@ -360,12 +360,12 @@ routing {{
         if (!base) return;
         {
             auto prog = *base;
-            prog.ordered_tcp.reset();
+            prog.ordered_tcp = config::OrderedTcpConfig{.sniff_timeout_ms = 100, .skip_unknown = true, .udp = true};
             config::BlockRules unpinned{.format = config::RuleFormat::kdl, .url = "https://rules.test/shared.kdl", .http_client = "c1"};
             config::BlockRules pinned = unpinned;
             pinned.sha256 = bad_sha;
-            prog.routes.push_back({unpinned, config::RouteAction::direct, 0, "direct"});
-            prog.routes.push_back({pinned, config::RouteAction::direct, 0, "direct"});
+            prog.ordered_tcp->rules.push_back({.file = unpinned, .action = config::OrderedTcpAction::route, .domain = config::OrderedTcpDomain::explicit_target, .outbound = 0, .outbound_name = "direct"});
+            prog.ordered_tcp->rules.push_back({.file = pinned, .action = config::OrderedTcpAction::route, .domain = config::OrderedTcpDomain::explicit_target, .outbound = 0, .outbound_name = "direct"});
             cli::RuleFileInput in("/tmp/r6.kdl");
             in.seed("https://rules.test/shared.kdl", body);
             auto loaded = cli::load_route_files(prog, in);
@@ -373,7 +373,7 @@ routing {{
             cli::run_detail::RemoteRulesetManager mgr;
             auto fi = mgr.fetch_initial(prog, "", in);
             check(!fi && fi.error().contains("conflicting sha256"), "R6 P1-2 RemoteRulesetManager rejects conflicting sha256");
-            prog.routes[1].file.sha256 = good_sha;
+            prog.ordered_tcp->rules[1].file->sha256 = good_sha;
             check(cli::load_route_files(prog, in).has_value(), "R6 P1-2 matching sha256 passes load_route_files");
         }
         {

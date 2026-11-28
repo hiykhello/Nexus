@@ -61,5 +61,17 @@ int main() {
     port.received.clear();if(!wire.receive({},std::span(datagram).first(7),now) || !port.received.empty())return 5;
     h::SalamanderPort<Port> plain(port,{});packet=plain.output(datagram,now);
     if(!packet || !*packet || (**packet).size!=40 || !std::ranges::equal(std::span(datagram).first(40),payload))return 6;
+    for(std::size_t len:{std::size_t{0},std::size_t{1},std::size_t{31},std::size_t{32},std::size_t{33},std::size_t{64},std::size_t{127},std::size_t{1300}}) {
+        std::vector<std::uint8_t> buf(len);
+        for(std::size_t i=0;i<len;++i) buf[i]=static_cast<std::uint8_t>((i*37+13)&0xff);
+        auto orig=buf;
+        h::salamander_transform(buf,password,salt);
+        for(std::size_t i=0;i<std::min<std::size_t>(len,40);++i) {
+            std::uint8_t mask_byte=expected[i]^static_cast<std::uint8_t>(i);
+            if(buf[i]!=(orig[i]^mask_byte)) return 12;
+        }
+        h::salamander_transform(buf,password,salt);
+        if(buf!=orig) return 13;
+    }
     return 0;
 }

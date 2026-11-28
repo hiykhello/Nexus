@@ -163,7 +163,7 @@ namespace cli::tun_enabled {
             for (auto const& u : std::span(hdr.redirect.exclude_uids).first(hdr.redirect.exclude_uid_count))
                 st.exc_uids.push_back({u.min,u.max});
             auto& o=st.options;
-            o.port=hdr.redirect.port; o.intercept_dns=hdr.redirect.tcp_dns;
+            o.port=hdr.redirect.port; o.intercept_dns=hdr.redirect.tcp_dns; o.intercept_udp_dns=hdr.redirect.udp_dns;
             o.exclude_mptcp=hdr.redirect.exclude_mptcp; o.socket_mark=hdr.policy.mark;
             o.include_mark=hdr.policy.include_mark; o.exclude_mark=hdr.policy.exclude_mark;
             for (auto const& addr : std::span(hdr.network.addresses).first(hdr.network.address_count)) {

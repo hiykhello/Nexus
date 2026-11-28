@@ -1,0 +1,253 @@
+import { I18n } from "../i18n.slint";
+import { Theme } from "../theme.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { NexusInput } from "nexus_primitives.slint";
+import { NexusButton, NexusChip } from "nexus_buttons.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+import { RuleActionBar } from "rule_builder_parts.slint";
+
+export component PolicyGroupEditorTab inherits VerticalLayout {
+    in property <string> status-text: "";
+    in property <bool> status-ok: true;
+
+    private property <int> observed-rev: WorkspaceState.editor-revision;
+    in-out property <string> edit-id: WorkspaceState.editor-group-draft.edit-id;
+    in-out property <string> remarks: WorkspaceState.editor-group-draft.remarks;
+    in-out property <string> strategy: WorkspaceState.editor-group-draft.strategy;
+    in-out property <string> member-ids-csv: WorkspaceState.editor-group-draft.member-ids-csv;
+    in-out property <string> dynamic-sub-id: WorkspaceState.editor-group-draft.dynamic-sub-id;
+    in-out property <string> include-regex: WorkspaceState.editor-group-draft.include-regex;
+    in-out property <string> exclude-regex: WorkspaceState.editor-group-draft.exclude-regex;
+    in-out property <string> probe-url: WorkspaceState.editor-group-draft.probe-url;
+    in-out property <string> probe-interval-ms: WorkspaceState.editor-group-draft.probe-interval-ms;
+    in-out property <string> tolerance-ms: WorkspaceState.editor-group-draft.tolerance-ms;
+    in-out property <bool> interrupt-exist: WorkspaceState.editor-group-draft.interrupt-exist;
+
+    function sync-from-state() {
+        let g = WorkspaceState.editor-group-draft;
+        root.edit-id = g.edit-id; root.remarks = g.remarks; root.strategy = g.strategy;
+        root.member-ids-csv = g.member-ids-csv; root.dynamic-sub-id = g.dynamic-sub-id;
+        root.include-regex = g.include-regex; root.exclude-regex = g.exclude-regex;
+        root.probe-url = g.probe-url; root.probe-interval-ms = g.probe-interval-ms;
+        root.tolerance-ms = g.tolerance-ms; root.interrupt-exist = g.interrupt-exist;
+    }
+
+    changed observed-rev => { root.sync-from-state(); }
+
+    spacing: Theme.space-sm;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text { width: 72px; text: I18n.t("策略组名称", "Group Name"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; text <=> root.remarks; placeholder-text: I18n.t("例如：香港自动选路 / AI 专线组", "e.g. Auto-HK / AI Transit"); }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        Text { width: 72px; text: I18n.t("选路策略", "Strategy"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        FlexboxLayout {
+            horizontal-stretch: 1;
+            spacing: 6px;
+            NexusChip { label: I18n.t("手动选择 (selector)", "selector"); active: root.strategy == "selector"; clicked => { root.strategy = "selector"; } }
+            NexusChip { label: I18n.t("自动测速 (url-test)", "url-test"); active: root.strategy == "url-test"; clicked => { root.strategy = "url-test"; } }
+            NexusChip { label: I18n.t("故障转移 (fallback)", "fallback"); active: root.strategy == "fallback"; clicked => { root.strategy = "fallback"; } }
+            NexusChip { label: I18n.t("负载均衡 (load-balance)", "load-balance"); active: root.strategy == "load-balance"; clicked => { root.strategy = "load-balance"; } }
+        }
+    }
+
+    Text { text: I18n.t("点选加入静态成员节点（或下方绑定动态订阅正则）", "Click nodes below to append static members (or bind dynamic subscription regex)"); font-size: 12px; font-weight: 600; color: Theme.text-secondary; }
+
+    FlexboxLayout {
+        spacing: 5px;
+        for p in WorkspaceState.profiles : NexusChip {
+            chip-height: 25px;
+            enabled: p.id != root.edit-id && p.kind != "full_custom_kdl";
+            label: "+ " + (p.remarks != "" ? p.remarks : p.id);
+            clicked => {
+                root.member-ids-csv = root.member-ids-csv == "" ? p.id : (root.member-ids-csv + ", " + p.id);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        Text { width: 72px; text: I18n.t("已选成员", "Members"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; mono: true; text <=> root.member-ids-csv; placeholder-text: I18n.t("成员 ID 列表（逗号分隔，可搭配动态订阅）", "Member IDs (comma-separated)"); }
+        NexusButton { btn-height: 30px; label: I18n.t("清空", "Clear"); clicked => { root.member-ids-csv = ""; } }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        Text { width: 72px; text: I18n.t("动态订阅", "Dynamic Sub"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        FlexboxLayout {
+            horizontal-stretch: 1;
+            spacing: 5px;
+            NexusChip { chip-height: 24px; label: I18n.t("不绑定", "None"); active: root.dynamic-sub-id == ""; clicked => { root.dynamic-sub-id = ""; } }
+            for s in WorkspaceState.subscriptions : NexusChip {
+                chip-height: 24px;
+                label: s.remarks != "" ? s.remarks : s.id;
+                active: root.dynamic-sub-id == s.id;
+                clicked => { root.dynamic-sub-id = s.id; }
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        Text { width: 72px; text: I18n.t("正则筛选", "Regex"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; mono: true; text <=> root.include-regex; placeholder-text: I18n.t("包含正则 (如 HK|香港|IPLC)", "Include regex (e.g. HK|JP)"); }
+        NexusInput { horizontal-stretch: 1; mono: true; text <=> root.exclude-regex; placeholder-text: I18n.t("排除正则 (如 倍率|到期)", "Exclude regex"); }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        Text { width: 72px; text: I18n.t("测速参数", "Probe"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; mono: true; text <=> root.probe-url; placeholder-text: "https://www.gstatic.com/generate_204"; }
+        NexusInput { width: 84px; mono: true; text <=> root.probe-interval-ms; placeholder-text: "300000"; }
+        NexusInput { width: 68px; mono: true; text <=> root.tolerance-ms; placeholder-text: "100"; }
+    }
+
+    NexusSwitch {
+        text: I18n.t("切换出口节点时立即断开旧连接 (Interrupt Existing Connections)", "Interrupt existing connections on switch");
+        checked <=> root.interrupt-exist;
+    }
+
+    Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+    RuleActionBar {
+        button-text: root.edit-id != "" ? I18n.t("保存策略组", "Save Policy Group") : I18n.t("创建策略组", "Create Policy Group");
+        status-text: root.status-text;
+        status-ok: root.status-ok;
+        commit => {
+            WorkspaceState.save-group-profile({
+                edit-id: root.edit-id, remarks: root.remarks, strategy: root.strategy,
+                member-ids-csv: root.member-ids-csv, dynamic-sub-id: root.dynamic-sub-id,
+                include-regex: root.include-regex, exclude-regex: root.exclude-regex,
+                probe-url: root.probe-url, probe-interval-ms: root.probe-interval-ms,
+                tolerance-ms: root.tolerance-ms, interrupt-exist: root.interrupt-exist,
+            });
+        }
+        reset => { WorkspaceState.request-new-profile("policy_group"); root.sync-from-state(); }
+    }
+}
+
+export component ProxyChainEditorTab inherits VerticalLayout {
+    in property <string> status-text: "";
+    in property <bool> status-ok: true;
+
+    private property <int> observed-rev: WorkspaceState.editor-revision;
+    in-out property <string> edit-id: WorkspaceState.editor-chain-draft.edit-id;
+    in-out property <string> remarks: WorkspaceState.editor-chain-draft.remarks;
+    in-out property <string> hop-ids-csv: WorkspaceState.editor-chain-draft.hop-ids-csv;
+
+    function sync-from-state() {
+        root.edit-id = WorkspaceState.editor-chain-draft.edit-id;
+        root.remarks = WorkspaceState.editor-chain-draft.remarks;
+        root.hop-ids-csv = WorkspaceState.editor-chain-draft.hop-ids-csv;
+    }
+
+    changed observed-rev => { root.sync-from-state(); }
+
+    spacing: Theme.space-sm;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text { width: 72px; text: I18n.t("代理链名称", "Chain Name"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; text <=> root.remarks; placeholder-text: I18n.t("例如：香港前置 -> 美西住宅落地", "e.g. HK Entry -> US Residential Exit"); }
+    }
+
+    Text {
+        text: I18n.t("按顺序点击下方节点/策略组以构建多跳链路（第 1 跳为入口前置，最后 1 跳为最终落地出口）：", "Click nodes/groups in order (Hop 1 = Entry relay, Last hop = Final exit):");
+        font-size: 12px; font-weight: 600; color: Theme.text-secondary;
+    }
+
+    FlexboxLayout {
+        spacing: 5px;
+        for p in WorkspaceState.profiles : NexusChip {
+            chip-height: 26px;
+            enabled: p.id != root.edit-id && (p.kind == "node" || p.kind == "policy_group" || p.kind == "custom_outbound");
+            label: "+ " + (p.remarks != "" ? p.remarks : p.id);
+            clicked => {
+                root.hop-ids-csv = root.hop-ids-csv == "" ? p.id : (root.hop-ids-csv + ", " + p.id);
+            }
+        }
+    }
+
+    HorizontalLayout {
+        spacing: 6px;
+        Text { width: 72px; text: I18n.t("跳点顺序", "Hop Order"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; mono: true; text <=> root.hop-ids-csv; placeholder-text: "entry-id, relay-id, landing-id"; }
+        NexusButton { btn-height: 30px; label: I18n.t("重选", "Clear"); clicked => { root.hop-ids-csv = ""; } }
+    }
+
+    Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+    RuleActionBar {
+        button-text: root.edit-id != "" ? I18n.t("保存代理链", "Save Proxy Chain") : I18n.t("创建代理链", "Create Proxy Chain");
+        status-text: root.status-text;
+        status-ok: root.status-ok;
+        commit => {
+            WorkspaceState.save-chain-profile({
+                edit-id: root.edit-id, remarks: root.remarks, hop-ids-csv: root.hop-ids-csv,
+            });
+        }
+        reset => { WorkspaceState.request-new-profile("proxy_chain"); root.sync-from-state(); }
+    }
+}
+
+export component CustomKdlEditorTab inherits VerticalLayout {
+    in property <string> status-text: "";
+    in property <bool> status-ok: true;
+    in property <string> kind: "custom_outbound";
+
+    private property <int> observed-rev: WorkspaceState.editor-revision;
+    in-out property <string> edit-id: WorkspaceState.editor-kdl-draft.edit-id;
+    in-out property <string> remarks: WorkspaceState.editor-kdl-draft.remarks;
+    in-out property <string> kdl-text: WorkspaceState.editor-kdl-draft.kdl-text;
+
+    function sync-from-state() {
+        root.edit-id = WorkspaceState.editor-kdl-draft.edit-id;
+        root.remarks = WorkspaceState.editor-kdl-draft.remarks;
+        root.kdl-text = WorkspaceState.editor-kdl-draft.kdl-text;
+    }
+
+    changed observed-rev => { root.sync-from-state(); }
+
+    spacing: Theme.space-sm;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text { width: 72px; text: I18n.t("配置项名称", "Remarks"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; text <=> root.remarks; placeholder-text: root.kind == "custom_outbound" ? I18n.t("自定义出站名称", "Custom Outbound Name") : I18n.t("完整自定义配置名称", "Full Custom Config Name"); }
+    }
+
+    Text {
+        text: root.kind == "custom_outbound"
+            ? I18n.t("自定义单出站片段（使用 {{tag}} 占位符与工作区路由/策略组无缝融合）：", "Custom outbound block (use {{tag}} placeholder to integrate with routing & groups):")
+            : I18n.t("完整核心配置文件（直接交由核心校验并运行）：", "Full engine configuration:");
+        font-size: 12px; color: Theme.text-secondary;
+    }
+
+    NexusInput {
+        input-height: 44px;
+        mono: true;
+        text <=> root.kdl-text;
+        placeholder-text: root.kind == "custom_outbound"
+            ? "outbound \"{{tag}}\" type=\"socks5\" { server host=\"127.0.0.1\" port=10808; }"
+            : "schema-version 1; role \"client\"; ...";
+    }
+
+    Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+    RuleActionBar {
+        button-text: root.edit-id != "" ? I18n.t("保存自定义配置", "Save Custom Config") : I18n.t("添加自定义配置", "Add Custom Config");
+        status-text: root.status-text;
+        status-ok: root.status-ok;
+        commit => {
+            WorkspaceState.save-kdl-profile({
+                edit-id: root.edit-id, remarks: root.remarks, kind: root.kind, kdl-text: root.kdl-text,
+            });
+        }
+        reset => { WorkspaceState.request-new-profile(root.kind); root.sync-from-state(); }
+    }
+}

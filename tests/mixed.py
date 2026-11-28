@@ -61,7 +61,7 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {{
     rulesets {{ "blocked" path="blocked.kdl" format="kdl"; }}
-    rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}
+    rules {{ - rule-set="blocked" to="reject"; }}
     final "direct"
 }}
 ''')

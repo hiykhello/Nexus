@@ -20,7 +20,7 @@ namespace relay::session_detail {
     }
 
     auto socks4_handshake(Session& session, io::io_context& context,
-        rules::RouteMatcher const& policy, std::optional<Credentials> const& credentials,
+        rules::RouteProgram const& policy, std::optional<Credentials> const& credentials,
         HandshakeReader& reader) -> capy::task<> {
         auto fail = [&] { session.close(); session.done = true; };
         if (credentials) {

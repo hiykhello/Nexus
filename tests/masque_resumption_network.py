@@ -45,7 +45,7 @@ def verify(binary, fixture, enabled):
             rule = root / f"inbound-{index}.kdl"
             rule.write_text(f'schema-version 2\nkind "predicate"\nrule type="inbound" value="local{index}"\n')
             rules.append((f'        origin{index} path="{rule.name}" format="kdl"',
-                          f'- kind="rule-set" value="origin{index}" outbound="edge{index}"'))
+                          f'- rule-set="origin{index}" to="edge{index}"'))
         config = root / "nexus.kdl"
         config.write_text(f'''schema-version 1
 role "client"

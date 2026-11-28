@@ -1,0 +1,316 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { NexusSwitch } from "nexus_controls.slint";
+
+component QuickToggleBentoTile inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> subtitle;
+    in property <bool> checked: false;
+    in property <bool> live: false;
+    in property <bool> warn-sub: false;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    height: 92px;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: root.checked ? Theme.selected-border : tile-ta.has-hover ? Theme.hairline-strong : Theme.card-border;
+    background: Theme.card-surface;
+    transform-scale: (tile-ta.pressed && root.enabled) ? 0.98 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    tile-ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.toggled(!root.checked); }
+    }
+
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            alignment: space-between;
+
+            Rectangle {
+                width: 30px;
+                height: 30px;
+                border-radius: Theme.radius-md;
+                background: root.checked ? Theme.nav-active-bg : Theme.well-bg;
+                animate background { duration: Motion.fast; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+                Image {
+                    width: 16px;
+                    height: 16px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    source: root.icon;
+                    colorize: root.checked ? Theme.nav-active-fg : Theme.text-secondary;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                NexusSwitch {
+                    checked: root.checked;
+                    enabled: root.enabled;
+                    toggled => { root.toggled(self.checked); }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: root.title;
+                font-size: 13px;
+                font-weight: 700;
+                color: root.enabled ? Theme.text-primary : Theme.text-muted;
+                overflow: elide;
+            }
+            Text {
+                text: root.subtitle;
+                font-size: 11px;
+                font-weight: 600;
+                font-family: Theme.mono-font;
+                color: !root.checked ? Theme.text-muted : root.warn-sub ? Theme.warn-fg : root.live ? Theme.live-emerald : Theme.nav-active-fg;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+component QuickJumpBentoTile inherits Rectangle {
+    in property <image> icon;
+    in property <string> badge-text;
+    in property <string> title;
+    in property <string> subtitle;
+    callback clicked();
+
+    height: 92px;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: jump-ta.has-hover ? Theme.hairline-strong : Theme.card-border;
+    background: Theme.card-surface;
+    transform-scale: jump-ta.pressed ? 0.98 : 1.0;
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    jump-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    VerticalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        padding-top: 12px;
+        padding-bottom: 12px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            spacing: 8px;
+
+            Rectangle {
+                width: 30px;
+                height: 30px;
+                border-radius: Theme.radius-md;
+                background: Theme.well-bg;
+
+                Image {
+                    width: 16px;
+                    height: 16px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    source: root.icon;
+                    colorize: Theme.nav-active-fg;
+                }
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            Rectangle {
+                height: 22px;
+                y: (parent.height - self.height) / 2;
+                border-radius: Theme.radius-sm;
+                background: Theme.well-bg;
+                HorizontalLayout {
+                    padding-left: 8px;
+                    padding-right: 6px;
+                    spacing: 3px;
+                    Text {
+                        text: root.badge-text;
+                        font-size: 11px;
+                        font-weight: 700;
+                        font-family: Theme.mono-font;
+                        color: WorkspaceState.dns-fakeip ? Theme.live-emerald : Theme.nav-active-fg;
+                        vertical-alignment: center;
+                    }
+                    Image {
+                        width: 12px;
+                        height: 12px;
+                        y: (parent.height - self.height) / 2;
+                        source: @image-url("../icons/chevron-right.svg");
+                        colorize: Theme.text-muted;
+                    }
+                }
+            }
+        }
+
+        VerticalLayout {
+            spacing: 2px;
+            Text {
+                text: root.title;
+                font-size: 13px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                overflow: elide;
+            }
+            Text {
+                text: root.subtitle;
+                font-size: 11px;
+                font-weight: 600;
+                color: Theme.text-secondary;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+export component DashboardBentoTileStrip inherits VerticalLayout {
+    in property <bool> four-columns: true;
+    in property <bool> core-running: false;
+    in property <bool> system-proxy-supported: true;
+    in property <bool> system-proxy-enabled: false;
+    in property <bool> mixed-proxy-enabled: true;
+    in property <string> mixed-proxy-port: "7890";
+    in property <bool> http-proxy-enabled: false;
+    in property <string> http-proxy-port: "10809";
+    in property <bool> socks-proxy-enabled: false;
+    in property <string> socks-proxy-port: "10808";
+    in property <bool> tun-enabled: false;
+    in property <bool> lan-share-enabled: false;
+    in property <string> lan-share-subtitle: "";
+    in property <string> active-routing-name: "";
+    in property <int> active-rule-count: 0;
+
+    callback toggle-system-proxy(bool);
+    callback toggle-tun(bool);
+    callback toggle-lan-share(bool);
+    callback open-routing();
+
+    property <string> eff-sys-endpoint:
+        root.mixed-proxy-enabled ? ("Mixed :" + root.mixed-proxy-port)
+        : root.http-proxy-enabled ? ("HTTP :" + root.http-proxy-port)
+        : root.socks-proxy-enabled ? ("SOCKS :" + root.socks-proxy-port)
+        : I18n.t("无本地端口", "No port");
+    property <string> sys-sub: !root.system-proxy-enabled ? I18n.t("未开启", "Off")
+        : root.core-running ? root.eff-sys-endpoint
+        : (root.eff-sys-endpoint + I18n.t(" · 待命", " · Ready"));
+    property <string> tun-sub: !root.tun-enabled ? I18n.t("未开启", "Off")
+        : root.core-running ? ("MTU " + WorkspaceState.host-tun-mtu)
+        : ("MTU " + WorkspaceState.host-tun-mtu + I18n.t(" · 待命", " · Ready"));
+    property <string> lan-sub: !root.lan-share-enabled ? I18n.t("仅本机", "Local only")
+        : root.core-running ? (root.lan-share-subtitle != "" ? root.lan-share-subtitle : "0.0.0.0")
+        : ((root.lan-share-subtitle != "" ? root.lan-share-subtitle : "0.0.0.0") + I18n.t(" · 待命", " · Ready"));
+    property <string> dns-badge: WorkspaceState.dns-mode == "raw_kdl" ? "DNS+" : WorkspaceState.dns-fakeip ? "FakeIP" : "DoH";
+    property <string> route-sub: (root.active-routing-name != "" ? root.active-routing-name : I18n.t("默认", "Default")) + " · " + root.active-rule-count + I18n.t(" 条", " rules");
+
+    spacing: 12px;
+
+    if root.four-columns : HorizontalLayout {
+        spacing: 14px;
+
+        QuickToggleBentoTile {
+            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+            icon: @image-url("../icons/overview.svg");
+            title: I18n.t("系统代理", "System Proxy");
+            subtitle: root.sys-sub;
+            checked: root.system-proxy-enabled;
+            live: root.core-running;
+            warn-sub: root.system-proxy-enabled && !root.core-running;
+            enabled: root.system-proxy-supported;
+            toggled(v) => { root.toggle-system-proxy(v); }
+        }
+        QuickToggleBentoTile {
+            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+            icon: @image-url("../icons/bolt.svg");
+            title: I18n.t("TUN 模式", "TUN Mode");
+            subtitle: root.tun-sub;
+            checked: root.tun-enabled;
+            live: root.core-running;
+            toggled(v) => { root.toggle-tun(v); }
+        }
+        QuickToggleBentoTile {
+            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+            icon: @image-url("../icons/connections.svg");
+            title: I18n.t("局域网共享", "Allow LAN");
+            subtitle: root.lan-sub;
+            checked: root.lan-share-enabled;
+            live: root.core-running;
+            toggled(v) => { root.toggle-lan-share(v); }
+        }
+        QuickJumpBentoTile {
+            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+            icon: @image-url("../icons/rule-edit.svg");
+            badge-text: root.dns-badge;
+            title: I18n.t("分流规则", "Routing");
+            subtitle: root.route-sub;
+            clicked => { root.open-routing(); }
+        }
+    }
+
+    if !root.four-columns : VerticalLayout {
+        spacing: 12px;
+        HorizontalLayout {
+            spacing: 12px;
+            QuickToggleBentoTile {
+                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                icon: @image-url("../icons/overview.svg");
+                title: I18n.t("系统代理", "System Proxy");
+                subtitle: root.sys-sub;
+                checked: root.system-proxy-enabled;
+                live: root.core-running;
+                warn-sub: root.system-proxy-enabled && !root.core-running;
+                enabled: root.system-proxy-supported;
+                toggled(v) => { root.toggle-system-proxy(v); }
+            }
+            QuickToggleBentoTile {
+                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                icon: @image-url("../icons/bolt.svg");
+                title: I18n.t("TUN 模式", "TUN Mode");
+                subtitle: root.tun-sub;
+                checked: root.tun-enabled;
+                live: root.core-running;
+                toggled(v) => { root.toggle-tun(v); }
+            }
+        }
+        HorizontalLayout {
+            spacing: 12px;
+            QuickToggleBentoTile {
+                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                icon: @image-url("../icons/connections.svg");
+                title: I18n.t("局域网共享", "Allow LAN");
+                subtitle: root.lan-sub;
+                checked: root.lan-share-enabled;
+                live: root.core-running;
+                toggled(v) => { root.toggle-lan-share(v); }
+            }
+            QuickJumpBentoTile {
+                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                icon: @image-url("../icons/rule-edit.svg");
+                badge-text: root.dns-badge;
+                title: I18n.t("分流规则", "Routing");
+                subtitle: root.route-sub;
+                clicked => { root.open-routing(); }
+            }
+        }
+    }
+}

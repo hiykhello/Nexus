@@ -12,7 +12,7 @@ export namespace platform::nftables {
     };
     struct Redirect {
         std::uint16_t port=0;
-        bool ipv4=false, ipv6=false, intercept_dns=false, exclude_mptcp=false;
+        bool ipv4=false, ipv6=false, intercept_dns=false, intercept_udp_dns=false, exclude_mptcp=false;
         std::uint32_t socket_mark=0;
         std::optional<RoutingMarkFilter> include_mark, exclude_mark;
         std::span<Prefix const> excludes, protected_destinations, local_destinations, includes{};

@@ -12,12 +12,12 @@ export namespace net {
     // Single-owner endpoint. Packet bytes remain with the caller through a
     // retry; sends, polling, and close are serialized by its executor.
     class UdpDirect {
-        rules::RouteMatcher const& policy_;
+        rules::RouteProgram const& policy_;
         UdpDialSockets socket_;
         UdpAuthorization authorization_;
         bool closed_=false;
     public:
-        explicit UdpDirect(rules::RouteMatcher const& policy,platform::SocketBinding const* binding=nullptr) noexcept : policy_(policy),socket_(binding) {}
+        explicit UdpDirect(rules::RouteProgram const& policy,platform::SocketBinding const* binding=nullptr) noexcept : policy_(policy),socket_(binding) {}
         UdpDirect(UdpDirect const&)=delete;
         auto operator=(UdpDirect const&) -> UdpDirect& = delete;
         [[nodiscard]] auto send(UdpTarget target,UdpEndpoint candidate,std::span<std::uint8_t const> payload,UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={},

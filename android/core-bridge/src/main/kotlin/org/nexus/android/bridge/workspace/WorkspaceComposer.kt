@@ -2,6 +2,7 @@ package org.nexus.android.bridge.workspace
 
 import org.json.JSONObject
 import org.nexus.android.bridge.core.CoreProcessSupervisor
+import org.nexus.android.bridge.profile.SecretFileIO
 import java.io.File
 
 data class ComposeResult(
@@ -30,14 +31,41 @@ class WorkspaceComposer(
     ): ComposeResult {
         secretsDir.mkdirs()
         emitKdlFile.parentFile?.mkdirs()
-        val raw = supervisor.composeWorkspace(
-            workspaceFile = workspaceFile,
-            hostFile = hostFile,
-            secretsDir = secretsDir,
-            activeProfileId = activeProfileId,
-            emitKdlFile = emitKdlFile,
-        )
-        val parsed = parseComposeResultJson(raw.output, fallbackOk = raw.ok)
+        val hostCfg = runCatching { AndroidHostConfig.fromJson(hostFile.readText(Charsets.UTF_8)) }.getOrNull()
+        var tempHostFile: File? = null
+        val effectiveHostFile = if (
+            hostCfg != null &&
+            hostCfg.android.runMode == AndroidRunMode.PROXY_ONLY &&
+            !hostCfg.android.enableLocalProxy &&
+            (hostCfg.android.enableHttp || hostCfg.android.enableSocks)
+        ) {
+            val tmp = File(hostFile.parentFile ?: secretsDir, ".compose-host-shim.json")
+            val shim = hostCfg.copy(android = hostCfg.android.copy(enableLocalProxy = true))
+            SecretFileIO.atomicWriteSecret0600(tmp, shim.toJson(indentSpaces = 2, includeSecrets = false))
+            tempHostFile = tmp
+            tmp
+        } else {
+            hostFile
+        }
+        val raw = try {
+            supervisor.composeWorkspace(
+                workspaceFile = workspaceFile,
+                hostFile = effectiveHostFile,
+                secretsDir = secretsDir,
+                activeProfileId = activeProfileId,
+                emitKdlFile = emitKdlFile,
+            )
+        } finally {
+            tempHostFile?.let { WorkspaceSyncBridge.wipeAndDelete(it) }
+        }
+        var parsed = parseComposeResultJson(raw.output, fallbackOk = raw.ok)
+        if (parsed.ok && hostCfg != null && parsed.kdl.isNotBlank()) {
+            val overlaid = applyAndroidInboundsOverlay(parsed.kdl, hostCfg.android)
+            if (overlaid != parsed.kdl) {
+                SecretFileIO.atomicWriteSecret0600(emitKdlFile, overlaid)
+                parsed = parsed.copy(kdl = overlaid)
+            }
+        }
         if (parsed.ok) {
             ProfileReplacement.gcOrphanSecretFiles(
                 secretsDir = secretsDir,
@@ -132,6 +160,93 @@ class WorkspaceComposer(
             if (!running) return false
             if (targetTag.isBlank() || selectorTag.isBlank()) return false
             return targetTag in selectorMembers
+        }
+
+        private fun quoteKdl(s: String): String = buildString(s.length + 2) {
+            append('"')
+            for (ch in s) {
+                if (ch == '\\' || ch == '"') append('\\')
+                append(ch)
+            }
+            append('"')
+        }
+
+        /**
+         * Synthesizes/overlays the `inbounds { ... }` section for Android so any combination of
+         * `Mixed`, `HTTP`, and `SOCKS5` local listeners (plus `allowLan` `0.0.0.0` binding) works
+         * deterministically across both VPN and Proxy-Only modes.
+         */
+        fun applyAndroidInboundsOverlay(kdl: String, host: AndroidHostSection): String {
+            val nlPos = kdl.indexOf("\ninbounds {\n")
+            val blkStart = when {
+                nlPos >= 0 -> nlPos + 1
+                kdl.startsWith("inbounds {\n") -> 0
+                else -> return kdl
+            }
+            var depth = 0
+            var inStr = false
+            var blkEnd = -1
+            for (i in blkStart until kdl.length) {
+                val c = kdl[i]
+                if (c == '"' && (i == 0 || kdl[i - 1] != '\\')) inStr = !inStr
+                if (inStr) continue
+                if (c == '{') depth++
+                else if (c == '}') {
+                    depth--
+                    if (depth == 0) {
+                        blkEnd = if (i + 1 < kdl.length && kdl[i + 1] == '\n') i + 2 else i + 1
+                        break
+                    }
+                }
+            }
+            if (blkEnd <= blkStart) return kdl
+
+            val body = StringBuilder()
+            var count = 0
+            if (host.runMode == AndroidRunMode.VPN) {
+                val mtu = host.tunMtu.coerceIn(1280, 9000)
+                body.append("  inbound \"tun-in\" type=\"tun\" {\n    stack \"system\"\n    mtu ")
+                    .append(mtu)
+                    .append("\n    endpoint-independent-nat #false\n  }\n")
+                count++
+            }
+
+            fun appendProxyInbound(name: String, proto: String, listenSpec: String) {
+                val hp = AndroidHostConfig.parseHostPort(listenSpec) ?: return
+                val effHost = if (host.allowLan) {
+                    when (hp.first) {
+                        "127.0.0.1" -> "0.0.0.0"
+                        "::1" -> "::"
+                        else -> hp.first
+                    }
+                } else {
+                    hp.first
+                }
+                body.append("  inbound ").append(quoteKdl(name)).append(" type=").append(quoteKdl(proto))
+                    .append(" {\n    listen host=").append(quoteKdl(effHost)).append(" port=").append(hp.second)
+                    .append("\n    authentication \"none\"\n  }\n")
+                count++
+            }
+
+            val anyLocal = host.enableLocalProxy || host.enableHttp || host.enableSocks
+            if (host.enableLocalProxy || (host.runMode == AndroidRunMode.PROXY_ONLY && !anyLocal)) {
+                appendProxyInbound("local-mixed", "mixed", host.localListen.ifBlank { "127.0.0.1:10808" })
+            }
+            if (host.enableHttp && host.httpListen.isNotBlank()) {
+                appendProxyInbound("local-http", "http", host.httpListen)
+            }
+            if (host.enableSocks && host.socksListen.isNotBlank()) {
+                appendProxyInbound("local-socks", "socks5", host.socksListen)
+            }
+            if (count == 0) return kdl
+
+            return buildString(kdl.length + 192) {
+                append(kdl, 0, blkStart)
+                append("inbounds {\n")
+                append(body)
+                append("}\n")
+                append(kdl, blkEnd, kdl.length)
+            }
         }
     }
 }

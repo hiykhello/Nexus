@@ -436,9 +436,9 @@ routing {
                 check(bool(snap), "live relay::compile_routes with MmapMatcher");
                 if (snap) {
                     auto pf = snap->matcher.preflight({.domain = "zone123.nxmm.test"});
-                    check(pf && *pf == 1, "zero-copy RouteMatcher preflight avoids eager DNS");
+                    check(pf && *pf == 1, "zero-copy RouteProgram preflight avoids eager DNS");
                     auto m = snap->matcher.match_with_rule({.ip = "10.3.4.5"});
-                    check(m && m->outbound == 1, "zero-copy RouteMatcher matches mapped IP");
+                    check(m && m->outbound == 1, "zero-copy RouteProgram matches mapped IP");
                 }
             }
             std::string corrupt = *bin;

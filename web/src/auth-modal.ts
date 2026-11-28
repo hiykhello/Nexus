@@ -33,9 +33,8 @@ export class NexusAuthModal extends LitElement {
         overscroll-behavior: contain;
         background: var(--nx-overlay);
         border: 1px solid var(--nx-border-strong);
-        border-radius: 16px;
+        border-radius: 12px;
         padding: 18px;
-        box-shadow: var(--nx-modal-shadow);
         display: flex;
         flex-direction: column;
         gap: 12px;

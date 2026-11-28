@@ -3,6 +3,8 @@
 
 #include "workspace_ui_sync.hpp"
 #include "workspace_sync_flow.hpp"
+#include "workspace_modal_callbacks.hpp"
+#include "workspace_profile_callbacks.hpp"
 
 namespace desktop_ui_helpers {
     inline auto import_share_uri_to_workspace(WorkspaceUiContext& ctx, std::string_view raw_uri) -> void {
@@ -52,125 +54,6 @@ namespace desktop_ui_helpers {
         if (ctx.sync_tray) ctx.sync_tray();
     }
 
-    inline auto bind_structured_modal_callbacks(WorkspaceUiContext& ctx) -> void {
-        ctx.ui.on_add_outbound_node([&ctx](nexus_ui::OutboundNodeDraft d) {
-            bool const en = is_en_ui(ctx.ui);
-            OutboundFormDraft form{
-                .proto = std::string(d.proto), .tag = std::string(d.tag),
-                .host = std::string(d.host), .port = std::string(d.port),
-                .secret = std::string(d.secret), .uuid_str = std::string(d.uuid_str),
-                .username = std::string(d.username), .flow = std::string(d.flow),
-                .hy2_ports = std::string(d.hy2_ports), .hy2_salamander = std::string(d.hy2_salamander),
-                .hy2_up_mbps = std::string(d.hy2_up_mbps), .hy2_down_mbps = std::string(d.hy2_down_mbps),
-                .tuic_cc = std::string(d.tuic_cc), .tuic_udp_over_stream = d.tuic_udp_over_stream,
-                .ss_method = std::string(d.ss_method), .snell_ver = d.snell_ver,
-                .snell_obfs = std::string(d.snell_obfs), .snell_obfs_host = std::string(d.snell_obfs_host),
-                .naive_proto = std::string(d.naive_proto), .ssh_host_sha = std::string(d.ssh_host_sha),
-                .sni = std::string(d.sni), .fingerprint = std::string(d.fingerprint),
-                .cert_sha256 = std::string(d.cert_sha256), .use_reality = d.use_reality,
-                .reality_pbk = std::string(d.reality_pbk), .reality_sid = std::string(d.reality_sid),
-                .tls_fragment = d.tls_fragment, .ech_dns = d.ech_dns, .ech_query_sni = std::string(d.ech_query_sni),
-                .transport = std::string(d.transport), .transport_path = std::string(d.transport_path),
-                .transport_host = std::string(d.transport_host), .xhttp_mode = std::string(d.xhttp_mode),
-                .ws_max_early_data = std::string(d.ws_max_early_data), .ws_early_data_header = std::string(d.ws_early_data_header),
-                .mux_enabled = d.mux_enabled, .mux_proto = std::string(d.mux_proto),
-                .mux_max_conns = std::string(d.mux_max_conns), .mux_min_streams = std::string(d.mux_min_streams),
-                .mux_padding = d.mux_padding,
-            };
-            std::unordered_set<std::string> ids;
-            for (auto const& p : ctx.doc.profiles) ids.insert(p.id);
-            auto built = build_workspace_node_from_form(form, ids, ctx.doc.profiles.size());
-            if (!built) {
-                ctx.ui.set_diagnostic_ok(false);
-                ctx.ui.set_diagnostic_message(slint::SharedString(built.error()));
-                push_toast(ctx.ui, built.error(), "error");
-                return;
-            }
-            std::string new_id = built->id;
-            std::string label = built->remarks;
-            ctx.doc.profiles.push_back(std::move(*built));
-            ++ctx.doc.revision;
-            ctx.telemetry.active_profile_id = new_id;
-            (void)persist_workspace_db(ctx);
-            (void)persist_telemetry_db(ctx);
-            sync_workspace_to_ui(ctx);
-            if (ctx.sync_tray) ctx.sync_tray();
-            ctx.ui.set_outbound_modal_open(false);
-            push_toast(ctx.ui, tr(en, "已添加节点: ", "Added node: ") + label, "success");
-            recompose_active_workspace(ctx, new_id);
-        });
-
-        ctx.ui.on_add_route_rule([&ctx](nexus_ui::RouteRuleDraft d) {
-            bool const en = is_en_ui(ctx.ui);
-            RouteRuleFormDraft form{
-                .use_rule_set = d.use_rule_set,
-                .rule_set_name = std::string(d.rule_set_name),
-                .conditions = {},
-                .action_kind = std::string(d.action_kind),
-                .target_outbound = std::string(d.target_outbound),
-                .tls_fragment = d.tls_fragment,
-            };
-            int const count = std::clamp(d.cond_count, 1, 4);
-            if (count >= 1) form.conditions.push_back({std::string(d.c1_kind), std::string(d.c1_value)});
-            if (count >= 2) form.conditions.push_back({std::string(d.c2_kind), std::string(d.c2_value)});
-            if (count >= 3) form.conditions.push_back({std::string(d.c3_kind), std::string(d.c3_value)});
-            if (count >= 4) form.conditions.push_back({std::string(d.c4_kind), std::string(d.c4_value)});
-
-            if (ctx.doc.routing_profiles.empty()) {
-                ctx.doc.routing_profiles = desktop::make_default_workspace().routing_profiles;
-            }
-            desktop::RoutingProfile* active_rp = nullptr;
-            for (auto& rp : ctx.doc.routing_profiles) if (rp.is_active) { active_rp = &rp; break; }
-            if (!active_rp) { ctx.doc.routing_profiles.front().is_active = true; active_rp = &ctx.doc.routing_profiles.front(); }
-
-            auto built = build_routing_rule_from_draft(form, ctx.doc.profiles, active_rp->rules.size());
-            if (!built) {
-                ctx.ui.set_diagnostic_ok(false);
-                ctx.ui.set_diagnostic_message(slint::SharedString(built.error()));
-                push_toast(ctx.ui, built.error(), "error");
-                return;
-            }
-            active_rp->rules.push_back(std::move(*built));
-            ++ctx.doc.revision;
-            (void)persist_workspace_db(ctx);
-            sync_workspace_to_ui(ctx);
-            ctx.ui.set_diagnostic_ok(true);
-            ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "已添加路由规则", "Route rule added")));
-            recompose_active_workspace(ctx);
-        });
-
-        ctx.ui.on_add_dns_rule([&ctx](nexus_ui::DnsRuleDraft d) {
-            bool const en = is_en_ui(ctx.ui);
-            DnsRuleFormDraft form{
-                .match_kind = std::string(d.match_kind),
-                .match_value = std::string(d.match_value),
-                .action_kind = std::string(d.action_kind),
-                .target_server = std::string(d.target_server),
-            };
-            if (ctx.doc.routing_profiles.empty()) {
-                ctx.doc.routing_profiles = desktop::make_default_workspace().routing_profiles;
-            }
-            desktop::RoutingProfile* active_rp = nullptr;
-            for (auto& rp : ctx.doc.routing_profiles) if (rp.is_active) { active_rp = &rp; break; }
-            if (!active_rp) { ctx.doc.routing_profiles.front().is_active = true; active_rp = &ctx.doc.routing_profiles.front(); }
-
-            auto built = build_dns_rule_from_draft(form, active_rp->rules.size());
-            if (!built) {
-                ctx.ui.set_diagnostic_ok(false);
-                ctx.ui.set_diagnostic_message(slint::SharedString(built.error()));
-                push_toast(ctx.ui, built.error(), "error");
-                return;
-            }
-            active_rp->rules.push_back(std::move(*built));
-            ++ctx.doc.revision;
-            (void)persist_workspace_db(ctx);
-            sync_workspace_to_ui(ctx);
-            ctx.ui.set_diagnostic_ok(true);
-            ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "已添加 DNS 规则", "DNS rule added")));
-            recompose_active_workspace(ctx);
-        });
-    }
-
     inline auto bind_workspace_callbacks(WorkspaceUiContext& ctx) -> void {
         auto const runtime_dir = ctx.cfg_dir / "runtime";
         std::error_code ec;
@@ -202,6 +85,7 @@ namespace desktop_ui_helpers {
         sync_workspace_to_ui(ctx);
         bind_workspace_sync_callbacks(ctx);
         bind_structured_modal_callbacks(ctx);
+        bind_profile_callbacks(ctx);
         auto const& ws = ctx.ui.global<nexus_ui::WorkspaceState>();
         if (!notices.empty()) ws.set_host_strict_route_notice(slint::SharedString(notices.front()));
 
@@ -225,7 +109,7 @@ namespace desktop_ui_helpers {
             if (decision.can_live_switch) {
                 ctx.worker.post([&ctx, decision, en] {
                     bool ok = ctx.http_ctrl.select_group(decision.selector_tag, decision.target_tag).ok;
-                    auto msg = ok ? tr(en, "已热切换 TUN 节点（免重启提权）", "Switched TUN node live (zero restart)")
+                    auto msg = ok ? tr(en, "已热切换活动服务器（免重启提权）", "Switched active server live (zero restart)")
                                   : tr(en, "热切换节点失败", "Live node switch failed");
                     on_ui_thread(ctx.weak_ui, [&ctx, ok, msg = std::move(msg)](auto& s) {
                         push_toast(*s, msg, ok ? "success" : "error");
@@ -238,6 +122,10 @@ namespace desktop_ui_helpers {
         });
 
         ws.on_create_profile([&ctx](slint::SharedString kind_s, slint::SharedString remarks_s, slint::SharedString payload_s) {
+            if (trim_ascii_ws(std::string_view(payload_s)).starts_with("nexus://")) {
+                import_share_bundle_async(ctx, std::string(trim_ascii_ws(std::string_view(payload_s))));
+                return;
+            }
             bool const en = is_en_ui(ctx.ui);
             std::unordered_set<std::string> ids;
             for (auto const& p : ctx.doc.profiles) ids.insert(p.id);
@@ -249,36 +137,51 @@ namespace desktop_ui_helpers {
                 return;
             }
             auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
+            std::string sub_tab(g.get_selected_sub_tab());
+            if (!sub_tab.empty() && sub_tab != "all") built->subscription_id = sub_tab;
             if (built->kind == "policy_group") {
                 built->policy_group.interrupt_exist_connections = g.get_draft_group_interrupt();
                 g.set_draft_group_interrupt(false);
             }
             std::string label = built->remarks;
+            std::string new_id = built->id;
             ctx.doc.profiles.push_back(std::move(*built));
             ++ctx.doc.revision;
-            if (ctx.telemetry.active_profile_id.empty()) ctx.telemetry.active_profile_id = ctx.doc.profiles.back().id;
+            ctx.telemetry.active_profile_id = new_id;
             (void)persist_workspace_db(ctx);
             (void)persist_telemetry_db(ctx);
             sync_workspace_to_ui(ctx);
             if (ctx.sync_tray) ctx.sync_tray();
-            push_toast(ctx.ui, tr(en, "已添加到工作区: ", "Added to workspace: ") + label, "success");
+            push_toast(ctx.ui, tr(en, "已添加到配置文件列表: ", "Added profile: ") + label, "success");
+            recompose_active_workspace(ctx, new_id);
         });
 
         ws.on_delete_profile([&ctx](slint::SharedString id_s) {
+            bool const en = is_en_ui(ctx.ui);
             std::string const id(id_s);
+            bool const was_active = (id == ctx.telemetry.active_profile_id);
             std::erase_if(ctx.doc.profiles, [&](auto const& p) { return p.id == id; });
             std::unordered_set<std::string> live;
             for (auto const& p : ctx.doc.profiles) live.insert(p.id);
             (void)desktop::prune_telemetry_entries(ctx.telemetry, live);
+            (void)ensure_default_workspace_profile(ctx.doc, ctx.telemetry);
+            if ((was_active || ctx.telemetry.active_profile_id.empty()) && !ctx.doc.profiles.empty()) {
+                ctx.telemetry.active_profile_id = ctx.doc.profiles.front().id;
+            }
             ++ctx.doc.revision;
             (void)persist_workspace_db(ctx);
             (void)persist_telemetry_db(ctx);
             sync_workspace_to_ui(ctx);
             if (ctx.sync_tray) ctx.sync_tray();
+            if (was_active) {
+                push_toast(ctx.ui, tr(en, "已删除原活动配置并自动切换至下一配置项", "Deleted active profile; switched to next profile"), "info");
+                recompose_active_workspace(ctx);
+            }
         });
 
         ws.on_add_subscription([&ctx](slint::SharedString rem_s, slint::SharedString url_s, slint::SharedString prev_s, slint::SharedString next_s) {
             bool const en = is_en_ui(ctx.ui);
+            auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
             std::string rem(trim_ascii_ws(std::string_view(rem_s))), url(trim_ascii_ws(std::string_view(url_s)));
             if (!url.empty() && !desktop::is_safe_subscription_link(url)) {
                 push_toast(ctx.ui, tr(en, "仅允许 http/https/tg 订阅链接", "Only http/https/tg subscription URLs allowed"), "error");
@@ -293,13 +196,18 @@ namespace desktop_ui_helpers {
             sub.id = base_id;
             for (int n = 2; sub_ids.contains(sub.id); ++n) sub.id = base_id + "-" + std::to_string(n);
             sub.remarks = rem; sub.url = url;
+            sub.auto_update_minutes = parse_positive_i64_prefix(std::string_view(g.get_sub_auto_min()));
+            sub.include_regex = std::string(trim_ascii_ws(std::string_view(g.get_sub_include_regex())));
+            sub.exclude_regex = std::string(trim_ascii_ws(std::string_view(g.get_sub_exclude_regex())));
             sub.prev_profile_id = std::string(trim_ascii_ws(std::string_view(prev_s)));
             sub.next_profile_id = std::string(trim_ascii_ws(std::string_view(next_s)));
+            std::string new_sub_id = sub.id;
             ctx.doc.subscriptions.push_back(std::move(sub));
             ++ctx.doc.revision;
             (void)persist_workspace_db(ctx);
             sync_workspace_to_ui(ctx);
-            push_toast(ctx.ui, tr(en, "已保存订阅: ", "Saved subscription: ") + rem, "success");
+            push_toast(ctx.ui, tr(en, "已保存订阅分组: ", "Saved subscription group: ") + rem, "success");
+            if (!url.empty()) refresh_subscription_async(ctx, new_sub_id);
         });
 
         ws.on_update_subscription_chain([&ctx](slint::SharedString sid, slint::SharedString prev_s, slint::SharedString next_s) {
@@ -352,7 +260,7 @@ namespace desktop_ui_helpers {
             auto tokens = split_csv_trim(std::string_view(match_s));
             auto procs = split_csv_trim(std::string_view(proc_s));
             if (tokens.empty() && procs.empty()) {
-                push_toast(ctx.ui, tr(en, "请至少填写一个域名、IP/CIDR 或进程名", "Provide at least one domain, IP/CIDR, or process name"), "error");
+                push_toast(ctx.ui, tr(en, "请至少填写一个域名、CIDR、@规则集或进程名", "Provide domain, CIDR, @ruleset, or process name"), "error");
                 return;
             }
             bool const tls_frag = ctx.ui.global<nexus_ui::WorkspaceState>().get_rule_tls_fragment();
@@ -364,7 +272,8 @@ namespace desktop_ui_helpers {
                 r.target_type = std::string(tgt_type);
                 r.target_profile_id = std::string(trim_ascii_ws(std::string_view(tgt_pid)));
                 for (auto const& tok : tokens) {
-                    if (is_ip_or_cidr_rule_token(tok)) r.ips.push_back(tok);
+                    if (tok.starts_with('@') && tok.size() > 1) r.rule_sets.push_back(tok.substr(1));
+                    else if (is_ip_or_cidr_rule_token(tok)) r.ips.push_back(tok);
                     else r.domains.push_back(tok);
                 }
                 r.desktop_process = std::move(procs);
@@ -380,10 +289,21 @@ namespace desktop_ui_helpers {
 
         ws.on_apply_dns_config([&ctx](slint::SharedString mode, slint::SharedString dir_s, slint::SharedString rem_s,
                                       bool fakeip, slint::SharedString raw_kdl) {
+            auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
             ctx.doc.dns.mode = std::string(mode);
+            ctx.doc.dns.simple.bootstrap_dns = std::string(trim_ascii_ws(std::string_view(g.get_dns_bootstrap())));
             if (auto v = split_csv_trim(std::string_view(dir_s)); !v.empty()) ctx.doc.dns.simple.direct_dns = std::move(v);
             if (auto v = split_csv_trim(std::string_view(rem_s)); !v.empty()) ctx.doc.dns.simple.remote_dns = std::move(v);
+            ctx.doc.dns.simple.strategy = std::string(g.get_dns_strategy());
+            ctx.doc.dns.simple.parallel_query = g.get_dns_parallel();
             ctx.doc.dns.simple.fake_ip_enabled = fakeip;
+            if (auto v4 = trim_ascii_ws(std::string_view(g.get_dns_fakeip_v4())); !v4.empty()) ctx.doc.dns.simple.fake_ip_v4_pool = std::string(v4);
+            if (auto v6 = trim_ascii_ws(std::string_view(g.get_dns_fakeip_v6())); !v6.empty()) ctx.doc.dns.simple.fake_ip_v6_pool = std::string(v6);
+            ctx.doc.dns.simple.fake_ip_global = g.get_dns_fakeip_global();
+            ctx.doc.dns.simple.block_aaaa = g.get_dns_block_aaaa();
+            ctx.doc.dns.simple.block_svcb_https = g.get_dns_block_svcb();
+            ctx.doc.dns.simple.use_system_hosts = g.get_dns_use_system_hosts();
+            ctx.doc.dns.simple.hosts = parse_hosts_csv(std::string_view(g.get_dns_hosts_text()));
             ctx.doc.dns.raw_kdl = std::string(raw_kdl);
             ++ctx.doc.revision;
             (void)persist_workspace_db(ctx);
@@ -395,9 +315,31 @@ namespace desktop_ui_helpers {
             bool const en = is_en_ui(ctx.ui);
             auto const& g = ctx.ui.global<nexus_ui::WorkspaceState>();
             ctx.host.enable_mixed = g.get_host_enable_mixed();
-            ctx.host.mixed_listen = std::string(g.get_host_mixed_listen());
+            ctx.host.mixed_listen = std::string(trim_ascii_ws(std::string_view(g.get_host_mixed_listen())));
+            if (ctx.host.mixed_listen.empty()) ctx.host.mixed_listen = "127.0.0.1:7890";
+            ctx.host.enable_socks = g.get_host_enable_socks();
+            ctx.host.socks_listen = std::string(trim_ascii_ws(std::string_view(g.get_host_socks_listen())));
+            if (ctx.host.socks_listen.empty()) ctx.host.socks_listen = "127.0.0.1:10808";
+            ctx.host.second_local_listen.clear();
+            ctx.host.enable_http = g.get_host_enable_http();
+            ctx.host.http_listen = std::string(trim_ascii_ws(std::string_view(g.get_host_http_listen())));
+            if (ctx.host.http_listen.empty()) ctx.host.http_listen = "127.0.0.1:10809";
+            ctx.host.allow_lan = g.get_host_allow_lan();
+            ctx.host.lan_listen = std::string(trim_ascii_ws(std::string_view(g.get_host_lan_listen())));
+            ctx.host.lan_username = std::string(trim_ascii_ws(std::string_view(g.get_host_lan_user())));
+            ctx.host.lan_password = std::string(g.get_host_lan_pass());
             ctx.host.enable_tun = g.get_host_enable_tun();
+            if (auto tn = trim_ascii_ws(std::string_view(g.get_host_tun_name())); !tn.empty()) ctx.host.tun_interface_name = std::string(tn);
+            ctx.host.tun_inet4 = std::string(trim_ascii_ws(std::string_view(g.get_host_tun_inet4())));
+            ctx.host.tun_inet6 = std::string(trim_ascii_ws(std::string_view(g.get_host_tun_inet6())));
+            ctx.host.tun_auto_route = g.get_host_tun_auto_route();
             ctx.host.tun_strict_route = g.get_host_tun_strict_route();
+            ctx.host.tun_route_exclude_private = g.get_host_tun_exclude_private();
+            ctx.host.tun_route_exclude = split_csv_trim(std::string_view(g.get_host_tun_exclude_cidr()));
+            ctx.host.bind_interface = std::string(trim_ascii_ws(std::string_view(g.get_host_bind_iface())));
+            ctx.host.inet4_bind_address = std::string(trim_ascii_ws(std::string_view(g.get_host_bind_inet4())));
+            ctx.host.inet6_bind_address = std::string(trim_ascii_ws(std::string_view(g.get_host_bind_inet6())));
+            ctx.host.include_sibling_nodes_in_selector = g.get_host_include_siblings();
             std::string mtu_s(g.get_host_tun_mtu());
             std::int64_t mtu = 1400;
             if (auto [p, ec] = std::from_chars(mtu_s.data(), mtu_s.data() + mtu_s.size(), mtu); ec == std::errc{}) ctx.host.tun_mtu = mtu;
@@ -410,12 +352,19 @@ namespace desktop_ui_helpers {
             std::int64_t wmax_val = 0;
             if (auto [p, ec] = std::from_chars(wmax_s.data(), wmax_s.data() + wmax_s.size(), wmax_val); ec == std::errc{})
                 ctx.host.workers_max = wmax_val;
+            if (!has_any_enabled_inbound(ctx.host)) {
+                ctx.host.enable_mixed = true;
+                if (ctx.host.mixed_listen.empty()) ctx.host.mixed_listen = "127.0.0.1:7890";
+                push_toast(ctx.ui, tr(en, "未启用任何入站协议，已自动保留 Mixed 本地监听", "No inbound selected; kept Mixed inbound enabled"), "warn");
+            }
             auto notices = persist_workspace_and_host(ctx, en);
             sync_workspace_to_ui(ctx);
             g.set_host_strict_route_notice(slint::SharedString(notices.empty() ? "" : notices.front()));
             if (!notices.empty()) push_toast(ctx.ui, notices.front(), "warn");
             if (!ctx.doc.profiles.empty()) recompose_active_workspace(ctx);
-            else if (notices.empty()) push_toast(ctx.ui, tr(en, "已保存本机设置", "Saved local settings"), "success");
+            else if (notices.empty()) push_toast(ctx.ui, tr(en, "已保存本机入站与核心参数", "Saved local settings"), "success");
+            sync_system_proxy_with_inbounds(ctx, en);
+            if (ctx.sync_tray) ctx.sync_tray();
         });
 
         ws.on_export_portable_workspace([&ctx] {

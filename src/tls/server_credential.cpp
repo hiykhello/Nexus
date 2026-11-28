@@ -35,6 +35,27 @@ namespace tls {
         if (i2d_X509(certificate.get(),&cursor)!=size) return std::unexpected(ServerCredentialError::crypto_error);
         return ServerCredential(key.release(),0x0807,Certificates{std::move(encoded),{}});
     }
+    auto ServerCredential::generate_mldsa(std::uint16_t scheme) -> std::expected<ServerCredential,ServerCredentialError> {
+        int key_id=scheme==0x0904 ? evp_pkey_ml_dsa_44 : scheme==0x0905 ? evp_pkey_ml_dsa_65 : scheme==0x0906 ? evp_pkey_ml_dsa_87 : 0;
+        if (!key_id) return std::unexpected(ServerCredentialError::unsupported_key);
+        std::unique_ptr<EVP_PKEY_CTX,decltype(&EVP_PKEY_CTX_free)> context(EVP_PKEY_CTX_new_id(key_id,nullptr),EVP_PKEY_CTX_free);
+        if (!context || EVP_PKEY_keygen_init(context.get())!=1) return std::unexpected(ServerCredentialError::crypto_error);
+        EVP_PKEY* raw=nullptr; auto generated=EVP_PKEY_keygen(context.get(),&raw);
+        std::unique_ptr<EVP_PKEY,decltype(&EVP_PKEY_free)> key(raw,EVP_PKEY_free);
+        if (generated!=1 || !key) return std::unexpected(ServerCredentialError::crypto_error);
+        std::unique_ptr<X509,decltype(&X509_free)> certificate(X509_new(),X509_free);
+        if (!certificate || X509_set_version(certificate.get(),2)!=1 || ASN1_INTEGER_set(X509_get_serialNumber(certificate.get()),1)!=1 ||
+            !X509_gmtime_adj(X509_getm_notBefore(certificate.get()),-60) ||
+            !X509_gmtime_adj(X509_getm_notAfter(certificate.get()),31536000) ||
+            X509_set_pubkey(certificate.get(),key.get())!=1 ||
+            X509_set_issuer_name(certificate.get(),X509_get_subject_name(certificate.get()))!=1 ||
+            X509_sign(certificate.get(),key.get(),nullptr)<=0) return std::unexpected(ServerCredentialError::crypto_error);
+        auto size=i2d_X509(certificate.get(),nullptr);
+        if (size<=0 || static_cast<std::size_t>(size)>max_certificate_list_size-5) return std::unexpected(ServerCredentialError::invalid_certificate);
+        crypto::Bytes encoded(size); auto cursor=encoded.data();
+        if (i2d_X509(certificate.get(),&cursor)!=size) return std::unexpected(ServerCredentialError::crypto_error);
+        return ServerCredential(key.release(),scheme,Certificates{std::move(encoded),{}});
+    }
     auto ServerCredential::with_certificate(std::span<std::uint8_t const> certificate) const -> std::expected<ServerCredential,ServerCredentialError> {
         if (!key_) return std::unexpected(ServerCredentialError::invalid_state);
         if (certificate.empty() || certificate.size()>max_certificate_list_size-5) return std::unexpected(ServerCredentialError::invalid_certificate);
@@ -60,6 +81,9 @@ namespace tls {
         std::uint16_t scheme=0;
         if (EVP_PKEY_id(key.get())==evp_pkey_rsa && EVP_PKEY_bits(key.get())>=2048) scheme=0x0804;
         else if (EVP_PKEY_id(key.get())==evp_pkey_ed25519) scheme=0x0807;
+        else if (EVP_PKEY_id(key.get())==evp_pkey_ml_dsa_44) scheme=0x0904;
+        else if (EVP_PKEY_id(key.get())==evp_pkey_ml_dsa_65) scheme=0x0905;
+        else if (EVP_PKEY_id(key.get())==evp_pkey_ml_dsa_87) scheme=0x0906;
         else if (EVP_PKEY_id(key.get())==evp_pkey_ec) {
             auto ec=EVP_PKEY_get0_EC_KEY(key.get()); auto group=ec ? EC_KEY_get0_group(ec) : nullptr;
             if (group) {

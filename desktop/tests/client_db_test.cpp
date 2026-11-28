@@ -193,12 +193,12 @@ namespace {
 
         desktop::UiPrefs prefs{};
         prefs.sidebar_collapsed = true;
-        prefs.dash_show_connectivity = false;
+        prefs.tun_elevate_persistent = false;
         prefs.theme_preference = "dark";
         expect(desktop::save_ui_prefs_to_db(*db, prefs), "save_ui_prefs_to_db succeeds");
 
         auto prefs_out = desktop::load_ui_prefs_from_db(*db);
-        expect(prefs_out.has_value() && prefs_out->sidebar_collapsed && !prefs_out->dash_show_connectivity &&
+        expect(prefs_out.has_value() && prefs_out->sidebar_collapsed && !prefs_out->tun_elevate_persistent &&
                prefs_out->theme_preference == "obsidian",
             "ui_prefs and sidebar_collapsed round-trip through SQLite host_kv (legacy dark migrates to obsidian)");
         auto sc_kv = db->get_host_kv("sidebar_collapsed");

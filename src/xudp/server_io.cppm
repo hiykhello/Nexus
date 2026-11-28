@@ -107,7 +107,7 @@ export namespace xudp {
             std::copy_n(address.bytes.begin(),address.length,peer.address.begin()); return peer;
         }
     public:
-        ServerIo(Stream& stream,Resolver& resolver,::rules::RouteMatcher const& policy,std::size_t sessions,std::size_t max_payload=65535,
+        ServerIo(Stream& stream,Resolver& resolver,::rules::RouteProgram const& policy,std::size_t sessions,std::size_t max_payload=65535,
                  net::UdpEndpoint const* source=nullptr,std::optional<std::string_view> auth_user={},
                  ::platform::SocketBinding const* binding=nullptr,Accounting accounting={})
             : stream_(stream),resolver_(resolver),direct_(policy,sessions,source,auth_user,binding),decoder_(max_payload),

@@ -243,8 +243,6 @@ namespace relay {
     auto Server::start_one(io::endpoint endpoint,Inbound inbound,bool reuse,int shared_fd,bool threaded)
         -> std::expected<std::uint16_t,std::error_code> {
         if(!listener)return std::unexpected(std::make_error_code(std::errc::operation_not_supported));
-        if(ordered_tcp && inbound!=Inbound::socks5 && inbound!=Inbound::mixed && inbound!=Inbound::http && inbound!=Inbound::naive && inbound!=Inbound::fixed_tcp && inbound!=Inbound::trojan && inbound!=Inbound::anytls && inbound!=Inbound::vless && inbound!=Inbound::shadowsocks && inbound!=Inbound::redirect && inbound!=Inbound::tproxy)
-            return std::unexpected(std::make_error_code(std::errc::operation_not_supported));
 #ifdef NEXUS_ENABLE_SNELL
         if(inbound==Inbound::snell && !(borrowed_snell_inbound ? *borrowed_snell_inbound : snell_inbound)) return std::unexpected(std::make_error_code(std::errc::invalid_argument));
 #else

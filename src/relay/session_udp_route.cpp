@@ -73,7 +73,7 @@ namespace relay {
             }
 
             auto udp_resolve(Session& session, io::io_context& context, socks5::UdpIngress& ingress,
-                UdpResolution& resolution, [[maybe_unused]] rules::RouteMatcher const& policy) -> capy::task<capy::results<>> {
+                UdpResolution& resolution, [[maybe_unused]] rules::RouteProgram const& policy) -> capy::task<capy::results<>> {
                 using namespace std::chrono_literals;
                 try {
                     while (!session.closed) {
@@ -379,7 +379,7 @@ namespace relay {
     }
 
     namespace session_detail {
-        auto udp_associate(Session& session, io::io_context& context, rules::RouteMatcher const& policy, socks5::Request const& request) -> capy::task<> {
+        auto udp_associate(Session& session, io::io_context& context, rules::RouteProgram const& policy, socks5::Request const& request) -> capy::task<> {
             using namespace session_udp_detail;
             auto remote = accepted_peer(session.client); auto local = session.client.local_endpoint();
             bool ipv6 = remote.address().is_v6();

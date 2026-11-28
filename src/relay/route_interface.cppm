@@ -42,7 +42,7 @@ namespace relay {
     };
     // The immutable factory and its profile must outlive every layer it creates.
     using TunnelLayerFactory = functional::move_only_function<pro::proxy<TunnelFacade>(Session&, pro::proxy<TunnelFacade>&&) const>;
-    using InboundFactory = functional::move_only_function<capy::task<>(Session&, io::io_context&, rules::RouteMatcher const&) const>;
+    using InboundFactory = functional::move_only_function<capy::task<>(Session&, io::io_context&, rules::RouteProgram const&) const>;
     // The snapshot source is process-wide; rotation remains worker-local.
     export struct LocalDnsState {
         dns::LocalSnapshotSource& source = dns::system_local_snapshots();
@@ -167,7 +167,7 @@ namespace relay {
         }
     };
     export struct RouteSnapshot {
-        rules::RouteMatcher matcher;
+        rules::RouteProgram matcher;
         std::optional<OrderedTcpPolicy> ordered;
         std::shared_ptr<DnsRuleSnapshot const> dns{};
         std::uint64_t generation = 1;

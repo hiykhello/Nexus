@@ -199,6 +199,8 @@ namespace relay {
                                   : "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 10\r\n\r\nForbidden\n";
             case 417: return head ? "HTTP/1.1 417 Expectation Failed\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
                                   : "HTTP/1.1 417 Expectation Failed\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 19\r\n\r\nExpectation Failed\n";
+            case 431: return head ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                                  : "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 32\r\n\r\nRequest Header Fields Too Large\n";
             case 501: return head ? "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
                                   : "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 16\r\n\r\nNot Implemented\n";
             case 502: return head ? "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
@@ -433,13 +435,14 @@ namespace relay {
     }
 
     auto forward_http(Session& session, io::io_context& context,
-                      rules::RouteMatcher const& policy, std::string_view input) -> capy::task<> {
+                      rules::RouteProgram const& policy, std::string_view input) -> capy::task<> {
         http::RequestDecoder decoder;
         std::string output;
         auto first=decoder.feed(input,output);
         auto const& request=decoder.request();
         if (first.event != http::RequestEvent::header) {
-            auto const err = request.status == http::ConnectStatus::expectation_failed ? std::uint16_t{417} :
+            auto const err = request.status == http::ConnectStatus::too_large ? std::uint16_t{431} :
+                request.status == http::ConnectStatus::expectation_failed ? std::uint16_t{417} :
                 request.status == http::ConnectStatus::unsupported ? std::uint16_t{501} : std::uint16_t{400};
             if (co_await write_text(session.client, http_error_reply(err, input.starts_with("HEAD ")), session)) {
                 finish_response(session);

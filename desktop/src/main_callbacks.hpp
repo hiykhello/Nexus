@@ -340,29 +340,23 @@ namespace desktop_ui_helpers {
             ctx.log_models.clear();
         });
         ctx.ui.on_run_rule_explain([&ctx](slint::SharedString inb, slint::SharedString net, slint::SharedString tgt, slint::SharedString extra) {
+            bool const en = is_en_ui(ctx.ui);
             std::string i(inb), n(net), t(tgt), e(extra);
             auto doc_snap = ctx.ws_ctx.doc;
             auto host_snap = ctx.ws_ctx.host;
             auto active_id = resolve_effective_active_profile_id(ctx.ws_ctx);
-            ctx.worker.post([&ctx, i = std::move(i), n = std::move(n), t = std::move(t), e = std::move(e),
+            ctx.worker.post([&ctx, en, i = std::move(i), n = std::move(n), t = std::move(t), e = std::move(e),
                              doc_snap = std::move(doc_snap), host_snap = std::move(host_snap), active_id = std::move(active_id)] {
                 auto draft = ctx.cfg_dir / ".explain-draft.kdl";
                 bool use_draft = false;
                 if (!doc_snap.profiles.empty()) {
-                    auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
-                    auto host_tmp = make_temp_compose_host(ctx.cfg_dir, host_snap);
-                    if (ws_tmp.ok && host_tmp.ok) {
-                        auto composed = desktop::compose_workspace_via_core(
-                            ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ctx.ws_ctx.secrets_dir, active_id, {});
-                        if (composed.ok && !composed.kdl.empty() && write_file_atomic(draft, composed.kdl)) {
-                            use_draft = true;
-                        }
-                    }
-                    ws_tmp.wipe_and_remove();
-                    host_tmp.wipe_and_remove();
+                    auto composed = compose_workspace_with_overlay(
+                        ctx.cfg_dir, ctx.supervisor.binary_path(), ctx.ws_ctx.secrets_dir, doc_snap, host_snap, active_id, en);
+                    if (composed && write_file_atomic(draft, composed->kdl)) use_draft = true;
                 }
+                auto const eff_inb = select_active_inbound_tag(host_snap, i);
                 auto target_cfg = use_draft ? draft : ctx.config_path;
-                auto res = ctx.supervisor.explain_rule(target_cfg, i, n, t, e);
+                auto res = ctx.supervisor.explain_rule(target_cfg, eff_inb, n, t, e);
                 if (use_draft) { std::error_code ec; std::filesystem::remove(draft, ec); }
                 on_ui_thread(ctx.weak_ui, [ok = res.ok, msg = std::move(res.message)](auto& s) {
                     s->set_explain_ok(ok);

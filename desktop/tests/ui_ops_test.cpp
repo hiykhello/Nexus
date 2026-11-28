@@ -51,8 +51,8 @@ namespace {
         expect(loc == "en-US" || loc == "zh-CN", "system locale normalized");
 
         desktop::UiPrefs def{};
-        expect(std::abs(def.window_opacity - 0.88f) < 0.005f && std::abs(def.surface_opacity - 0.90f) < 0.005f,
-            "default frosted opacity matches Theme.slint");
+        expect(std::abs(def.window_opacity - 0.88f) < 0.005f,
+            "default window opacity matches Theme.slint");
 
         auto tmp = std::filesystem::temp_directory_path() / "nexus-desktop-ui-prefs-test.conf";
         std::error_code ec;
@@ -61,12 +61,8 @@ namespace {
         desktop::UiPrefs in{
             .theme_preference = "dark",
             .accent_preset = "violet",
-            .material_preset = "crystal",
             .window_opacity = 0.75f,
-            .surface_opacity = 0.55f,
             .blur_enabled = true,
-            .ambient_glow = false,
-            .reduced_motion = true,
             .language = "en-us",
             .outbound_mode = "global",
             .sidebar_width = 212.0f,
@@ -74,31 +70,31 @@ namespace {
         };
         expect(desktop::save_ui_prefs(tmp, in), "save ui prefs");
         auto out = desktop::load_ui_prefs(tmp);
-        expect(out.theme_preference == "obsidian" && out.accent_preset == "violet" && out.material_preset == "crystal",
-            "legacy dark migrates to obsidian and preserves accent/material");
-        expect(std::abs(out.window_opacity - 0.75f) < 0.02f && std::abs(out.surface_opacity - 0.55f) < 0.02f &&
-               out.blur_enabled && !out.ambient_glow && out.reduced_motion,
-            "roundtrip sliders");
+        expect(out.theme_preference == "obsidian" && out.accent_preset == "violet",
+            "legacy dark migrates to obsidian and preserves accent");
+        expect(std::abs(out.window_opacity - 0.75f) < 0.02f && out.blur_enabled,
+            "roundtrip opacity and blur");
         expect(out.language == "en-us" && out.outbound_mode == "global" &&
                std::abs(out.sidebar_width - 212.0f) < 0.2f && out.sidebar_collapsed,
             "roundtrip layout and language");
 
-        // Verify 4-preset theme migration ("light"->"paper", "amber" roundtrip, unknown->"system")
+        // Verify legacy removed keys in existing user configs are safely ignored
         {
             std::ofstream leg(tmp, std::ios::binary | std::ios::trunc);
-            leg << "theme=light\n";
+            leg << "theme=light\nmaterial=crystal\nsurface_opacity=0.55\nambient_glow=false\n"
+                   "reduced_motion=true\ndash_section_order=3,0,2,1\ndash_deck_swapped=true\n";
         }
-        expect(desktop::load_ui_prefs(tmp).theme_preference == "paper", "legacy light migrates to paper");
+        expect(desktop::load_ui_prefs(tmp).theme_preference == "paper", "legacy light migrates to paper and ignores removed keys");
         in.theme_preference = "amber";
         expect(desktop::save_ui_prefs(tmp, in) && desktop::load_ui_prefs(tmp).theme_preference == "amber",
             "studio amber preset roundtrips cleanly");
-        auto j_leg = desktop::ui_prefs_from_json(R"({"theme":"dark"})");
+        auto j_leg = desktop::ui_prefs_from_json(R"({"theme":"dark","material":"crystal","dash_deck_swapped":true})");
         auto j_amb = desktop::ui_prefs_from_json(R"({"theme":"studio_amber"})");
         auto j_bad = desktop::ui_prefs_from_json(R"({"theme":"invalid"})");
         expect(j_leg && j_leg->theme_preference == "obsidian" &&
                j_amb && j_amb->theme_preference == "amber" &&
                j_bad && j_bad->theme_preference == "system",
-            "JSON ui_prefs migrates legacy dark/studio_amber and sanitizes invalid themes");
+            "JSON ui_prefs migrates legacy dark/studio_amber, ignores removed keys, and sanitizes invalid themes");
         std::filesystem::remove(tmp, ec);
     }
 
@@ -148,21 +144,17 @@ namespace {
         expect(!desktop::should_enable_native_blur(false, 0.72f), "disabled blur disables native backdrop");
         expect(!desktop::should_enable_native_blur(true, 1.0f), "opaque window disables native backdrop");
 
-        auto crystal_tmp = std::filesystem::temp_directory_path() / "nexus-desktop-crystal-prefs-test.conf";
-        desktop::UiPrefs crystal_in{
-            .material_preset = "crystal",
+        auto low_tmp = std::filesystem::temp_directory_path() / "nexus-desktop-low-opacity-prefs-test.conf";
+        desktop::UiPrefs low_in{
             .window_opacity = 0.20f,
-            .surface_opacity = 0.20f,
             .blur_enabled = false,
         };
-        expect(desktop::save_ui_prefs(crystal_tmp, crystal_in), "save crystal prefs");
-        auto crystal_out = desktop::load_ui_prefs(crystal_tmp);
+        expect(desktop::save_ui_prefs(low_tmp, low_in), "save low-opacity prefs");
+        auto low_out = desktop::load_ui_prefs(low_tmp);
         std::error_code ec;
-        std::filesystem::remove(crystal_tmp, ec);
-        expect(std::abs(crystal_out.window_opacity - 0.20f) < 0.02f &&
-               std::abs(crystal_out.surface_opacity - 0.20f) < 0.02f &&
-               !crystal_out.blur_enabled,
-            "crystal low-opacity and blur_enabled roundtrip");
+        std::filesystem::remove(low_tmp, ec);
+        expect(std::abs(low_out.window_opacity - 0.40f) < 0.02f && !low_out.blur_enabled,
+            "window_opacity clamps to 0.40 floor and blur_enabled roundtrips");
 
         desktop::WindowBlurController blur;
         expect(!blur.active() && blur.backend_name().empty(), "blur initially detached");
@@ -370,39 +362,6 @@ namespace {
         expect(min_y < 40.0, "spiky wave actually rises visibly above baseline");
     }
 
-    auto test_dash_layout_reorder_and_prefs() -> void {
-        std::array<int, 4> ord{0, 1, 2, 3};
-        expect(desktop::reorder_dash_slots(ord, 0, 2) && ord == std::array<int, 4>{1, 2, 0, 3}, "forward reorder 0->2");
-        expect(desktop::reorder_dash_slots(ord, 3, 1) && ord == std::array<int, 4>{3, 1, 2, 0}, "backward reorder 3->1");
-        expect(!desktop::reorder_dash_slots(ord, 2, 2), "no-op same id");
-        expect(!desktop::reorder_dash_slots(ord, -1, 2) && !desktop::reorder_dash_slots(ord, 0, 4), "out-of-range rejected");
-        expect(ord == std::array<int, 4>{3, 1, 2, 0}, "order unchanged after rejected calls");
-        expect(desktop::sanitize_dash_order({0, 0, 1, 2}) == std::array<int, 4>{0, 1, 2, 3}, "duplicate order sanitized");
-
-        auto tmp = std::filesystem::temp_directory_path() / "nexus-desktop-dash-layout-test.conf";
-        std::error_code ec;
-        std::filesystem::remove(tmp, ec);
-        desktop::UiPrefs in{};
-        in.dash_section_order = {3, 0, 2, 1};
-        in.dash_info_order = {2, 3, 0, 1};
-        in.dash_deck_swapped = true;
-        expect(desktop::save_ui_prefs(tmp, in), "save custom dash layout");
-        auto out = desktop::load_ui_prefs(tmp);
-        expect(out.dash_section_order == std::array<int, 4>{3, 0, 2, 1} &&
-               out.dash_info_order == std::array<int, 4>{2, 3, 0, 1} && out.dash_deck_swapped,
-            "roundtrip custom dash section/info order and deck swap");
-
-        {
-            std::ofstream bad(tmp, std::ios::binary | std::ios::trunc);
-            bad << "dash_section_order=0,0,1,2\ndash_info_order=0,1,2,9\ndash_deck_swapped=false\n";
-        }
-        auto rec = desktop::load_ui_prefs(tmp);
-        std::filesystem::remove(tmp, ec);
-        expect(rec.dash_section_order == std::array<int, 4>{0, 1, 2, 3} &&
-               rec.dash_info_order == std::array<int, 4>{0, 1, 2, 3} && !rec.dash_deck_swapped,
-            "corrupt/duplicate dash orders recover to {0,1,2,3}");
-    }
-
     auto test_wave35_flagship_helpers() -> void {
         // 1. Dual-track wave paths share Y scale and emit pre-segmented dashed TX
         std::vector<double> rx = {10.0, 40.0, 220.0, 640.0, 380.0, 920.0, 500.0};
@@ -482,7 +441,6 @@ auto main() -> int {
         test_core_supervisor_lifecycle();
         test_ui_redesign_actions();
         test_speed_wave_paths();
-        test_dash_layout_reorder_and_prefs();
         test_wave35_flagship_helpers();
         std::println("nexus-desktop-ui-ops-tests: ALL PASSED");
         return 0;

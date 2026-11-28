@@ -27,6 +27,9 @@
   - 逻辑域名目标与解析后的实际数值目标分别保留，避免包装层重复解析。
 - **直接内联 TLS 入站**：
   - TLS / ShadowTLS / REALITY 握手直接在接收路径内完成，不通过 `127.0.0.1` 回环转发，完整保留真实客户端源地址供规则引擎使用，并避免双倍 socket 与 FD 开销。
+- **uTLS 单真源与能力诚实原则**：
+  - 浏览器指纹的枚举、版本别名与外部订阅归一化收敛在单一真源（`utility.tls_fingerprint`），线特征完全由声明式规格表（`tls.browser_profiles`）驱动；
+  - ClientHello 仅通告自研 TLS 状态机真实实现的能力，版本跟进通过离线审计工具（`utls-dump` + `scripts/audit-utls.py`）显式区分可立即改表同步的 `DATA DRIFT` 与须先补齐状态机的 `CAPABILITY GAP`，绝不靠拼假扩展凑 JA3/JA4。
 
 ## 2. 具名 HTTP 客户端连接池原则
 

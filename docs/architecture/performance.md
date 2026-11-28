@@ -1,6 +1,6 @@
 # 性能与资源设计
 
-状态：核心性能设计文档，工程原则见 [性能与数据面原则](../design-principles/performance-and-datapath.md)，双后端验收数据见 [Linux 内核验收](../planning/proxy-kernel-linux-validation.md)。
+状态：核心性能设计文档，工程原则见 [性能与数据面原则](../design-principles/performance-and-datapath.md)，双后端验收数据见 [验证体系与实机基线](../planning/validation.md#4-性能验证准则与-linux-实机基线)。
 
 ## 设计目标
 
@@ -45,7 +45,7 @@
 
 优化资源不足时优先继续普通路径；协议错误和连接错误则保留原语义。降级需处理已经读取到 pipe、批缓存或其他中间存储的数据，不能直接重启读取导致丢失、乱序或重复。
 
-Linux 裸 TCP 的 splice 在握手和已读前缀写完后进入。每个方向读取就绪时尝试取得监听器共享的一个管道配额，写入目的 socket 后累计字节。背压时通过普通异步写排空已读的管道数据，恢复后继续使用 splice。后端拒绝 splice 时排空后沿缓冲路径继续。最新实机基准与资源数据见 [Linux 内核验收](../planning/proxy-kernel-linux-validation.md)。
+Linux 裸 TCP 的 splice 在握手和已读前缀写完后进入。每个方向读取就绪时尝试取得监听器共享的一个管道配额，写入目的 socket 后累计字节。背压时通过普通异步写排空已读的管道数据，恢复后继续使用 splice。后端拒绝 splice 时排空后沿缓冲路径继续。最新实机基准与资源数据见 [验证体系与实机基线](../planning/validation.md#4-性能验证准则与-linux-实机基线)。
 
 动态能力通过窄 facade 暴露，避免要求每条包或每个字节重复类型探测。只有证明后续语义等价时才能缓存已选路径；协议状态变化应使能力重新判定。
 
@@ -75,6 +75,6 @@ Corosio 管理异步 I/O 和执行器，自研状态机管理协议。若使用�
 
 日志在会话层关联上下文，热路径使用计数和限频汇总，避免按包构建文本。监控开启前后都要测量，不能让优化路径悄悄绕过统计。
 
-验收方案见[性能验证](../planning/performance-validation.md)。
+验收方案与基线见 [验证体系与实机基线](../planning/validation.md#4-性能验证准则与-linux-实机基线)。
 
 Linux 专属的内核 bypass、conntrack 判定复用、策略路由与自动分流见[平台设计](../platform/linux/networking.md)。NFQUEUE、nftables 和系统服务的收益需按实际路径测量，不由上游推荐直接推导。

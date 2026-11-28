@@ -149,7 +149,7 @@ Android 上按应用分流分两层，**能用第一层就不用第二层**：
      ```
      再通过 `packageManager.getPackagesForUid(uid)`（加内存缓存，监听 `ACTION_PACKAGE_ADDED/REMOVED` 刷新）映射为包名列表（注意同一个 `sharedUserId` 下一个 UID 可对应多个包名！）。
    - **Android 9 及以下（API ≤ 28）**：回退读取 `/proc/net/{tcp,tcp6,udp,udp6}`。
-   - **Nexus 零浪费优化**：延续 Nexus 既有 `RouteMatcher::needs_source_` 静态判定——**只有当前加载的路由规则里确实包含 `android-package` / `uid` 谓词时，Nexus 才通过 UDS 查询连接归属**；未配置该类规则时查询路径完全短路零开销。
+   - **Nexus 零浪费优化**：延续 Nexus 既有 `RouteProgram::needs_source_` 静态判定——**只有当前加载的路由规则里确实包含 `android-package` / `uid` 谓词时，Nexus 才通过 UDS 查询连接归属**；未配置该类规则时查询路径完全短路零开销。
 
 ---
 

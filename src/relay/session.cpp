@@ -365,7 +365,7 @@ namespace relay {
 
             namespace {
             [[gnu::noinline]] auto socks_admit(Session& session, io::io_context& context,
-                           rules::RouteMatcher const& policy, std::optional<Credentials> const& credentials,
+                           rules::RouteProgram const& policy, std::optional<Credentials> const& credentials,
                            HandshakeReader& reader) -> capy::task<bool> {
             auto fail = [&] { session.close(); session.done = true; };
             std::array<std::uint8_t, 262> buffer;
@@ -437,7 +437,7 @@ namespace relay {
         }
 
             [[gnu::noinline]] auto handshake_admit(Session& session, io::io_context& context,
-                rules::RouteMatcher const& policy, ProxyHandshake mode,
+                rules::RouteProgram const& policy, ProxyHandshake mode,
                 std::optional<Credentials> const& credentials) -> capy::task<bool> {
                 HandshakeReader reader{session};
                 std::uint8_t first = 0;
@@ -464,10 +464,10 @@ namespace relay {
     }
 
     auto handshake(Session& session, io::io_context& context,
-                       rules::RouteMatcher const& policy, ProxyHandshake mode, std::optional<Credentials> const& credentials) -> capy::task<> {
+                       rules::RouteProgram const& policy, ProxyHandshake mode, std::optional<Credentials> const& credentials) -> capy::task<> {
 #ifdef NEXUS_TEST_DNS_OWNER
             struct BorrowProbe {
-                rules::RouteMatcher const& policy;
+                rules::RouteProgram const& policy;
                 std::optional<Credentials> const& credentials;
                 ~BorrowProbe() {
                     bool valid=false;

@@ -59,7 +59,7 @@ namespace net {
         }
         return canonical(candidate);
     }
-    auto udp_select_preflight(rules::RouteMatcher const& policy,UdpTarget target,UdpEndpoint const* source,std::optional<std::string_view> auth_user,std::optional<std::string_view> source_interface,rules::IngressMetadata ingress)
+    auto udp_select_preflight(rules::RouteProgram const& policy,UdpTarget target,UdpEndpoint const* source,std::optional<std::string_view> auth_user,std::optional<std::string_view> source_interface,rules::IngressMetadata ingress)
         -> std::expected<std::optional<std::size_t>,UdpRouteError> {
         if (!valid_target(target)) return std::unexpected(UdpRouteError::invalid_target);
         if (source && !valid(*source)) return std::unexpected(UdpRouteError::invalid_target);
@@ -71,12 +71,12 @@ namespace net {
         if (*selected && **selected==1) return std::unexpected(UdpRouteError::blocked);
         return *selected;
     }
-    auto udp_preflight(rules::RouteMatcher const& policy,UdpTarget target,UdpEndpoint const* source,std::optional<std::string_view> auth_user) -> std::expected<void,UdpRouteError> {
+    auto udp_preflight(rules::RouteProgram const& policy,UdpTarget target,UdpEndpoint const* source,std::optional<std::string_view> auth_user) -> std::expected<void,UdpRouteError> {
         auto selected=udp_select_preflight(policy,target,source,auth_user);
         if (!selected) return std::unexpected(selected.error());
         return *selected ? action(**selected) : std::expected<void,UdpRouteError>{};
     }
-    auto udp_select(rules::RouteMatcher const& policy,UdpTarget target,UdpEndpoint candidate,UdpEndpoint const* source,std::optional<std::string_view> auth_user,std::optional<std::string_view> source_interface,rules::IngressMetadata ingress)
+    auto udp_select(rules::RouteProgram const& policy,UdpTarget target,UdpEndpoint candidate,UdpEndpoint const* source,std::optional<std::string_view> auth_user,std::optional<std::string_view> source_interface,rules::IngressMetadata ingress)
         -> std::expected<UdpSelection,UdpRouteError> {
         auto checked=udp_validate_candidate(target,candidate);
         if(!checked)return std::unexpected(checked.error());
@@ -94,7 +94,7 @@ namespace net {
         if (selected->outbound==1) return std::unexpected(UdpRouteError::blocked);
         return UdpSelection{*checked,selected->outbound,selected->rule,selected->predicate};
     }
-    auto udp_route(rules::RouteMatcher const& policy,UdpTarget target,UdpEndpoint candidate,UdpEndpoint const* source,std::optional<std::string_view> auth_user)
+    auto udp_route(rules::RouteProgram const& policy,UdpTarget target,UdpEndpoint candidate,UdpEndpoint const* source,std::optional<std::string_view> auth_user)
         -> std::expected<UdpEndpoint,UdpRouteError> {
         auto selected=udp_select(policy,target,candidate,source,auth_user);
         if (!selected) return std::unexpected(selected.error());

@@ -217,21 +217,21 @@ namespace relay {
         std::span<std::uint8_t const> first, bool* first_sent, std::optional<std::size_t> rule,
         std::optional<std::string_view> tunnel_domain) -> capy::task<std::uint8_t>;
     auto dial(Session& session, io::io_context& context,
-        rules::RouteMatcher const& policy, socks5::Request const& request, Clock::time_point limit = Clock::time_point::max(),
+        rules::RouteProgram const& policy, socks5::Request const& request, Clock::time_point limit = Clock::time_point::max(),
         std::span<std::uint8_t const> first = {}, bool* first_sent = nullptr) -> capy::task<std::uint8_t>;
-    export auto dial_destination(Session&, io::io_context&, rules::RouteMatcher const&, socks5::Request const&, Clock::time_point limit = Clock::time_point::max()) -> capy::task<std::uint8_t>;
-    export auto dial_destination(Session&, io::io_context&, rules::RouteMatcher const&, socks5::Request const&, net::UdpEndpoint const&, Clock::time_point limit = Clock::time_point::max()) -> capy::task<std::uint8_t>;
+    export auto dial_destination(Session&, io::io_context&, rules::RouteProgram const&, socks5::Request const&, Clock::time_point limit = Clock::time_point::max()) -> capy::task<std::uint8_t>;
+    export auto dial_destination(Session&, io::io_context&, rules::RouteProgram const&, socks5::Request const&, net::UdpEndpoint const&, Clock::time_point limit = Clock::time_point::max()) -> capy::task<std::uint8_t>;
     auto forward_http(Session& session, io::io_context& context,
-        rules::RouteMatcher const& policy, std::string_view input) -> capy::task<>;
+        rules::RouteProgram const& policy, std::string_view input) -> capy::task<>;
     auto serve_fixed_unix(Session&, io::io_context&, std::string_view) -> capy::task<>;
-    auto serve_fixed_tcp(Session&, io::io_context&, rules::RouteMatcher const&,
+    auto serve_fixed_tcp(Session&, io::io_context&, rules::RouteProgram const&,
         socks5::Request const&) -> capy::task<>;
     auto serve_redirect_dns(Session&, io::io_context&, std::span<std::uint8_t const>, Clock::time_point) -> capy::task<>;
-    auto serve_transparent_tcp(Session&, io::io_context&, rules::RouteMatcher const&, io::endpoint listener, bool tproxy, bool dns)
+    auto serve_transparent_tcp(Session&, io::io_context&, rules::RouteProgram const&, io::endpoint listener, bool tproxy, bool dns)
         -> capy::task<>;
     enum class ProxyHandshake { socks5, mixed, http };
 
     auto handshake(Session& session, io::io_context& context,
-        rules::RouteMatcher const& policy, ProxyHandshake mode, std::optional<Credentials> const& credentials) -> capy::task<>;
+        rules::RouteProgram const& policy, ProxyHandshake mode, std::optional<Credentials> const& credentials) -> capy::task<>;
     auto relay_splice(Session&, bool, bool = false) -> capy::task<std::optional<bool>>;
 }

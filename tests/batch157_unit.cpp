@@ -79,6 +79,12 @@ int main() {
             "HTTP/1.1 200 OK\r\nX-CSTP-Address: 10.99.0.5\r\nX-CSTP-MTU: 1360\r\nX-DTLS-Session-ID: deadbeef\r\n\r\n");
         assert(conn.ipv4_address == "10.99.0.5" && conn.mtu == 1360 && !conn.dtls_session_id.empty());
 
+        auto disabled_timers = *openconnect::parse_cstp_connect_headers(
+            "HTTP/1.1 200 OK\r\nX-CSTP-DPD: disabled\r\nX-CSTP-Keepalive: DISABLED\r\n"
+            "X-DTLS-DPD: Disabled\r\nX-DTLS-Keepalive: disabled\r\n\r\n");
+        assert(disabled_timers.dpd_s == 0 && disabled_timers.keepalive_s == 0 &&
+               disabled_timers.dtls_dpd_s == 0 && disabled_timers.dtls_keepalive_s == 0);
+
         std::vector<std::uint8_t> pl{10, 20, 30, 40};
         auto frame_bytes = *openconnect::encode_cstp_frame(openconnect::CstpType::data, pl);
         assert(!openconnect::decode_cstp_frame(std::span(frame_bytes).first(4)).has_value());

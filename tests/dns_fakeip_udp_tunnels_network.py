@@ -73,10 +73,6 @@ routing {{ final "direct"; }}
 def configure(root, front, dns_port, peer, trojan, other, outbound, ordered):
     state = root / "state"
     state.mkdir(mode=0o700)
-    for name, size in (("instance.id", 16), ("history.key", 32)):
-        path = state / name
-        path.touch(mode=0o600)
-        path.write_bytes(os.urandom(size))
     for scheme in ("trojan", "uot"):
         (root / f"{scheme}.kdl").write_text(
             f'schema-version 2\nkind "predicate"\nrule type="domain-suffix" value="{scheme}.test"\n')
@@ -85,14 +81,15 @@ def configure(root, front, dns_port, peer, trojan, other, outbound, ordered):
         rule action="route" rule-set="uot" domain-source="fakeip" outbound="{outbound}"
         rule action="reject"
     }}''' if ordered else f'''rules {{
-        - kind="rule-set" value="trojan" outbound="edge"
-        - kind="rule-set" value="uot" outbound="{outbound}"
+        - rule-set="trojan" to="edge"
+        - rule-set="uot" to="{outbound}"
     }}'''
     config = root / "proxy.kdl"
     config.write_text(f'''schema-version 1
 role "client"
 workers 2
 control socket="{root / "proxy.sock"}"
+state {{ directory "{state}"; }}
 inbounds {{ mixed "local" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}; }}
 outbounds {{
     direct "direct"
@@ -104,7 +101,7 @@ dns {{
     server "protected" type="udp" host="127.0.0.1" port={peer.port}
     final "protected"
     strategy "prefer_ipv4"
-    fake-ip server="protected" ipv4-pool="198.18.0.0/29" ipv6-pool="fd15:4231::/96" ttl-seconds=2 state-directory="{state}" initialize=#true
+    fake-ip server="protected" ipv4-pool="198.18.0.0/29" ipv6-pool="fd15:4231::/96" ttl-seconds=2
 }}
 routing {{
     rulesets {{

@@ -30,11 +30,13 @@ class Wave35InstrumentTest {
             android = AndroidHostSection(
                 themePreset = AndroidThemePreset.STUDIO_AMBER,
                 dynamicColor = true,
+                surfaceAlpha = 0.80f,
             ),
         )
         val roundTrip = AndroidHostConfig.fromJson(cfg.toJson())
         assertEquals(AndroidThemePreset.STUDIO_AMBER, roundTrip.android.themePreset)
         assertTrue(roundTrip.android.dynamicColor)
+        assertEquals(0.80f, roundTrip.android.surfaceAlpha, 0.01f)
     }
 
     @Test

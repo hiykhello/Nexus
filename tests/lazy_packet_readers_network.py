@@ -102,7 +102,7 @@ inbounds {{ {'; '.join(inbounds[kind] for kind in fronts)}; }}
 outbound "direct" type="direct"
 {outbounds}
 routing {{ rulesets {{ "second" path="second.kdl" format="kdl"; }};
- rules {{ - kind="rule-set" value="second" outbound="second"; }}; final "first"; }}
+ rules {{ - rule-set="second" to="second"; }}; final "first"; }}
 ''')
     box = root / 'upstream.json'
     box.write_text(json.dumps({'log': {'level': 'warn'}, 'inbounds': [{

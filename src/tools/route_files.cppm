@@ -124,15 +124,12 @@ export namespace cli {
         std::vector<std::size_t> indices;
         std::vector<rules::ProgramRule> ordered;
         std::vector<std::pair<std::string, std::vector<std::string>>> tun_cidrs;
-
-        auto indexed(config::Config const&) const -> std::vector<relay::IndexedRouteRule>;
     };
 
     [[nodiscard]] auto relay_rule_format(config::RuleFormat format) noexcept -> relay::RuleFormat;
     [[nodiscard]] auto rule_input_format(config::RuleFormat format) noexcept -> rules::InputFormat;
 
     struct ProjectedRoutes {
-        std::vector<relay::IndexedRouteRule> indexed;
         std::vector<rules::ProgramRule> ordered;
         std::shared_ptr<rules::OutboundDistribution const> distribution;
         std::size_t default_outbound;

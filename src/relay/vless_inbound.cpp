@@ -120,7 +120,7 @@ namespace relay {
         using MuxResolver=vless_mux::Resolver<Session,MuxLookup>;
         using MuxServer=vless_mux::Server<MuxStream,MuxResolver>;
 
-        auto serve_udp(Session& session,corosio::io_context& context,rules::RouteMatcher const& policy,
+        auto serve_udp(Session& session,corosio::io_context& context,rules::RouteProgram const& policy,
             Incoming& incoming,vless::TcpRequest const& request,Clock::time_point deadline) -> capy::task<> {
             auto accepted=co_await incoming.complete_dial(true,deadline);
             if (!accepted || session.closed) co_return;
@@ -161,8 +161,12 @@ namespace relay {
             }
             co_return co_await reality_tcp::establish(session,context,*owned.reality,std::move(budget),start,deadline);
         }
+        auto sniff_vision(void*, sniff::TcpSniffer& sniffer, Clock::time_point) -> capy::task<sniff::TcpReadResult> {
+            co_return {sniff::TcpReadStop::eof, sniffer.finish(), {}};
+        }
+        template<bool Vision, class Stream>
         [[gnu::noinline]] auto serve_ordered_tcp(Session& session, corosio::io_context& context,
-            socks5::Request const& target, Incoming& incoming, Clock::time_point limit,
+            socks5::Request const& target, Stream& incoming, Clock::time_point limit,
             tls::detail::ApplicationDeadline request_limit) -> capy::task<bool> {
             OrderedTcpRequest route; if (!route.prepare(session, target)) co_return false;
             std::array<std::uint8_t, 16640> wire{}, scratch{};
@@ -171,18 +175,25 @@ namespace relay {
             auto branch = [&]() -> capy::task<capy::results<OrderedTcpResult>> {
                 auto result = co_await execute_ordered_tcp(session, context, ordered.program, cursor, route.input, sniffer,
                     route.candidates, route.endpoints, ordered.fallback,
-                    std::min(limit, Clock::now() + ordered.sniff_timeout), limit, ordered.unknown_policy, &incoming, &sniff_vless);
+                    std::min(limit, Clock::now() + ordered.sniff_timeout), limit, ordered.unknown_policy,
+                    &incoming, Vision ? &sniff_vision : &sniff_vless);
                 co_return capy::results<OrderedTcpResult>{std::make_error_code(std::errc::operation_canceled), std::move(result)};
             };
             auto [signal, result, watch] = co_await capy::when_all(branch(), watch_client_error(session));
             (void)signal; (void)watch;
             if (session.closed || result.stop != sniff::RouteTcpStop::terminal || result.code) co_return false;
-            auto accepted = co_await incoming.complete_dial(true, request_limit);
-            if (!accepted) co_return false;
+            if constexpr (Vision) {
+                (void)request_limit;
+                auto accepted = co_await incoming.complete_dial(true);
+                if (!accepted) co_return false;
+            } else {
+                auto accepted = co_await incoming.complete_dial(true, request_limit);
+                if (!accepted) co_return false;
+            }
             sniff::TcpReplay replay(result.first_sent ? std::span<std::uint8_t const>{} : sniffer.wire());
             co_return co_await replay_ordered_tcp(session, replay, limit);
         }
-        auto serve(Session& session,corosio::io_context& context,rules::RouteMatcher const& policy,
+        auto serve(Session& session,corosio::io_context& context,rules::RouteProgram const& policy,
                    OwnedProfile const& owned,bool vision) -> capy::task<> {
 #ifdef NEXUS_TEST_VLESS_ABANDON
             struct FrameProbe { ~FrameProbe() { nexus_test_vless_profile_frame_exit(); } } probe;
@@ -236,7 +247,6 @@ namespace relay {
                 }
             }
             if (std::holds_alternative<vless::UserId>(*header)) {
-                if(session.ordered_tcp){fail();co_return;}
 #ifdef NEXUS_ENABLE_SOCKS_UDP
                 auto accepted=vision ? co_await vision_incoming->complete_dial(true) : co_await incoming->complete_dial(true,request_limit);
                 if (!accepted || session.closed) { fail(); co_return; }
@@ -275,7 +285,9 @@ namespace relay {
             std::copy(request->address.begin(),request->address.end(),target.address.begin());
             session.begin_traffic(TrafficProtocol::vless,target.port);
             if(session.ordered_tcp) {
-                if(vision || !co_await serve_ordered_tcp(session,context,target,*incoming,limit,request_limit)){fail();co_return;}
+                bool ok = vision ? co_await serve_ordered_tcp<true>(session,context,target,*vision_incoming,limit,request_limit)
+                                 : co_await serve_ordered_tcp<false>(session,context,target,*incoming,limit,request_limit);
+                if(!ok){fail();co_return;}
             } else {
                 auto result=co_await dial(session,context,policy,target,owned.transport ? limit : Clock::time_point::max());
                 if (result || session.closed) { fail(); co_return; }
@@ -346,7 +358,7 @@ namespace relay {
             if (!authenticated) return std::unexpected(authenticated.error());
             shared->reality.emplace(std::move(*authenticated));
         }
-        return InboundFactory([shared=std::move(shared),vision](Session& session,corosio::io_context& context,rules::RouteMatcher const& policy) {
+        return InboundFactory([shared=std::move(shared),vision](Session& session,corosio::io_context& context,rules::RouteProgram const& policy) {
             return serve(session,context,policy,*shared,vision);
         });
     }

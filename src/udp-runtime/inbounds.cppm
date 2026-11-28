@@ -98,7 +98,7 @@ export namespace relay::udp_runtime {
         struct Group {
             State* state;
             containers::inplace_vector<udp_io::endpoint,16> endpoints;
-            std::vector<rules::RouteMatcher> policies;
+            std::vector<rules::RouteProgram> policies;
             containers::inplace_vector<Server*,16> traffic_listeners;
             std::vector<std::optional<shadowsocks::detail::UdpIdentityRoute>> identities;
         };
@@ -106,7 +106,7 @@ export namespace relay::udp_runtime {
             std::shared_ptr<shadowsocks::detail::UdpIdentitySecret const> secret;
             std::uint8_t key_len = 0;
             std::uint16_t port = 0;
-            rules::RouteMatcher policy;
+            rules::RouteProgram policy;
             Server* traffic = nullptr;
             std::shared_ptr<relay::ShadowsocksUserDirectory> users;
         };
@@ -216,7 +216,7 @@ export namespace relay::udp_runtime {
             if (!groups_.empty() || setup_.active() || !binding.valid()) return false;
             binding_=std::move(binding); return true;
         }
-        [[nodiscard]] auto add(std::span<std::uint8_t const> key,std::uint16_t port,rules::RouteMatcher const& policy,
+        [[nodiscard]] auto add(std::span<std::uint8_t const> key,std::uint16_t port,rules::RouteProgram const& policy,
             Server* traffic=nullptr,shadowsocks::CipherMethod method=shadowsocks::CipherMethod::aes,
             std::optional<shadowsocks::detail::UdpIdentityRoute> identity={})
             -> std::expected<void,std::string> {
@@ -245,7 +245,7 @@ export namespace relay::udp_runtime {
             return {};
         }
         [[nodiscard]] auto add_dynamic_base(std::span<std::uint8_t const> primary, std::uint16_t port,
-            rules::RouteMatcher const& policy, Server* traffic, std::shared_ptr<relay::ShadowsocksUserDirectory> users)
+            rules::RouteProgram const& policy, Server* traffic, std::shared_ptr<relay::ShadowsocksUserDirectory> users)
             -> std::expected<void, std::string> {
             if (setup_.active() || !port || (primary.size() != 16 && primary.size() != 32) || !users)
                 return std::unexpected("invalid dynamic UDP listener state");

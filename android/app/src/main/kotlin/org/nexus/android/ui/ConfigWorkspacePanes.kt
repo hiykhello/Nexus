@@ -5,6 +5,8 @@ import android.content.ClipboardManager
 import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,15 +20,16 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -35,13 +38,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -50,78 +52,164 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 import org.nexus.android.R
-import org.nexus.android.bridge.workspace.PolicyGroupConfig
+import org.nexus.android.bridge.ipc.OutboundGroupSnapshot
 import org.nexus.android.bridge.workspace.ProfileItem
 import org.nexus.android.bridge.workspace.ProfileKind
-import org.nexus.android.bridge.workspace.ProxyChainConfig
 import org.nexus.android.bridge.workspace.WorkspaceDefaults
-import org.nexus.android.bridge.workspace.WorkspaceJsonCodec
-import org.nexus.android.bridge.workspace.WorkspaceStore
-import org.nexus.android.bridge.workspace.WorkspaceSyncBridge
 import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 
-@Composable
-internal fun ProfileKindBadge(kind: ProfileKind, modifier: Modifier = Modifier) {
-    val ext = NexusTheme.colors
-    val (bg, fg, label) = when (kind) {
-        ProfileKind.NODE -> Triple(ext.telemetryDownloadContainer, ext.telemetryDownload, "节点")
-        ProfileKind.POLICY_GROUP -> Triple(MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer, "策略组")
-        ProfileKind.PROXY_CHAIN -> Triple(ext.telemetryUploadContainer, ext.telemetryUpload, "代理链")
-        ProfileKind.CUSTOM_OUTBOUND -> Triple(ext.warningContainer, ext.warning, "自定义出站")
-        ProfileKind.FULL_CUSTOM_KDL -> Triple(ext.successContainer, ext.success, "自定义配置")
+internal fun deriveLiveLatencies(groups: List<OutboundGroupSnapshot>): Map<String, Long> =
+    buildMap {
+        groups.forEach { g ->
+            g.members.forEach { m -> if (m.latencyMs > 0L) put(m.name, m.latencyMs) }
+        }
     }
-    StatusPill(text = label, containerColor = bg, contentColor = fg, modifier = modifier)
+
+@Composable
+internal fun ProfileKindBadge(profile: ProfileItem, modifier: Modifier = Modifier) {
+    val ext = NexusTheme.colors
+    val badge = shortProtocolBadge(profile)
+    val (bg, fg) = when (profile.kind) {
+        ProfileKind.NODE -> ext.telemetryDownloadContainer to ext.telemetryDownload
+        ProfileKind.POLICY_GROUP -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+        ProfileKind.PROXY_CHAIN -> ext.telemetryUploadContainer to ext.telemetryUpload
+        ProfileKind.CUSTOM_OUTBOUND -> ext.warningContainer to ext.warning
+        ProfileKind.FULL_CUSTOM_KDL -> ext.successContainer to ext.success
+    }
+    StatusPill(text = badge, containerColor = bg, contentColor = fg, mono = true, modifier = modifier)
+}
+
+internal fun filterAndSortProfiles(
+    profiles: List<ProfileItem>,
+    selectedSubTab: String,
+    knownSubIds: Set<String>,
+    searchQuery: String,
+    sortMode: String,
+    latencies: Map<String, Long> = emptyMap(),
+): List<ProfileItem> {
+    val q = searchQuery.trim().lowercase()
+    val filtered = profiles.filter { p ->
+        val effSub = p.subscriptionId.ifBlank { "manual" }
+        val subOk = when (selectedSubTab) {
+            "", "all" -> true
+            "manual" -> effSub == "manual" || effSub !in knownSubIds
+            else -> effSub == selectedSubTab
+        }
+        if (!subOk) return@filter false
+        if (q.isEmpty()) return@filter true
+        val hay = buildString {
+            append(p.remarks).append(' ').append(p.id).append(' ').append(shortProtocolBadge(p))
+            p.node?.let { append(' ').append(it.server).append(':').append(it.port) }
+        }.lowercase()
+        hay.contains(q)
+    }
+    return when (sortMode) {
+        "latency" -> filtered.sortedBy { latencies[it.id]?.takeIf { ms -> ms > 0L } ?: Long.MAX_VALUE }
+        "name" -> filtered.sortedBy { it.remarks.ifBlank { it.id }.lowercase() }
+        "protocol" -> filtered.sortedBy { shortProtocolBadge(it) }
+        else -> filtered
+    }
 }
 
 /**
- * Flattened `LazyListScope` emitter for the Profiles pillar so 100+ subscription profiles stay
- * fully virtualized inside `ConfigScreen`'s `LazyColumn` instead of nesting an eager `Column`.
+ * Flattened `LazyListScope` emitter for the Server & Subscription Console:
+ * - Subscription Group Filter Tab Bar (`[全部] [手动配置] [<Sub>...]`)
+ * - Search + Latency/Name Sort + Probe All + 1-click Update Subscription + Clipboard Import + `+ 新建`
+ * - Two-tier FlClash-style virtualized `ProfileListRow` cards with full remarks, RTT, endpoint & true edit pencil icon
  */
 internal fun LazyListScope.profilesPillarItems(
     state: WorkspaceUiState,
     actions: WorkspaceUiActions,
     scope: CoroutineScope,
     context: Context,
+    selectedSubTab: String,
+    onSelectSubTab: (String) -> Unit,
+    searchQuery: String,
+    onSearchChange: (String) -> Unit,
+    sortMode: String,
+    onCycleSort: () -> Unit,
+    profileLatencies: Map<String, Long> = emptyMap(),
+    isProbingProfiles: Boolean = false,
+    onProbeProfiles: () -> Unit = {},
+    showSubDrawer: Boolean,
+    onToggleSubDrawer: () -> Unit,
+    onCreateProfile: () -> Unit,
+    onEditProfile: (ProfileItem) -> Unit,
+    onImportClipboard: () -> Unit,
     onFeedback: (String) -> Unit,
-    onQuickShareImport: (String) -> Unit,
 ) {
-    item(key = "profiles_header", contentType = "profiles_header") {
-        ProfilesHeaderCard(
+    val knownSubIds = state.document.subscriptions.map { it.id }.toSet()
+    val subNames = state.document.subscriptions.associate { it.id to it.remarks.ifBlank { it.id } }
+    val filtered = filterAndSortProfiles(state.document.profiles, selectedSubTab, knownSubIds, searchQuery, sortMode, profileLatencies)
+
+    item(key = "server_console_toolbar", contentType = "profiles_header") {
+        ServerConsoleToolbarCard(
             state = state,
-            actions = actions,
-            onFeedback = onFeedback,
-            onQuickShareImport = onQuickShareImport,
+            selectedSubTab = selectedSubTab,
+            onSelectSubTab = onSelectSubTab,
+            searchQuery = searchQuery,
+            onSearchChange = onSearchChange,
+            sortMode = sortMode,
+            onCycleSort = onCycleSort,
+            isProbing = isProbingProfiles,
+            onProbeProfiles = onProbeProfiles,
+            showSubDrawer = showSubDrawer,
+            onToggleSubDrawer = onToggleSubDrawer,
+            onCreateProfile = onCreateProfile,
+            onImportClipboard = onImportClipboard,
+            onRefreshSubs = {
+                scope.launch {
+                    val msg = if (selectedSubTab != "all" && selectedSubTab != "manual" && selectedSubTab in knownSubIds) {
+                        actions.onRefreshSubscription(selectedSubTab)
+                    } else {
+                        actions.onRefreshAllSubscriptions()
+                    }
+                    onFeedback(msg)
+                }
+            },
         )
     }
-    val profiles = state.document.profiles
-    if (profiles.isEmpty()) {
+
+    if (showSubDrawer) {
+        item(key = "sub_drawer", contentType = "subs_drawer") {
+            SubscriptionsPillarPane(
+                state = state,
+                actions = actions,
+                onFeedback = onFeedback,
+            )
+        }
+    }
+
+    if (filtered.isEmpty()) {
         item(key = "profiles_empty", contentType = "empty") {
-            val ext = NexusTheme.colors
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = ext.wellSurface,
-                border = BorderStroke(1.dp, ext.hairline),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    text = "暂无节点档案。粘贴分享包、节点链接或拉取订阅即可开始。",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(14.dp),
-                )
+            OpticalCard(cornerRadius = 12.dp) {
+                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("暂无节点", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(
+                        text = "点击「新建配置」或「剪贴板导入」添加节点。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     } else {
         items(
-            items = profiles,
+            items = filtered,
             key = { it.id },
             contentType = { "profile_item" },
         ) { profile ->
+            val rtt = profileLatencies[profile.id]
+                ?: profileLatencies[profile.remarks]
+                ?: -1L
             ProfileListRow(
                 profile = profile,
+                subLabel = subNames[profile.subscriptionId].orEmpty(),
+                latencyMs = rtt,
                 active = profile.id == state.activeProfileId,
                 onSelect = { scope.launch { onFeedback(actions.onSelectProfile(profile.id)) } },
+                onEdit = { onEditProfile(profile) },
                 onExportShare = {
                     scope.launch {
                         val (uri, note) = actions.onExportShareUri(profile.id)
@@ -139,221 +227,212 @@ internal fun LazyListScope.profilesPillarItems(
 }
 
 @Composable
-private fun ProfilesHeaderCard(
+private fun ServerConsoleToolbarCard(
     state: WorkspaceUiState,
-    actions: WorkspaceUiActions,
-    onFeedback: (String) -> Unit,
-    onQuickShareImport: (String) -> Unit,
+    selectedSubTab: String,
+    onSelectSubTab: (String) -> Unit,
+    searchQuery: String,
+    onSearchChange: (String) -> Unit,
+    sortMode: String,
+    onCycleSort: () -> Unit,
+    isProbing: Boolean,
+    onProbeProfiles: () -> Unit,
+    showSubDrawer: Boolean,
+    onToggleSubDrawer: () -> Unit,
+    onCreateProfile: () -> Unit,
+    onImportClipboard: () -> Unit,
+    onRefreshSubs: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    val context = LocalContext.current
-    val haptic = LocalHapticFeedback.current
-    val ext = NexusTheme.colors
-    var shareUri by rememberSaveable { mutableStateOf("") }
-    var interruptOnSwitch by rememberSaveable { mutableStateOf(false) }
-    var createMenuExpanded by remember { mutableStateOf(false) }
+    val knownSubIds = state.document.subscriptions.map { it.id }.toSet()
+    val manualCount = state.document.profiles.count { it.subscriptionId.isBlank() || it.subscriptionId !in knownSubIds }
+    val sortLabel = when (sortMode) {
+        "latency" -> "按延迟"
+        "name" -> "按名称"
+        "protocol" -> "按协议"
+        else -> "默认序"
+    }
 
-    OpticalCard(cornerRadius = 16.dp) {
+    OpticalCard(cornerRadius = 12.dp) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Text(
-                    text = "节点与档案",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                StatusPill(
-                    text = "${state.document.profiles.size} 项",
-                    containerColor = ext.insetSurface,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    mono = true,
-                )
-                Spacer(Modifier.weight(1f))
-                Box {
-                    FilledTonalButton(
-                        onClick = { createMenuExpanded = true },
-                        shape = RoundedCornerShape(999.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        modifier = Modifier.minimumInteractiveComponentSize().heightIn(min = 38.dp),
-                    ) {
-                        Icon(painterResource(R.drawable.ic_add), null, Modifier.size(15.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("新建", maxLines = 1, softWrap = false)
-                    }
-                    DropdownMenu(
-                        expanded = createMenuExpanded,
-                        onDismissRequest = { createMenuExpanded = false },
-                        shape = RoundedCornerShape(14.dp),
-                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("新建策略组 (自动测速)") },
-                            onClick = {
-                                createMenuExpanded = false
-                                val nodes = state.document.profiles.filter { it.kind == ProfileKind.NODE }.take(4).map { it.id }
-                                val item = ProfileItem(
-                                    id = WorkspaceStore.newProfileId("grp"),
-                                    remarks = "自动测速组",
-                                    kind = ProfileKind.POLICY_GROUP,
-                                    policyGroup = PolicyGroupConfig(
-                                        strategy = "url-test",
-                                        memberIds = nodes,
-                                        interruptExistConnections = interruptOnSwitch,
-                                    ),
-                                )
-                                scope.launch { onFeedback(actions.onAddProfile(item)) }
-                            },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("新建策略组切线断开旧连接") },
-                            trailingIcon = if (interruptOnSwitch) {
-                                {
-                                    Icon(
-                                        painter = painterResource(R.drawable.ic_check),
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(16.dp),
-                                    )
-                                }
-                            } else null,
-                            onClick = { interruptOnSwitch = !interruptOnSwitch },
-                        )
-                        DropdownMenuItem(
-                            text = { Text("新建双跳代理链") },
-                            onClick = {
-                                createMenuExpanded = false
-                                val hops = state.document.profiles.filter { it.kind == ProfileKind.NODE }.take(2).map { it.id }
-                                val item = ProfileItem(
-                                    id = WorkspaceStore.newProfileId("chain"),
-                                    remarks = "双跳代理链",
-                                    kind = ProfileKind.PROXY_CHAIN,
-                                    proxyChain = ProxyChainConfig(hopIds = hops),
-                                )
-                                scope.launch { onFeedback(actions.onAddProfile(item)) }
-                            },
-                        )
-                        HorizontalDivider(color = ext.hairline)
-                        DropdownMenuItem(
-                            text = { Text("导出工作区备份") },
-                            leadingIcon = { Icon(painterResource(R.drawable.ic_copy), null, Modifier.size(16.dp)) },
-                            onClick = {
-                                createMenuExpanded = false
-                                val json = WorkspaceJsonCodec.encode(state.document)
-                                context.getSystemService(ClipboardManager::class.java)
-                                    ?.setPrimaryClip(ClipData.newPlainText("nexus-workspace", json))
-                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                onFeedback("已复制工作区备份（不含本机端口与凭据）")
-                            },
-                        )
-                    }
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(
-                    value = shareUri,
-                    onValueChange = { shareUri = it },
-                    placeholder = { Text("粘贴节点链接或分享包", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    shape = RoundedCornerShape(999.dp),
+                    value = searchQuery,
+                    onValueChange = onSearchChange,
+                    placeholder = { Text("搜索别名、域名或协议…", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    shape = RoundedCornerShape(8.dp),
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                 )
-                FilledTonalButton(
-                    enabled = shareUri.isNotBlank(),
-                    shape = RoundedCornerShape(999.dp),
-                    modifier = Modifier.heightIn(min = 48.dp),
-                    onClick = {
-                        val raw = shareUri.trim()
-                        shareUri = ""
-                        if (raw.startsWith(WorkspaceSyncBridge.SHARE_URI_PREFIX)) {
-                            scope.launch { onFeedback(actions.onImportShareUri(raw)) }
-                        } else {
-                            onQuickShareImport(raw)
-                        }
-                    },
-                ) { Text("导入") }
+                EditorChoiceChip(if (isProbing) "测速中" else "测速", selected = isProbing, onClick = onProbeProfiles)
+                EditorChoiceChip(sortLabel, selected = sortMode != "default", onClick = onCycleSort)
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onCreateProfile, shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp), modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Icon(painterResource(R.drawable.ic_add), null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("新建配置", fontWeight = FontWeight.Bold, maxLines = 1)
+                }
+                FilledTonalButton(onClick = onImportClipboard, shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp), modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Icon(painterResource(R.drawable.ic_paste), null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("剪贴板导入", maxLines = 1)
+                }
+            }
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(enabled = !state.isRefreshingSub, onClick = onRefreshSubs, shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp), modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Icon(painterResource(R.drawable.ic_refresh), null, Modifier.size(15.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (state.isRefreshingSub) "更新中…" else "更新订阅", maxLines = 1)
+                }
+                OutlinedButton(onClick = onToggleSubDrawer, shape = RoundedCornerShape(8.dp), contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp), modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                    Text(if (showSubDrawer) "收起分组" else "订阅分组 (${state.document.subscriptions.size})", maxLines = 1)
+                }
+            }
+
+            Row(modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                EditorChoiceChip("全部 (${state.document.profiles.size})", selected = selectedSubTab == "all" || selectedSubTab.isEmpty()) { onSelectSubTab("all") }
+                EditorChoiceChip("手动配置 ($manualCount)", selected = selectedSubTab == "manual") { onSelectSubTab("manual") }
+                state.document.subscriptions.forEach { sub ->
+                    val cnt = state.document.profiles.count { it.subscriptionId == sub.id }
+                    EditorChoiceChip("${sub.remarks.ifBlank { sub.id }} ($cnt)", selected = selectedSubTab == sub.id) { onSelectSubTab(sub.id) }
+                }
             }
         }
     }
 }
 
+/**
+ * Two-tier Server Card:
+ * - Row 1: Active dot + Full Remarks + Right-aligned semantic RTT badge
+ * - Row 2: Protocol badge + Full `server:port · transport+tls` + 48dp-accessible Edit & Overflow actions
+ */
 @Composable
 private fun ProfileListRow(
     profile: ProfileItem,
+    subLabel: String,
+    latencyMs: Long,
     active: Boolean,
     onSelect: () -> Unit,
+    onEdit: () -> Unit,
     onExportShare: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val ext = NexusTheme.colors
     val primary = MaterialTheme.colorScheme.primary
     val haptic = LocalHapticFeedback.current
+    var menuOpen by remember { mutableStateOf(false) }
+    val canShare = profile.kind != ProfileKind.FULL_CUSTOM_KDL
+    val canDelete = profile.id != WorkspaceDefaults.DEFAULT_DIRECT_PROFILE_ID
 
     Surface(
-        onClick = {
-            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-            onSelect()
-        },
+        onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onSelect() },
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        color = if (active) primary.copy(alpha = if (ext.isDark) 0.16f else 0.08f) else ext.cardSurface,
-        border = BorderStroke(
-            if (active) 1.5.dp else 1.dp,
-            if (active) primary.copy(alpha = 0.75f) else ext.hairline,
-        ),
+        shape = RoundedCornerShape(12.dp),
+        color = if (active) primary.copy(alpha = if (ext.isDark) 0.16f else 0.07f) else ext.cardSurface,
+        border = BorderStroke(if (active) 1.5.dp else 1.dp, if (active) primary.copy(alpha = 0.80f) else ext.hairline),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 10.dp, bottom = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Box(
-                modifier = Modifier.size(7.dp).background(
-                    if (active) primary else ext.muted.copy(alpha = 0.5f),
-                    CircleShape,
-                ),
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(end = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Box(Modifier.size(8.dp).background(if (active) ext.success else ext.muted.copy(alpha = 0.45f), CircleShape))
                 Text(
                     text = profile.remarks.ifBlank { profile.id },
                     style = MaterialTheme.typography.titleSmall,
-                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
                 )
-                val subMeta = when (profile.kind) {
+                if (subLabel.isNotEmpty()) {
+                    StatusPill(subLabel, ext.wellSurface, MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                LatencyReadoutText(latencyMs = latencyMs, state = if (latencyMs > 0L) "healthy" else "unknown")
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ProfileKindBadge(profile)
+                val meta = when (profile.kind) {
                     ProfileKind.NODE -> profile.node?.let { n ->
-                        val mux = if (n.multiplex.enabled && n.multiplex.protocol.isNotEmpty()) " · ${n.multiplex.protocol}" else ""
-                        val frag = if (n.tls.fragment) " · frag" else ""
-                        "${n.protocol.uppercase()} · ${n.server}:${n.port}$mux$frag"
+                        "${n.server}:${n.port} · ${formatNodeTransportSummary(n)}"
                     }.orEmpty()
                     ProfileKind.POLICY_GROUP -> profile.policyGroup?.let { g ->
+                        val dyn = if (g.dynamicSubId.isNotEmpty()) " · 动态正则" else ""
                         val cut = if (g.interruptExistConnections) " · 切线断旧" else ""
-                        "${g.strategy} · ${g.memberIds.size} 成员$cut"
+                        "${g.strategy} · ${g.memberIds.size} 成员$dyn$cut"
                     }.orEmpty()
-                    ProfileKind.PROXY_CHAIN -> "${profile.proxyChain?.hopIds?.size ?: 0} 跳链路"
-                    ProfileKind.CUSTOM_OUTBOUND -> if (profile.id == WorkspaceDefaults.DEFAULT_DIRECT_PROFILE_ID) "内置直连兜底" else "高级自定义出站"
-                    ProfileKind.FULL_CUSTOM_KDL -> "高级自定义配置"
+                    ProfileKind.PROXY_CHAIN -> "${profile.proxyChain?.hopIds?.size ?: 0} 跳链式代理"
+                    ProfileKind.CUSTOM_OUTBOUND -> if (profile.id == WorkspaceDefaults.DEFAULT_DIRECT_PROFILE_ID) "内置直连出站" else "自定义出站配置"
+                    ProfileKind.FULL_CUSTOM_KDL -> "完整自定义配置"
                 }
-                if (subMeta.isNotEmpty()) {
-                    Text(subMeta, style = NexusNumericStyles.monoBadge, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = meta,
+                    style = NexusNumericStyles.monoBadge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (profile.id != WorkspaceDefaults.DEFAULT_DIRECT_PROFILE_ID) {
+                    CompactRowIconBtn(R.drawable.ic_edit, "编辑配置", MaterialTheme.colorScheme.onSurfaceVariant, onEdit)
+                }
+                if (canShare || canDelete) {
+                    Box {
+                        CompactRowIconBtn(R.drawable.ic_more_vert, "更多操作", MaterialTheme.colorScheme.onSurfaceVariant) { menuOpen = true }
+                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                            if (canShare) {
+                                DropdownMenuItem(
+                                    text = { Text("复制分享链接") },
+                                    leadingIcon = { Icon(painterResource(R.drawable.ic_share), null, Modifier.size(16.dp)) },
+                                    onClick = { menuOpen = false; onExportShare() },
+                                )
+                            }
+                            if (canDelete) {
+                                DropdownMenuItem(
+                                    text = { Text("删除配置") },
+                                    leadingIcon = { Icon(painterResource(R.drawable.ic_delete), null, Modifier.size(16.dp)) },
+                                    onClick = { menuOpen = false; onDelete() },
+                                )
+                            }
+                        }
+                    }
                 }
             }
-            ProfileKindBadge(profile.kind)
-            if (profile.kind != ProfileKind.FULL_CUSTOM_KDL) {
-                IconButton(onClick = onExportShare) {
-                    Icon(painterResource(R.drawable.ic_share), "分享链接", tint = primary, modifier = Modifier.size(18.dp))
-                }
-            }
-            if (!active) {
-                IconButton(onClick = onDelete) {
-                    Icon(painterResource(R.drawable.ic_delete), "删除", tint = ext.muted, modifier = Modifier.size(18.dp))
-                }
-            }
+        }
+    }
+}
+
+@Composable
+private fun CompactRowIconBtn(
+    iconRes: Int,
+    contentDesc: String,
+    tint: Color,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(32.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(NexusTheme.colors.wellSurface),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(painterResource(iconRes), contentDesc, tint = tint, modifier = Modifier.size(16.dp))
         }
     }
 }

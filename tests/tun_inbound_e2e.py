@@ -282,9 +282,9 @@ def run_netns_inner(nexus_bin, ordered=False, native_ss=False):
             'rule type="ip-cidr" value="0.0.0.0/0"\nrule type="ip-cidr" value="::/0"\n')
         cfg_direct = root / "tun_direct.kdl"
         ingress = '''rules {
-        - kind="rule-set" value="blk" outbound="block"
-        - kind="rule-set" value="ingress" outbound="direct"
-        - kind="rule-set" value="all" outbound="block"
+        - rule-set="blk" to="block"
+        - rule-set="ingress" to="direct"
+        - rule-set="all" to="block"
     }'''
         extra_sets = '        all format="kdl" path="all.kdl"'
         if ordered:

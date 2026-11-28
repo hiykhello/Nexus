@@ -293,7 +293,7 @@ public struct ProxiesGroupsView: View {
             }
             LatencySpectrumBar(summary: summary, barHeight: 3)
         }
-        .bentoCard(padding: 12, cornerRadius: 14)
+        .bentoCard(padding: 12)
     }
 
     private func groupTitleBlock(_ group: OutboundGroupSnapshot, summary: GroupLatencySummary) -> some View {
@@ -351,7 +351,7 @@ private struct ProxyNodeCard: View {
     }
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: 12, style: .continuous)
         let increased = contrast == .increased
         let rttTint = theme.rttColor(latencyMs: displayLatency, state: member.state)
         VStack(alignment: .leading, spacing: 8) {

@@ -10,7 +10,7 @@ export namespace state {
     };
     auto inspect_selectors(std::filesystem::path const& directory) -> Inventory;
     auto inspect_route_mode(std::filesystem::path const& directory) -> Inventory;
-    auto inspect_fakeip(std::filesystem::path const& directory,bool unified) -> Inventory;
+    auto inspect_fakeip(std::filesystem::path const& directory) -> Inventory;
     auto inspect_dns(std::filesystem::path const& root) -> Inventory;
     auto inspect_rules(std::filesystem::path const& root) -> Inventory;
     auto reset_selectors(std::filesystem::path const& directory) -> std::expected<std::string,StateError>;

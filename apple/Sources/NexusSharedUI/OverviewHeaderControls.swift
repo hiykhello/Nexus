@@ -87,7 +87,7 @@ public struct OverviewHeaderControls: View {
 
             actionStrip
         }
-        .bentoCard(padding: 14, cornerRadius: 14)
+        .bentoCard(padding: 14)
         .confirmationDialog(
             "确认清空全部缓存？",
             isPresented: $showClearAllConfirm,
@@ -250,7 +250,7 @@ public struct QuickGroupSwitcherCard: View {
                 }
             }
         }
-        .bentoCard(padding: 12, cornerRadius: 14)
+        .bentoCard(padding: 12)
     }
 
     private var groupHeader: some View {

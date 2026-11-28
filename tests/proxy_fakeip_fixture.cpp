@@ -47,7 +47,7 @@ auto main(int argc,char** argv) -> int {
         namespace r = ::rules;
         r::RuleSet rules{{{"and","",{{"source-ip-cidr","127.0.0.0/8",{}},
             {"source-port-range","1-65535",{}},{"domain-suffix","example.test",{}}}}},2};
-        auto matcher=r::RouteMatcher::compile(std::array{r::RouteRule{rules,1}},0,2,r::SourceMetadata::provided);
+        auto matcher=r::RouteProgram::compile_policy(std::array{r::ProgramRule{rules,{r::ProgramActionKind::route,1}}},0,2,r::SourceMetadata::provided);
         if (!matcher || !server.set_source_policy_for_test(std::move(*matcher))) return 4;
         --argc;
     }

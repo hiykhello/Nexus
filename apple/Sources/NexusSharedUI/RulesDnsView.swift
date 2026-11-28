@@ -166,7 +166,7 @@ public struct RulesDnsView: View {
                 DnsResponseSummarySection(response: resp)
             }
         }
-        .bentoCard(padding: 12, cornerRadius: 14)
+        .bentoCard(padding: 12)
     }
 
     private var domainField: some View {

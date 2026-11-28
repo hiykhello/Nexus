@@ -40,7 +40,7 @@ outbound "direct" type="direct"
 outbound "block" type="block"
 routing {
   rulesets { "policy" path="route.kdl" format="kdl"; }
-  rules { - kind="rule-set" value="policy" outbound="block"; }
+  rules { - rule-set="policy" to="block"; }
   final "direct"
 }
 ''')

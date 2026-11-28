@@ -1,0 +1,479 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-27T11:19:30Z",
+  "title": "Design System: Nexus",
+  "extensions": {
+    "colorMeta": {
+      "electric-cobalt": {
+        "role": "primary",
+        "displayName": "Electric Cobalt",
+        "canonical": "oklch(54.6% 0.215 262.9)",
+        "tonalRamp": ["#010049", "#00077c", "#002dad", "#1754db", "#3f7dff", "#6da6ff", "#9dcdff", "#ccefff"]
+      },
+      "cobalt-deep": {
+        "role": "primary",
+        "displayName": "Cobalt Deep",
+        "canonical": "oklch(48.8% 0.217 264.4)",
+        "tonalRamp": ["#030049", "#01047d", "#062bae", "#2052dc", "#447bff", "#71a5ff", "#a0ccff", "#ceeeff"]
+      },
+      "luminous-cobalt": {
+        "role": "primary",
+        "displayName": "Luminous Cobalt",
+        "canonical": "oklch(71.4% 0.143 254.6)",
+        "tonalRamp": ["#000734", "#00225e", "#004088", "#1c63b2", "#4788d6", "#76aef4", "#a5d1ff", "#d2f2ff"]
+      },
+      "cobalt-wash": {
+        "role": "primary",
+        "displayName": "Cobalt Wash",
+        "canonical": "oklch(93.2% 0.032 255.6)",
+        "tonalRamp": ["#070e16", "#1e2733", "#384352", "#586475", "#7a8799", "#a0acbb", "#c5cfdb", "#e8eff8"]
+      },
+      "cobalt-night-well": {
+        "role": "primary",
+        "displayName": "Cobalt Night Well",
+        "canonical": "oklch(29.2% 0.068 260.4)",
+        "tonalRamp": ["#030c20", "#162642", "#2e4265", "#4d648a", "#7087ae", "#97accf", "#becfeb", "#e3efff"]
+      },
+      "signal-emerald": {
+        "role": "secondary",
+        "displayName": "Signal Emerald",
+        "canonical": "oklch(59.6% 0.127 163.2)",
+        "tonalRamp": ["#001703", "#003516", "#00552f", "#00794e", "#279d71", "#66c098", "#9cdfbf", "#ccfbe4"]
+      },
+      "emerald-pressed": {
+        "role": "secondary",
+        "displayName": "Emerald Pressed",
+        "canonical": "oklch(50.8% 0.105 165.6)",
+        "tonalRamp": ["#001506", "#00331c", "#005235", "#007655", "#409978", "#73bc9e", "#a4dcc3", "#d2f9e7"]
+      },
+      "phosphor-emerald": {
+        "role": "secondary",
+        "displayName": "Phosphor Emerald",
+        "canonical": "oklch(69.6% 0.149 162.5)",
+        "tonalRamp": ["#001801", "#003612", "#00572a", "#007c49", "#00a06c", "#56c394", "#92e2bb", "#c7fde1"]
+      },
+      "mint-luminous": {
+        "role": "secondary",
+        "displayName": "Mint Luminous",
+        "canonical": "oklch(77.3% 0.153 163.2)",
+        "tonalRamp": ["#001801", "#003712", "#00582a", "#007c49", "#00a06c", "#50c494", "#8fe3bc", "#c5fee1"]
+      },
+      "emerald-wash": {
+        "role": "secondary",
+        "displayName": "Emerald Wash",
+        "canonical": "oklch(97.9% 0.021 166.1)",
+        "tonalRamp": ["#080f0c", "#1f2924", "#394640", "#596760", "#7c8a83", "#a1aea8", "#c6d1cc", "#e9f1ed"]
+      },
+      "emerald-night-well": {
+        "role": "secondary",
+        "displayName": "Emerald Night Well",
+        "canonical": "oklch(27.4% 0.042 169.7)",
+        "tonalRamp": ["#02110b", "#132c24", "#2c493f", "#4b6b5f", "#6e8e82", "#96b2a7", "#bdd4cb", "#e3f3ec"]
+      },
+      "warm-amber": {
+        "role": "tertiary",
+        "displayName": "Warm Amber",
+        "canonical": "oklch(66.6% 0.157 58.3)",
+        "tonalRamp": ["#290000", "#500200", "#782100", "#a14400", "#c76b00", "#e79551", "#ffbe8a", "#ffe4c0"]
+      },
+      "studio-amber": {
+        "role": "tertiary",
+        "displayName": "Studio Amber",
+        "canonical": "oklch(76.9% 0.165 70.1)",
+        "tonalRamp": ["#270000", "#4d0c00", "#732800", "#9b4b00", "#c07100", "#e19a3c", "#fbc27f", "#ffe7b9"]
+      },
+      "amber-luminous": {
+        "role": "tertiary",
+        "displayName": "Amber Luminous",
+        "canonical": "oklch(83.7% 0.164 84.4)",
+        "tonalRamp": ["#210300", "#441900", "#683400", "#8e5600", "#b27b00", "#d2a332", "#eec87a", "#ffebb6"]
+      },
+      "amber-wash": {
+        "role": "tertiary",
+        "displayName": "Amber Wash",
+        "canonical": "oklch(96.2% 0.058 95.6)",
+        "tonalRamp": ["#120d00", "#2e2606", "#4b421d", "#6d633c", "#908660", "#b4ab89", "#d5ceb3", "#f4efdb"]
+      },
+      "crimson-fault": {
+        "role": "tertiary",
+        "displayName": "Crimson Fault",
+        "canonical": "oklch(57.7% 0.215 27.3)",
+        "tonalRamp": ["#360000", "#640000", "#920000", "#c00003", "#e8403a", "#ff776b", "#ffa99c", "#ffd6cb"]
+      },
+      "coral-fault-dark": {
+        "role": "tertiary",
+        "displayName": "Coral Fault Dark",
+        "canonical": "oklch(71.1% 0.166 22.2)",
+        "tonalRamp": ["#2e0000", "#580001", "#820016", "#ae2c35", "#d55759", "#f58583", "#ffb2ae", "#ffdbd8"]
+      },
+      "crimson-wash": {
+        "role": "tertiary",
+        "displayName": "Crimson Wash",
+        "canonical": "oklch(97.1% 0.013 17.4)",
+        "tonalRamp": ["#110c0c", "#2c2424", "#494040", "#6a6060", "#8d8383", "#b1a8a8", "#d3cccc", "#f2eded"]
+      },
+      "mist-slate-canvas": {
+        "role": "neutral",
+        "displayName": "Mist-Slate Canvas",
+        "canonical": "oklch(97.2% 0.005 258.3)",
+        "tonalRamp": ["#0c0d0f", "#252628", "#414245", "#626366", "#848689", "#a9abad", "#ccced0", "#edeef0"]
+      },
+      "pure-white-card": {
+        "role": "neutral",
+        "displayName": "Pure White Card",
+        "canonical": "oklch(100.0% 0.000 0.0)",
+        "tonalRamp": ["#0d0d0d", "#262626", "#424242", "#636363", "#868686", "#ababab", "#cecece", "#eeeeee"]
+      },
+      "cloud-well": {
+        "role": "neutral",
+        "displayName": "Cloud Well",
+        "canonical": "oklch(98.4% 0.003 247.9)",
+        "tonalRamp": ["#0c0d0e", "#252728", "#414244", "#626365", "#858688", "#a9abac", "#cccecf", "#eeeeef"]
+      },
+      "cool-recessed-track": {
+        "role": "neutral",
+        "displayName": "Cool Recessed Track",
+        "canonical": "oklch(96.8% 0.007 247.9)",
+        "tonalRamp": ["#0c0d0f", "#242729", "#404346", "#606467", "#83878a", "#a8abae", "#cbced0", "#edeff0"]
+      },
+      "mist-inset": {
+        "role": "neutral",
+        "displayName": "Mist Inset",
+        "canonical": "oklch(95.9% 0.007 247.9)",
+        "tonalRamp": ["#0c0d0f", "#242729", "#404346", "#606467", "#83878a", "#a8abae", "#cbced0", "#edeff0"]
+      },
+      "slate-card-border": {
+        "role": "neutral",
+        "displayName": "Slate Card Border",
+        "canonical": "oklch(92.9% 0.013 255.5)",
+        "tonalRamp": ["#0b0d11", "#23272c", "#3e4349", "#5f646b", "#81878d", "#a7abb1", "#caced3", "#eceff2"]
+      },
+      "slate-well-border": {
+        "role": "neutral",
+        "displayName": "Slate Well Border",
+        "canonical": "oklch(91.0% 0.013 251.6)",
+        "tonalRamp": ["#0b0e11", "#23272c", "#3e4349", "#5e646b", "#81878e", "#a6abb2", "#caced3", "#eceff2"]
+      },
+      "slate-strong-border": {
+        "role": "neutral",
+        "displayName": "Slate Strong Border",
+        "canonical": "oklch(86.9% 0.020 252.9)",
+        "tonalRamp": ["#090e13", "#21272f", "#3b434c", "#5b646f", "#7e8792", "#a4acb5", "#c8ced6", "#eaeff4"]
+      },
+      "obsidian-canvas": {
+        "role": "neutral",
+        "displayName": "Obsidian Canvas",
+        "canonical": "oklch(19.0% 0.018 259.7)",
+        "tonalRamp": ["#0a0d12", "#22272e", "#3d434c", "#5d646e", "#808791", "#a5abb4", "#c9ced6", "#ebeff4"]
+      },
+      "obsidian-rail": {
+        "role": "neutral",
+        "displayName": "Obsidian Rail",
+        "canonical": "oklch(21.2% 0.022 260.5)",
+        "tonalRamp": ["#0a0d14", "#212730", "#3c434e", "#5c6470", "#7f8793", "#a4abb7", "#c8ced7", "#ebeff5"]
+      },
+      "obsidian-card": {
+        "role": "neutral",
+        "displayName": "Obsidian Card",
+        "canonical": "oklch(23.3% 0.024 259.3)",
+        "tonalRamp": ["#090d14", "#212730", "#3b434f", "#5b6471", "#7e8794", "#a4abb7", "#c8ced8", "#eaeff6"]
+      },
+      "obsidian-well": {
+        "role": "neutral",
+        "displayName": "Obsidian Well",
+        "canonical": "oklch(27.1% 0.031 260.5)",
+        "tonalRamp": ["#080d16", "#1f2733", "#394352", "#596475", "#7c8798", "#a2abbb", "#c6cedb", "#e9eff8"]
+      },
+      "obsidian-inset": {
+        "role": "neutral",
+        "displayName": "Obsidian Inset",
+        "canonical": "oklch(31.5% 0.036 258.3)",
+        "tonalRamp": ["#070d18", "#1d2735", "#374355", "#576478", "#7a879c", "#9facbe", "#c5cfdd", "#e8effa"]
+      },
+      "obsidian-card-border": {
+        "role": "neutral",
+        "displayName": "Obsidian Card Border",
+        "canonical": "oklch(31.1% 0.034 258.9)",
+        "tonalRamp": ["#070d17", "#1e2735", "#384354", "#586477", "#7a879a", "#a0acbd", "#c5cedd", "#e8eff9"]
+      },
+      "obsidian-strong-border": {
+        "role": "neutral",
+        "displayName": "Obsidian Strong Border",
+        "canonical": "oklch(39.2% 0.045 259.6)",
+        "tonalRamp": ["#060d1a", "#1b2739", "#35435a", "#54647e", "#7787a1", "#9dacc3", "#c3cfe1", "#e7effd"]
+      },
+      "amber-night-canvas": {
+        "role": "neutral",
+        "displayName": "Amber Night Canvas",
+        "canonical": "oklch(17.5% 0.005 67.5)",
+        "tonalRamp": ["#0e0d0c", "#282624", "#444240", "#656360", "#888683", "#adaaa8", "#cfcdcb", "#efeeed"]
+      },
+      "amber-night-card": {
+        "role": "neutral",
+        "displayName": "Amber Night Card",
+        "canonical": "oklch(21.1% 0.007 67.4)",
+        "tonalRamp": ["#0f0d0b", "#292623", "#45423e", "#66625f", "#898582", "#adaaa7", "#d0cdca", "#f0eeec"]
+      },
+      "amber-night-border": {
+        "role": "neutral",
+        "displayName": "Amber Night Border",
+        "canonical": "oklch(28.8% 0.014 76.3)",
+        "tonalRamp": ["#100d09", "#2a2620", "#47423a", "#68625a", "#8b857d", "#afaaa3", "#d1cdc7", "#f1eeea"]
+      },
+      "deep-slate-ink": {
+        "role": "neutral",
+        "displayName": "Deep Slate Ink",
+        "canonical": "oklch(20.8% 0.040 265.8)",
+        "tonalRamp": ["#080d19", "#1f2637", "#394257", "#58637b", "#7b869e", "#a1abc0", "#c6cedf", "#e9effb"]
+      },
+      "slate-secondary-ink": {
+        "role": "neutral",
+        "displayName": "Slate Secondary Ink",
+        "canonical": "oklch(44.6% 0.037 257.3)",
+        "tonalRamp": ["#070d18", "#1d2736", "#364356", "#566479", "#79879c", "#9facbf", "#c4cfde", "#e7effa"]
+      },
+      "slate-muted-ink": {
+        "role": "neutral",
+        "displayName": "Slate Muted Ink",
+        "canonical": "oklch(48.4% 0.032 253.4)",
+        "tonalRamp": ["#070e16", "#1d2734", "#374453", "#576576", "#798899", "#9facbc", "#c5cfdc", "#e8eff8"]
+      },
+      "ice-slate-ink": {
+        "role": "neutral",
+        "displayName": "Ice Slate Ink",
+        "canonical": "oklch(96.8% 0.007 247.9)",
+        "tonalRamp": ["#0c0d0f", "#242729", "#404346", "#606467", "#83878a", "#a8abae", "#cbced0", "#edeff0"]
+      },
+      "frost-secondary-ink": {
+        "role": "neutral",
+        "displayName": "Frost Secondary Ink",
+        "canonical": "oklch(76.2% 0.036 256.4)",
+        "tonalRamp": ["#070e17", "#1d2735", "#364355", "#566478", "#79879b", "#9facbe", "#c4cfdd", "#e8effa"]
+      },
+      "steel-muted-ink": {
+        "role": "neutral",
+        "displayName": "Steel Muted Ink",
+        "canonical": "oklch(71.1% 0.035 256.8)",
+        "tonalRamp": ["#070e17", "#1d2735", "#374354", "#576478", "#79879b", "#9facbd", "#c5cfdd", "#e8eff9"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Large hero state and diagnostic headers on expanded Android surfaces (26sp Bold)."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Top-level Nexus identity wordmark (18px–20px 800) and Android headlineSmall (22sp Bold)."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Primary header of each 12px console card on Desktop (16px 800) and Android (16sp titleMedium)."
+      },
+      "subtitle": {
+        "displayName": "Subtitle",
+        "purpose": "Primary 52px/52dp tunnel button verb, active exit title, and Android server card remarks."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Navigation rail items, switch rows, quick-switch server names, and inbound summary rows."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Console buttons, subscription filter chips, segmented mode tabs, and search/URI inputs."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Server table column headers (Type, Remarks, Address:Port, RTT), status pills, and secondary hints."
+      },
+      "mono-kpi": {
+        "displayName": "Mono KPI",
+        "purpose": "Live tabular RX/TX speed figures (22px 800 Desktop, 19sp–20sp Android) locked against horizontal jitter."
+      },
+      "mono-data": {
+        "displayName": "Mono Data",
+        "purpose": "Endpoints (server:port · transport+tls), listener ports (:7890), millisecond RTTs, clocks, and protocol codes."
+      }
+    },
+    "shadows": [
+      {
+        "name": "flat-none",
+        "value": "none",
+        "purpose": "All cards, controls, rails, and modals carry zero drop shadows; hierarchy relies on #F4F6F9/#0F141C canvas contrast, 1px borders, and continuous surface translucency."
+      }
+    ],
+    "motion": [
+      {
+        "name": "micro",
+        "value": "100ms cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "Tactile 0.97–0.98 press-scale response on NexusButton, NexusChip, and the 52px/52dp primary tunnel CTA."
+      },
+      {
+        "name": "fast",
+        "value": "120ms cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "Hover washes, border shifts, and rail/button transitions (paired with 140ms sliding segmented pill on Android)."
+      },
+      {
+        "name": "normal",
+        "value": "180ms cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "Standard view transitions and 180ms debounced inline domain route+DNS diagnostics in Command Palette."
+      },
+      {
+        "name": "fluid",
+        "value": "220ms cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "Transient feedback entrance transition (paired with 150ms exit)."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "android-compact-max",
+        "value": "599px"
+      },
+      {
+        "name": "android-medium",
+        "value": "600px"
+      },
+      {
+        "name": "desktop-min",
+        "value": "780px"
+      },
+      {
+        "name": "android-expanded",
+        "value": "840px"
+      },
+      {
+        "name": "desktop-standard",
+        "value": "900px"
+      },
+      {
+        "name": "dashboard-grid-split",
+        "value": "920px"
+      },
+      {
+        "name": "android-container-max",
+        "value": "1120px"
+      },
+      {
+        "name": "desktop-wide",
+        "value": "1200px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Tunnel Hero CTA",
+      "kind": "button",
+      "refersTo": "tunnel-cta-standby",
+      "description": "Full-width 52px (Desktop) / 52dp (Android) tactile primary tunnel CTA in Standby Electric Cobalt and Connected Signal Emerald states.",
+      "html": "<div class=\"ds-cta-stage\"><button type=\"button\" class=\"ds-cta-btn ds-cta-standby\"><svg class=\"ds-cta-ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"7 4 20 12 7 20 7 4\"/></svg><span class=\"ds-cta-main\">Connect · Tokyo-VLESS-01</span><span class=\"ds-cta-cue\">Start</span></button><button type=\"button\" class=\"ds-cta-btn ds-cta-live\"><svg class=\"ds-cta-ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"6\" y=\"6\" width=\"12\" height=\"12\" rx=\"2\"/></svg><span class=\"ds-cta-main\">Running · Tokyo-VLESS-01</span><span class=\"ds-cta-rtt\">28 ms</span></button></div>",
+      "css": ".ds-cta-stage { display: flex; flex-direction: column; gap: 10px; padding: 16px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 360px; } .ds-cta-btn { display: flex; align-items: center; gap: 10px; width: 100%; height: 52px; padding: 0 16px; border-radius: 8px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #ffffff; cursor: pointer; transition: background 120ms cubic-bezier(0.23, 1, 0.32, 1), transform 100ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-cta-ic { width: 18px; height: 18px; flex-shrink: 0; } .ds-cta-main { flex: 1; text-align: left; font-size: 15px; font-weight: 800; } .ds-cta-cue { font-size: 12px; font-weight: 700; color: #dbeafe; } .ds-cta-rtt { font-family: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, monospace; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; color: #d1fae5; } .ds-cta-standby { background: #2563eb; border: 1px solid #2563eb; } .ds-cta-standby:hover { background: #3b82f6; } .ds-cta-standby:active { background: #1d4ed8; transform: scale(0.98); } .ds-cta-live { background: #059669; border: 1px solid #059669; } .ds-cta-live:hover { background: #10b981; } .ds-cta-live:active { background: #047857; transform: scale(0.98); } .ds-cta-btn:focus-visible { outline: 2px solid #ffffff; outline-offset: -2px; }"
+    },
+    {
+      "name": "Console Action Buttons",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Unified 32px 8px-radius flat-matte console buttons (NexusButton) in Primary Cobalt, Ghost Bordered, and Danger Crimson variants.",
+      "html": "<div class=\"ds-btn-row\"><button type=\"button\" class=\"ds-btn ds-btn-primary\"><svg class=\"ds-btn-ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 5v14M5 12h14\"/></svg><span>New Profile</span></button><button type=\"button\" class=\"ds-btn ds-btn-ghost\"><svg class=\"ds-btn-ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><polygon points=\"13 2 4 14 12 14 11 22 20 10 12 10 13 2\"/></svg><span>Probe</span></button><button type=\"button\" class=\"ds-btn ds-btn-danger\">Close All</button></div>",
+      "css": ".ds-btn-row { display: flex; flex-wrap: wrap; gap: 8px; padding: 14px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; } .ds-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; cursor: pointer; transition: background 120ms cubic-bezier(0.23, 1, 0.32, 1), border-color 120ms cubic-bezier(0.23, 1, 0.32, 1), transform 100ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-btn-ic { width: 13px; height: 13px; } .ds-btn-primary { background: #1d4ed8; border: 1px solid #2563eb; color: #ffffff; font-weight: 700; padding-left: 10px; } .ds-btn-primary:hover { background: #2563eb; } .ds-btn-ghost { background: transparent; border: 1px solid #e2e8f0; color: #0f172a; font-weight: 600; padding-left: 10px; } .ds-btn-ghost .ds-btn-ic { color: #475569; } .ds-btn-ghost:hover { background: #f1f5f9; border-color: #94a3b8; } .ds-btn-ghost:hover .ds-btn-ic { color: #0f172a; } .ds-btn-danger { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; font-weight: 700; } .ds-btn-danger:hover { background: #fee2e2; border-color: #f87171; } .ds-btn:active { transform: scale(0.97); } .ds-btn:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }"
+    },
+    {
+      "name": "Subscription & Protocol Chips",
+      "kind": "chip",
+      "refersTo": "chip-filter",
+      "description": "6px-radius subscription group filter chips (NexusChip) paired with tabular protocol and semantic RTT pills.",
+      "html": "<div class=\"ds-chip-bar\"><button type=\"button\" class=\"ds-chip ds-chip-active\">All (18)</button><button type=\"button\" class=\"ds-chip\">Manual (4)</button><button type=\"button\" class=\"ds-chip\">IPLC-Transit (14)</button><span class=\"ds-proto-pill\">VLESS</span><span class=\"ds-rtt-pill\">24 ms</span></div>",
+      "css": ".ds-chip-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 12px; background: #f4f6f9; border-radius: 10px; } .ds-chip { display: inline-flex; align-items: center; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid #e2e8f0; background: #ffffff; color: #475569; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 500; cursor: pointer; transition: background 120ms cubic-bezier(0.23, 1, 0.32, 1), border-color 120ms cubic-bezier(0.23, 1, 0.32, 1), transform 100ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-chip:hover { background: #f1f5f9; border-color: #94a3b8; color: #0f172a; } .ds-chip-active, .ds-chip-active:hover { background: #1d4ed8; border-color: #1d4ed8; color: #ffffff; font-weight: 700; } .ds-chip:active { transform: scale(0.97); } .ds-chip:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; } .ds-proto-pill, .ds-rtt-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; border-radius: 6px; font-family: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, monospace; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; } .ds-proto-pill { background: #dbeafe; color: #2563eb; } .ds-rtt-pill { background: #ecfdf5; color: #059669; }"
+    },
+    {
+      "name": "Recessed Outbound Mode Segmented Bar",
+      "kind": "custom",
+      "refersTo": "segmented-track",
+      "description": "8px-radius recessed segmented bar (SlidingSegmentBar / OpticalSegmentedControl) with elevated 6px solid-card active pill.",
+      "html": "<div class=\"ds-seg-stage\"><div class=\"ds-seg\" role=\"tablist\" aria-label=\"Outbound Mode\"><button type=\"button\" role=\"tab\" aria-selected=\"true\" class=\"ds-seg-tab ds-seg-on\">Rule</button><button type=\"button\" role=\"tab\" aria-selected=\"false\" class=\"ds-seg-tab\">Global</button><button type=\"button\" role=\"tab\" aria-selected=\"false\" class=\"ds-seg-tab\">Direct</button></div></div>",
+      "css": ".ds-seg-stage { padding: 14px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 360px; } .ds-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 3px; height: 36px; border-radius: 8px; background: #eef2f6; } .ds-seg-tab { border: 1px solid transparent; border-radius: 6px; background: transparent; color: #475569; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; font-weight: 500; cursor: pointer; transition: background 120ms cubic-bezier(0.23, 1, 0.32, 1), color 120ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-seg-tab:hover { background: #f1f5f9; color: #0f172a; } .ds-seg-on, .ds-seg-on:hover { background: #ffffff; border-color: rgba(37, 99, 235, 0.28); color: #2563eb; font-weight: 700; } .ds-seg-tab:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }"
+    },
+    {
+      "name": "Search & URI Import Input",
+      "kind": "input",
+      "refersTo": "input-search",
+      "description": "32px 8px-radius recessed well input (NexusInput) for filtering server remarks, endpoints, or pasting share URIs.",
+      "html": "<div class=\"ds-in-stage\"><label class=\"ds-in-wrap\"><svg class=\"ds-in-ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><circle cx=\"11\" cy=\"11\" r=\"8\"/><path d=\"m21 21-4.3-4.3\"/></svg><input class=\"ds-in-field\" type=\"text\" placeholder=\"Search remarks, server, protocol...\" /></label></div>",
+      "css": ".ds-in-stage { padding: 12px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 360px; } .ds-in-wrap { display: flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border-radius: 8px; background: #f8fafc; border: 1px solid #dbe2ea; transition: border-color 120ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-in-ic { width: 14px; height: 14px; color: #526071; flex-shrink: 0; transition: color 120ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-in-field { width: 100%; border: none; outline: none; background: transparent; color: #0f172a; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 12px; } .ds-in-field::placeholder { color: #526071; } .ds-in-field::selection { background: rgba(37, 99, 235, 0.35); color: #ffffff; } .ds-in-wrap:hover { border-color: #94a3b8; } .ds-in-wrap:focus-within { border-color: #2563eb; } .ds-in-wrap:focus-within .ds-in-ic { color: #2563eb; }"
+    },
+    {
+      "name": "Light Console Navigation Rail",
+      "kind": "nav",
+      "refersTo": "nav-rail-item",
+      "description": "Crisp #FFFFFF Light navigation rail (Sidebar) bounded by a 1px #E2E8F0 hairline with Electric Cobalt active tab wash.",
+      "html": "<nav class=\"ds-rail\" aria-label=\"Nexus Console Navigation\"><div class=\"ds-rail-brand\"><span class=\"ds-rail-mark\"></span><span class=\"ds-rail-word\">Nexus</span></div><button type=\"button\" class=\"ds-rail-item ds-rail-on\"><svg class=\"ds-rail-ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"7\" height=\"9\" x=\"3\" y=\"3\" rx=\"1.5\"/><rect width=\"7\" height=\"5\" x=\"14\" y=\"3\" rx=\"1.5\"/><rect width=\"7\" height=\"9\" x=\"14\" y=\"12\" rx=\"1.5\"/><rect width=\"7\" height=\"5\" x=\"3\" y=\"16\" rx=\"1.5\"/></svg><span>Dashboard</span></button><button type=\"button\" class=\"ds-rail-item\"><svg class=\"ds-rail-ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\"/><path d=\"M3 9h18M9 21V9\"/></svg><span>Profiles</span></button><button type=\"button\" class=\"ds-rail-item\"><svg class=\"ds-rail-ic\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z\"/><path d=\"m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65\"/></svg><span>Proxy Groups</span></button></nav>",
+      "css": ".ds-rail { display: flex; flex-direction: column; gap: 6px; width: 196px; padding: 16px 10px 12px; background: #ffffff; border-right: 1px solid #e2e8f0; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; } .ds-rail-brand { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; margin-bottom: 4px; } .ds-rail-mark { width: 18px; height: 18px; border-radius: 5px; background: #2563eb; } .ds-rail-word { font-size: 18px; font-weight: 800; color: #2563eb; letter-spacing: 0.2px; } .ds-rail-item { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 12px; border-radius: 8px; border: none; background: transparent; color: #0f172a; font-family: inherit; font-size: 13px; font-weight: 500; cursor: pointer; transition: background 120ms cubic-bezier(0.23, 1, 0.32, 1), color 120ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-rail-ic { width: 18px; height: 18px; color: #64748b; flex-shrink: 0; transition: color 120ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-rail-item:hover { background: #f1f5f9; } .ds-rail-item:hover .ds-rail-ic { color: #0f172a; } .ds-rail-on, .ds-rail-on:hover { background: rgba(37, 99, 235, 0.11); color: #2563eb; font-weight: 700; } .ds-rail-on .ds-rail-ic, .ds-rail-on:hover .ds-rail-ic { color: #2563eb; } .ds-rail-item:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }"
+    },
+    {
+      "name": "Single-Level Console Card & Quick-Switch Server Rows",
+      "kind": "card",
+      "refersTo": "console-card",
+      "description": "Signature 12px single-level #FFFFFF card on #F4F6F9 mist-slate canvas with borderless #F8FAFC subscription quota bar and Standby/Connected server rows.",
+      "html": "<div class=\"ds-canvas\"><section class=\"ds-card\"><div class=\"ds-card-head\"><span class=\"ds-card-title\">Subscriptions &amp; Quick Switch</span><span class=\"ds-card-link\">Profiles →</span></div><div class=\"ds-sub-well\"><span class=\"ds-sub-name\">Nexus-IPLC</span><div class=\"ds-sub-bar\"><div class=\"ds-sub-fill\"></div></div><span class=\"ds-sub-quota\">142 GB / 500 GB</span></div><button type=\"button\" class=\"ds-srv-row ds-srv-active\"><span class=\"ds-srv-dot ds-dot-live\"></span><span class=\"ds-srv-proto\">VLESS</span><span class=\"ds-srv-name\">Tokyo-IPLC-01</span><span class=\"ds-srv-rtt ds-rtt-fast\">28 ms</span></button><button type=\"button\" class=\"ds-srv-row\"><span class=\"ds-srv-dot\"></span><span class=\"ds-srv-proto\">HY2</span><span class=\"ds-srv-name\">Singapore-QUIC-02</span><span class=\"ds-srv-rtt ds-rtt-good\">94 ms</span></button></section></div>",
+      "css": ".ds-canvas { padding: 18px; background: #f4f6f9; max-width: 440px; border-radius: 12px; } .ds-card { display: flex; flex-direction: column; gap: 10px; padding: 18px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #0f172a; } .ds-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; } .ds-card-title { font-size: 16px; font-weight: 800; } .ds-card-link { font-size: 12px; font-weight: 700; color: #2563eb; } .ds-sub-well { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 12px; border-radius: 8px; background: #f8fafc; } .ds-sub-name { font-size: 12px; font-weight: 700; } .ds-sub-bar { flex: 1; height: 5px; border-radius: 9999px; background: #eef2f6; overflow: hidden; } .ds-sub-fill { width: 28%; height: 100%; border-radius: 9999px; background: #2563eb; } .ds-sub-quota { font-family: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, monospace; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; color: #475569; } .ds-srv-row { display: flex; align-items: center; gap: 8px; width: 100%; height: 38px; padding: 0 12px; border-radius: 8px; border: 1px solid transparent; background: #f8fafc; color: #0f172a; font-family: inherit; cursor: pointer; transition: background 120ms cubic-bezier(0.23, 1, 0.32, 1), border-color 120ms cubic-bezier(0.23, 1, 0.32, 1); } .ds-srv-row:hover { background: #f1f5f9; } .ds-srv-active, .ds-srv-active:hover { background: rgba(37, 99, 235, 0.08); border-color: rgba(37, 99, 235, 0.56); } .ds-srv-dot { width: 7px; height: 7px; border-radius: 9999px; background: #2563eb; flex-shrink: 0; } .ds-dot-live { background: #059669; } .ds-srv-proto { font-family: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, monospace; font-size: 10px; font-weight: 800; color: #526071; width: 42px; text-align: left; } .ds-srv-active .ds-srv-proto, .ds-srv-active .ds-srv-name { color: #2563eb; font-weight: 700; } .ds-srv-name { flex: 1; text-align: left; font-size: 13px; font-weight: 600; } .ds-srv-rtt { font-family: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, monospace; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; } .ds-rtt-fast { color: #059669; } .ds-rtt-good { color: #2563eb; } .ds-srv-row:focus-visible { outline: 2px solid #2563eb; outline-offset: -2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Flagship Card Console",
+    "overview": "Nexus presents high-speed native proxy and tunnel operation as a crisp, modern flagship Bento card console calibrated to Clash Verge Rev and FlClash across Desktop (Slint v1.19 + C++26) and Android (Kotlin + Jetpack Compose Material 3 Adaptive). Daily one-second operation is organized into a responsive multi-column Bento grid of proportional, single-level `12px`-radius (`12dp`) cards resting on a layered cool mist-slate (`#f4f6f9`) or deep slate-obsidian (`#0f141c`) canvas ground: Quick-Control Tiles, Outbound Mode & Subscription Quota, Realtime Network Speed, Multi-Column Quick Server Tiles, and a `2×2` Connectivity & Inbound Matrix. Alongside the dashboard, a full-capability Profiles & Subscriptions console exposes subscription group tabs, instant URI/clipboard import, and structured visual editors across all 13 Nexus outbound protocols (`VLESS`, `Trojan`, `Hysteria2`, `TUIC`, `WireGuard`, `MASQUE`, `Shadowsocks-2022`, `AnyTLS`, `Naive`, `Snell`, `SSH`, `SOCKS5`, `HTTP`), Policy Groups, Proxy Chains, and Advanced Custom Configurations.\n\nEvery material and layout decision honors Nexus's zero-bloat native architecture. Cards separate cleanly from the canvas via `1px` (`1dp`) structural hairlines and tonal contrast with zero drop shadows, while continuous user-adjustable translucency (`40%–100%` `window-opacity` on Desktop, `50%–100%` `surfaceAlpha` on Android, with no Reduced Motion toggle in settings) lets the console sit lightly over desktop wallpapers when desired. The system explicitly rejects austere borderless monograph sheets, full-width horizontal ribbon strips, nested cards-inside-cards, drop-shadow elevation soup, hollow Standby dashboards, multi-hue neon telemetry rainbows, kickers or eyebrows above headings, and decorative monospace on UI prose.",
+    "keyCharacteristics": [
+      "Layered cool mist-slate (`#f4f6f9`) and deep slate-obsidian (`#0f141c`) canvas grounds framing single-level `12px`-radius (`12dp`), `1px`-bordered (`#e2e8f0` / `#263142`) functional cards, plus an optional warm Studio Amber (`#12100e` / `#1b1815`) dark preset.",
+      "Decoupled semantic signal pair combining Electric Cobalt (`#2563eb` / `#60a5fa`) for primary interactive state and `RX` download telemetry with Signal Emerald (`#059669` / `#10b981`) for live tunnel confirmation, `TX` upload telemetry, and fast RTT (`< 80ms`).",
+      "Recessed segmented controls (`#eef2f6` / `#f1f5f9` light, `#1e2736` / `#263244` dark) with elevated solid card-fill active pills (`#ffffff` / `#171e29` or `primaryContainer`) and borderless interior `well-bg` rows that prevent nested card borders.",
+      "Continuous surface translucency (`0.40..1.0` `Theme.window-opacity` on Desktop with opt-in native backdrop blur; `0.50..1.0` `surfaceAlpha` + API 31+ Material You Dynamic Color on Android) with zero resting or modal drop shadows.",
+      "Crisp platform sans-serif UI hierarchy paired with tabular monospace (`tnum`) strictly for endpoints, ports, latencies, byte rates, protocol badges, and clocks."
+    ],
+    "rules": [
+      {
+        "name": "The Decoupled Signal Pair Rule",
+        "body": "Interactive selection and download (`RX`) telemetry use Electric Cobalt (`#2563eb` light / `#60a5fa` dark), while live tunnel confirmation, upload (`TX`) telemetry, and fast RTT (`< 80ms`) use Signal Emerald (`#059669` light / `#10b981` dark); electric-purple or multi-hue SaaS rainbows are forbidden.",
+        "section": "colors"
+      },
+      {
+        "name": "The Hue-Tinted CTA Ink Rule",
+        "body": "Secondary action cues and inline latency readouts inside the filled `52px`/`52dp` primary tunnel button must use hue-tinted Cobalt Wash (`#dbeafe`) in Standby and pale emerald/white (`#d1fae5` / `rgba(255,255,255,0.9)`) when Connected—never muddy neutral gray.",
+        "section": "colors"
+      },
+      {
+        "name": "The Monospace Boundary Rule",
+        "body": "Monospace (`mono-kpi`, `mono-data`) is reserved strictly for endpoints, ports, latencies, throughput figures, clocks, memory counters, and short protocol codes; card titles, navigation items, and action verbs always set in platform sans-serif.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Telemetry Lock Rule",
+        "body": "Every live throughput figure, uptime timer, active-flow pill, and RTT readout enforces `font-variant-numeric: tabular-nums` (`tnum`) so 1Hz telemetry ticks never shift neighboring controls.",
+        "section": "typography"
+      },
+      {
+        "name": "The Single-Level Card Rule",
+        "body": "Top-level functional groups live in `12px`-radius (`12dp`) `1px`-bordered cards on the `#f4f6f9` / `#0f141c` canvas ground, while interior groupings use borderless `well-bg` fills or `1px` dividers—never bordered cards nested inside cards.",
+        "section": "elevation"
+      },
+      {
+        "name": "The Zero-Shadow Translucency Rule",
+        "body": "Resting, hovered, and modal surfaces render with zero drop shadows; hierarchy relies strictly on canvas-to-card luminance contrast, `1px` hairlines, and user-controlled continuous alpha (`0.40..1.0` Desktop, `0.50..1.0` Android).",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do frame each top-level dashboard and workspace module as a single-level `12px`-radius (`12dp`) card (`#ffffff` light / `#171e29` dark) with a `1px` (`1dp`) hairline border (`#e2e8f0` / `#263142`) on the `#f4f6f9` / `#0f141c` canvas ground.",
+      "Do use borderless interior `well-bg` fills (`#f8fafc` / `#f1f5f9` light, `#1e2736` dark) or `1px` flush dividers for switches, charts, subscription bars, and probe strips inside a card.",
+      "Do pair Electric Cobalt (`#2563eb` / `#60a5fa`) for interactive focus, Standby primary CTA, and `RX` download telemetry with Signal Emerald (`#059669` / `#10b981`) for Connected state, `TX` upload telemetry, and fast RTT (`< 80ms`).",
+      "Do populate the Dashboard Server Switcher from SQLite workspace profiles when in Standby and live policy-group members when Connected so all four console cards remain actionable in every state.",
+      "Do enforce `tnum` tabular numerals and monospace (`mono-kpi`, `mono-data`) exclusively on endpoints, ports, latencies, byte rates, protocol codes, and clocks.",
+      "Do preserve continuous user-adjustable surface translucency (`0.40..1.0` `window-opacity` on Desktop, `0.50..1.0` `surfaceAlpha` on Android) and `>= 48dp` interactive touch targets on Android."
+    ],
+    "donts": [
+      "Don't nest `1px`-bordered cards inside other bordered cards or add drop shadows (`box-shadow`) to resting, hovered, or modal surfaces.",
+      "Don't revert to borderless `0px–4px` monograph ledger sheets or dark-only navigation spines in Light mode (`Sidebar` in Light mode stays crisp `#ffffff` on `#f4f6f9`).",
+      "Don't place kickers, uppercase eyebrows, or numbered `01 / 02` decorative labels above card or section titles.",
+      "Don't render neutral gray secondary text inside the filled Electric Cobalt or Signal Emerald primary tunnel CTA.",
+      "Don't introduce multi-hue neon rainbows into throughput charts or set prose, card titles, and UI action verbs in monospace.",
+      "Don't add an app-level Reduced Motion toggle to Desktop or Android appearance settings."
+    ]
+  }
+}

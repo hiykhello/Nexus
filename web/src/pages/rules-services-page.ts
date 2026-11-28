@@ -33,8 +33,8 @@ export class NexusRulesServicesPage extends LitElement {
         border-radius: 8px;
         background: var(--nx-well);
       }
-      tbody tr.rule-hit td:first-child {
-        box-shadow: inset 2px 0 0 var(--nx-accent);
+      tbody tr.rule-hit td {
+        background: var(--nx-accent-soft);
       }
     `,
   ];

@@ -24,7 +24,7 @@ int main() {
                    {"ip-version","6",{}},{"domain","exact.index.test",{}},
                    {"domain-suffix","index.test",{}}},2};
     auto matcher=Matcher::compile(rules);
-    auto routes=RouteMatcher::compile(std::vector<RouteRule>{{rules,1}},0,2);
+    auto routes=RouteProgram::compile_policy(std::vector<ProgramRule>{{rules,{ProgramActionKind::route,1}}},0,2);
     auto program=RouteProgram::compile(std::vector<ProgramRule>{{rules,{ProgramActionKind::route,1}}},2);
     RuleSet source_rules{{{"source-ip-cidr","192.0.2.0/24",{}}},2};
     auto source_matcher=Matcher::compile(source_rules);

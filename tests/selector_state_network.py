@@ -41,7 +41,7 @@ outbounds {{
 }}
 routing {{
     rulesets {{ "target" path="target.kdl" format="kdl"; }}
-    rules {{ - kind="rule-set" value="target" outbound="manual"; }}
+    rules {{ - rule-set="target" to="manual"; }}
     final "direct"
 }}
 '''

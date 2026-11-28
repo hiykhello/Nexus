@@ -308,7 +308,7 @@ export namespace cli::run_detail {
                 auto compiled_dns = relay::compile_dns_runtime_snapshot(std::move(relay_dns), generation);
                 if (!compiled_dns) return std::unexpected(std::move(compiled_dns.error()));
                 dns_runtime = std::move(*compiled_dns);
-                auto view = next_cfg.dns->fakeip && next_cfg.dns->fakeip->unified
+                auto view = next_cfg.dns->fakeip
                     ? durable_fakeip_view(next_cfg) : generation;
                 dns_rule_snap = std::make_shared<relay::DnsRuleSnapshot>(next_cfg.dns->rules, view);
             }
@@ -330,7 +330,7 @@ export namespace cli::run_detail {
             auto next = std::make_shared<std::vector<relay::RouteSnapshot>>();
             next->reserve(rt.listeners.size());
             for (std::size_t i = 0; i < rt.listeners.size(); ++i) {
-                auto candidate = rt.listeners[i].server->compile_route_snapshot(routes.indexed, routes.default_outbound,
+                auto candidate = rt.listeners[i].server->compile_route_snapshot({}, routes.default_outbound,
                     next_cfg.inbounds[i].name, routes.program(next_cfg), routes.distribution);
                 if (!candidate) return std::unexpected(std::move(candidate.error()));
                 candidate->dns = dns_rule_snap;

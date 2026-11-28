@@ -86,7 +86,7 @@ namespace relay::naive_in_detail {
             (void)co_await stream.send({}, until);
         }
 
-        auto handle_h2_stream(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto handle_h2_stream(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy,
                               NaiveH2Profile const& profile, naive::H2ServerStream<tls::detail::ByteStream<corosio::tcp_socket>>& stream)
             -> capy::task<> {
             auto until = Clock::now() + std::chrono::seconds(10);
@@ -160,7 +160,7 @@ namespace relay::naive_in_detail {
                 stream_relay::direction(child, stream_relay::download(child, stream)));
         }
 
-        auto serve_naive_h2(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto serve_naive_h2(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
                             NaiveH2Profile const& profile) -> capy::task<> {
             struct Done { Session& s; ~Done() { s.close(); s.done = true; } } done{session};
             auto ms = [](Clock::time_point t) {
@@ -258,7 +258,7 @@ namespace relay {
         profile->padding = cfg.padding;
         profile->fallback_status = cfg.fallback_status;
         profile->handshake_timeout_ms = cfg.handshake_timeout_ms;
-        return InboundFactory{[profile = std::move(profile)](Session& s, corosio::io_context& ctx, rules::RouteMatcher const& policy) {
+        return InboundFactory{[profile = std::move(profile)](Session& s, corosio::io_context& ctx, rules::RouteProgram const& policy) {
             return naive_in_detail::serve_naive_h2(s, ctx, policy, *profile);
         }};
     }

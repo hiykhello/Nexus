@@ -17,7 +17,7 @@ import :transport_helpers;
 import :trojan_inbound_common;
 
 namespace relay::trojan_in {
-    auto serve_trojan_grpc(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto serve_trojan_grpc(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
         TrojanInboundProfile const& profile, tls::detail::ApplicationConnection<corosio::tcp_socket>& connection)
         -> capy::task<> {
         using Lower = tls::detail::ByteStream<corosio::tcp_socket>;

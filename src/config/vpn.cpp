@@ -293,8 +293,6 @@ namespace config {
             return error("OpenConnect outbound requires server, tls and authentication");
         if (!has_user_pw && !has_cookie)
             return error("OpenConnect authentication requires cookie-file or username+password-file");
-        if (cfg.detour && cfg.dtls && !cfg.dtls_fallback)
-            return error("OpenConnect dtls without dtls-fallback cannot be used over a TCP detour");
         if (!v4_seen && v6_seen) cfg.has_v4 = false;
         return cfg;
     }
@@ -335,6 +333,11 @@ namespace config {
             return {};
         };
         if (auto ok = check_list(config.openvpn_outbounds, "OpenVPN outbound"); !ok) return ok;
-        return check_list(config.openconnect_outbounds, "OpenConnect outbound");
+        if (auto ok = check_list(config.openconnect_outbounds, "OpenConnect outbound"); !ok) return ok;
+        for (auto const& e : config.openconnect_outbounds) {
+            if (e.config.detour && *e.config.detour != direct && e.config.dtls && !e.config.dtls_fallback)
+                return error("OpenConnect dtls without dtls-fallback cannot be used over a TCP detour");
+        }
+        return {};
     }
 }

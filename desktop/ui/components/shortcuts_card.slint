@@ -113,17 +113,19 @@ component ShortcutsGroupA inherits VerticalLayout {
     ShortcutRow { label: I18n.t("命令面板", "Command Palette"); action-id: "command-palette"; binding: Shortcuts.command-palette; }
     ShortcutRow { label: I18n.t("侧边栏", "Sidebar"); action-id: "toggle-sidebar"; binding: Shortcuts.toggle-sidebar; }
     ShortcutRow { label: I18n.t("热重载", "Reload"); action-id: "reload-config"; binding: Shortcuts.reload-config; }
-    ShortcutRow { label: I18n.t("路由与 DNS", "Routing & DNS"); action-id: "open-rules"; binding: Shortcuts.open-rules; }
+    ShortcutRow { label: I18n.t("规则模拟器", "Rule Simulator"); action-id: "open-rules"; binding: Shortcuts.open-rules; }
     ShortcutRow { label: I18n.t("退出", "Quit"); action-id: "quit-app"; binding: Shortcuts.quit-app; }
-    ShortcutRow { label: I18n.t("概览", "Dashboard"); action-id: "tab-overview"; binding: Shortcuts.tab-overview; show-divider: false; }
+    ShortcutRow { label: I18n.t("仪表盘", "Dashboard"); action-id: "tab-overview"; binding: Shortcuts.tab-overview; }
+    ShortcutRow { label: I18n.t("配置文件与订阅", "Profiles"); action-id: "tab-profiles"; binding: Shortcuts.tab-profiles; show-divider: false; }
 }
 
 component ShortcutsGroupB inherits VerticalLayout {
-    ShortcutRow { label: I18n.t("代理", "Proxies"); action-id: "tab-groups"; binding: Shortcuts.tab-groups; }
-    ShortcutRow { label: I18n.t("连接", "Connections"); action-id: "tab-connections"; binding: Shortcuts.tab-connections; }
-    ShortcutRow { label: I18n.t("配置与订阅", "Profiles"); action-id: "tab-profiles"; binding: Shortcuts.tab-profiles; }
-    ShortcutRow { label: I18n.t("日志", "Logs"); action-id: "tab-logs"; binding: Shortcuts.tab-logs; }
-    ShortcutRow { label: I18n.t("设置", "Settings"); action-id: "tab-settings"; binding: Shortcuts.tab-settings; show-divider: false; }
+    ShortcutRow { label: I18n.t("代理组", "Proxy Groups"); action-id: "tab-groups"; binding: Shortcuts.tab-groups; }
+    ShortcutRow { label: I18n.t("路由与规则集", "Routing & Rules"); action-id: "tab-routing"; binding: Shortcuts.tab-routing; }
+    ShortcutRow { label: I18n.t("DNS 与入站", "DNS & Inbounds"); action-id: "tab-dns-host"; binding: Shortcuts.tab-dns-host; }
+    ShortcutRow { label: I18n.t("实时连接", "Connections"); action-id: "tab-connections"; binding: Shortcuts.tab-connections; }
+    ShortcutRow { label: I18n.t("运行日志", "Logs"); action-id: "tab-logs"; binding: Shortcuts.tab-logs; }
+    ShortcutRow { label: I18n.t("软件设置", "Settings"); action-id: "tab-settings"; binding: Shortcuts.tab-settings; show-divider: false; }
 }
 
 export component ShortcutsCard inherits VerticalLayout {

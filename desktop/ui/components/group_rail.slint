@@ -4,12 +4,11 @@ import { I18n } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { OutboundGroupItem } from "../types.slint";
-import { NexusVScrollBar } from "glass_primitives.slint";
+import { NexusVScrollBar } from "nexus_primitives.slint";
 
-// 3px 5-tier proportional latency spectrum bar (0ms instant width updates)
 export component LatencySpectrumBar inherits Rectangle {
     in property <GroupSpectrumStats> stats: TelemetryWaveState.spectrum;
-    in property <length> bar-radius: 1.5px;
+    in property <length> bar-radius: 0px;
 
     height: 3px;
     border-radius: root.bar-radius;
@@ -40,14 +39,17 @@ export component LatencySpectrumBar inherits Rectangle {
     }
 }
 
-// Wide Studio (>=1200px) 224px vertical policy-group rail with Group Health & Latency Summary Footer
+// Fluent 2 Policy-Group Rail Card (3px left accent indicator matching Sidebar)
 export component GroupRail inherits Rectangle {
     in property <[OutboundGroupItem]> groups: [];
     in property <string> selected-group: "";
     in property <int> healthy-count: 0;
     in property <int> total-count: 0;
     in property <int> fastest-latency-ms: -1;
+    in property <int> p50-latency-ms: -1;
     callback choose-group(string);
+
+    property <int> effective-p50: TelemetryWaveState.spectrum.p50-ms > 0 ? TelemetryWaveState.spectrum.p50-ms : root.p50-latency-ms;
 
     width: 224px;
     horizontal-stretch: 0;
@@ -59,43 +61,46 @@ export component GroupRail inherits Rectangle {
     clip: true;
 
     VerticalLayout {
-        padding: Theme.space-sm;
-        spacing: Theme.space-sm;
+        padding: 12px;
+        spacing: 8px;
 
-        HorizontalLayout {
-            padding-left: 4px;
-            padding-right: 4px;
-            padding-top: 2px;
-            Text {
-                text: I18n.t("策略组", "POLICY GROUPS");
-                font-size: 12px;
-                font-weight: 700;
-                letter-spacing: 0.4px;
-                color: Theme.text-secondary;
-                horizontal-stretch: 1;
-                vertical-alignment: center;
-            }
-            Rectangle {
-                height: 20px;
-                min-width: 22px;
-                border-radius: 10px;
-                border-width: 1px;
-                border-color: Theme.well-border;
-                background: Theme.well-bg;
-                HorizontalLayout {
-                    padding-left: 7px;
-                    padding-right: 7px;
-                    Text {
-                        text: "\{root.groups.length}";
-                        font-size: 10px;
-                        font-weight: 700;
-                        font-family: Theme.mono-font;
-                        color: Theme.text-secondary;
-                        horizontal-alignment: center;
-                        vertical-alignment: center;
+        VerticalLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+
+            HorizontalLayout {
+                padding-left: 2px;
+                padding-right: 2px;
+                Text {
+                    text: I18n.t("策略组", "Policy Groups");
+                    font-size: 13px;
+                    font-weight: 800;
+                    color: Theme.text-primary;
+                    horizontal-stretch: 1;
+                    vertical-alignment: center;
+                }
+                Rectangle {
+                    height: 20px;
+                    min-width: 22px;
+                    border-radius: Theme.radius-sm;
+                    background: Theme.well-bg;
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 6px;
+                        Text {
+                            text: "\{root.groups.length}";
+                            font-size: 10.5px;
+                            font-weight: 700;
+                            font-family: Theme.mono-font;
+                            color: Theme.text-secondary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
                 }
             }
+
+            Rectangle { height: 1px; background: Theme.hairline-subtle; }
         }
 
         Rectangle {
@@ -103,8 +108,6 @@ export component GroupRail inherits Rectangle {
             clip: true;
 
             rail-sv := ScrollView {
-                width: 100%;
-                height: 100%;
                 vertical-scrollbar-policy: ScrollBarPolicy.always-off;
                 horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
                 content-width: self.visible-width;
@@ -114,8 +117,8 @@ export component GroupRail inherits Rectangle {
                     x: 0px;
                     y: 0px;
                     width: rail-sv.visible-width;
-                    padding-right: root.groups.length > 5 ? 16px : 0px;
-                    spacing: 8px;
+                    padding-right: root.groups.length > 6 ? 12px : 0px;
+                    spacing: 4px;
                     alignment: start;
 
                     for g in root.groups : Rectangle {
@@ -125,20 +128,23 @@ export component GroupRail inherits Rectangle {
                                 self.ensure-visible(Motion.reduced ? ScrollBehavior.instant : ScrollBehavior.smooth);
                             }
                         }
-                        height: 58px;
-                        border-radius: Theme.radius-sm;
-                        border-width: gr-fs.has-focus ? 2px : 1px;
-                        border-color:
-                            gr-fs.has-focus ? Theme.accent
-                            : is-current ? Theme.accent.with-alpha(Theme.dark ? 0.78 : 0.62)
-                            : item-ta.has-hover ? Theme.hairline-strong
-                            : Theme.well-border;
+                        height: 52px;
+                        border-radius: Theme.radius-md;
                         background:
-                            is-current ? Theme.selected-bg
-                            : item-ta.has-hover ? Theme.row-hover-bg
-                            : Theme.well-bg;
-                        animate border-color { duration: Motion.fast; }
+                            is-current ? Theme.nav-active-bg
+                            : item-ta.has-hover ? Theme.nav-hover-bg
+                            : transparent;
                         animate background { duration: Motion.fast; }
+
+                        // Fluent 2 left accent indicator pill
+                        if is-current : Rectangle {
+                            x: 0px;
+                            y: (parent.height - 20px) / 2;
+                            width: 3px;
+                            height: 20px;
+                            border-radius: 1.5px;
+                            background: Theme.accent;
+                        }
 
                         accessible-role: button;
                         accessible-label: g.tag;
@@ -161,9 +167,9 @@ export component GroupRail inherits Rectangle {
 
                         VerticalLayout {
                             padding-left: 10px;
-                            padding-right: 10px;
-                            padding-top: 8px;
-                            padding-bottom: 8px;
+                            padding-right: 8px;
+                            padding-top: 7px;
+                            padding-bottom: 7px;
                             spacing: 4px;
 
                             HorizontalLayout {
@@ -173,20 +179,20 @@ export component GroupRail inherits Rectangle {
                                     min-width: 0px;
                                     text: g.tag;
                                     font-size: 13px;
-                                    font-weight: 700;
-                                    color: Theme.text-primary;
+                                    font-weight: is-current ? 800 : 600;
+                                    color: is-current ? Theme.nav-active-fg : Theme.text-primary;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
                                 if g.auto-mode : Rectangle {
                                     horizontal-stretch: 0;
-                                    height: 18px;
+                                    height: 17px;
                                     y: (parent.height - self.height) / 2;
-                                    border-radius: Theme.radius-xs;
-                                    background: is-current ? Theme.pill-active-bot : Theme.inset-bg;
+                                    border-radius: Theme.radius-sm;
+                                    background: is-current ? Theme.pill-active-bot : Theme.well-bg;
                                     HorizontalLayout {
-                                        padding-left: 6px;
-                                        padding-right: 6px;
+                                        padding-left: 5px;
+                                        padding-right: 5px;
                                         Text {
                                             text: I18n.t("自动", "Auto");
                                             font-size: 9px;
@@ -206,14 +212,14 @@ export component GroupRail inherits Rectangle {
                                     min-width: 0px;
                                     text: g.active-member != "" ? g.active-member : I18n.t("未选择", "None");
                                     font-size: 11px;
-                                    color: Theme.text-muted;
+                                    color: is-current ? Theme.text-secondary : Theme.text-muted;
                                     vertical-alignment: center;
                                     overflow: elide;
                                 }
                                 if g.active-latency-ms > 0 : Text {
-                                    text: "\{g.active-latency-ms}ms";
+                                    text: "\{g.active-latency-ms} ms";
                                     font-size: 11px;
-                                    font-weight: 700;
+                                    font-weight: 800;
                                     font-family: Theme.mono-font;
                                     color: Theme.latency-fg(g.active-latency-ms, "healthy");
                                     vertical-alignment: center;
@@ -234,16 +240,15 @@ export component GroupRail inherits Rectangle {
             }
         }
 
-        Rectangle { height: 1px; background: Theme.hairline-subtle; }
+        Rectangle { height: 1px; background: Theme.card-border; }
 
-        // Borderless Typographic Group Health Summary Footer
         VerticalLayout {
             vertical-stretch: 0;
-            padding-left: 4px;
-            padding-right: 4px;
+            padding-left: 2px;
+            padding-right: 2px;
             padding-top: 4px;
             padding-bottom: 2px;
-            spacing: Theme.space-sm;
+            spacing: 8px;
 
             HorizontalLayout {
                 spacing: 6px;
@@ -280,9 +285,9 @@ export component GroupRail inherits Rectangle {
                 VerticalLayout {
                     horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; alignment: center; spacing: 1px;
                     Text {
-                        text: TelemetryWaveState.spectrum.p50-ms > 0 ? "\{TelemetryWaveState.spectrum.p50-ms}ms" : "--";
+                        text: root.effective-p50 > 0 ? "\{root.effective-p50} ms" : "--";
                         font-size: 11px; font-weight: 800; font-family: Theme.mono-font;
-                        color: TelemetryWaveState.spectrum.p50-ms > 0 ? Theme.latency-fg(TelemetryWaveState.spectrum.p50-ms, "healthy") : Theme.text-muted;
+                        color: root.effective-p50 > 0 ? Theme.latency-fg(root.effective-p50, "healthy") : Theme.text-muted;
                         horizontal-alignment: center;
                     }
                     Text { text: "P50"; font-size: 9px; font-weight: 600; color: Theme.text-muted; horizontal-alignment: center; }
@@ -293,7 +298,7 @@ export component GroupRail inherits Rectangle {
                 VerticalLayout {
                     horizontal-stretch: 1; preferred-width: 0px; min-width: 0px; alignment: center; spacing: 1px;
                     Text {
-                        text: root.fastest-latency-ms > 0 ? "\{root.fastest-latency-ms}ms" : "--";
+                        text: root.fastest-latency-ms > 0 ? "\{root.fastest-latency-ms} ms" : "--";
                         font-size: 11px; font-weight: 800; font-family: Theme.mono-font;
                         color: root.fastest-latency-ms > 0 ? Theme.latency-fg(root.fastest-latency-ms, "healthy") : Theme.text-muted;
                         horizontal-alignment: center;
@@ -305,25 +310,27 @@ export component GroupRail inherits Rectangle {
     }
 }
 
-// Active policy-group summary card cleanly anchored above the Bento node grid
+// Fluent 2 Active Policy-Group Summary Strip Card
 export component GroupSummaryStrip inherits Rectangle {
     in property <string> group-name: "";
     in property <string> group-mode: "";
     in property <bool> auto-mode: false;
     in property <string> active-node: "";
     in property <int> active-latency-ms: -1;
+    in property <int> p50-latency-ms: -1;
     in property <int> healthy-count: 0;
     in property <int> total-count: 0;
     in property <bool> probing: false;
+
+    property <int> effective-p50: TelemetryWaveState.spectrum.p50-ms > 0 ? TelemetryWaveState.spectrum.p50-ms : root.p50-latency-ms;
 
     vertical-stretch: 0;
     height: 44px;
     border-radius: Theme.radius-card;
     border-width: 1px;
-    border-color: root.probing ? Theme.selected-border : Theme.card-border;
+    border-color: Theme.card-border;
     background: Theme.card-surface;
     clip: true;
-    animate border-color { duration: Motion.fast; }
 
     if root.probing : Rectangle {
         x: 0px;
@@ -342,8 +349,8 @@ export component GroupSummaryStrip inherits Rectangle {
 
     HorizontalLayout {
         padding-left: 14px;
-        padding-right: 12px;
-        spacing: 8px;
+        padding-right: 14px;
+        spacing: 10px;
 
         Text {
             text: root.group-name;
@@ -355,13 +362,13 @@ export component GroupSummaryStrip inherits Rectangle {
 
         Rectangle {
             horizontal-stretch: 0;
-            height: 22px;
+            height: 20px;
             y: (parent.height - self.height) / 2;
-            border-radius: Theme.radius-xs;
+            border-radius: Theme.radius-sm;
             background: root.auto-mode ? Theme.pill-active-bot : Theme.well-bg;
             HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
+                padding-left: 7px;
+                padding-right: 7px;
                 Text {
                     text: root.auto-mode ? I18n.t("自动优选", "Auto") : I18n.t("手动", "Manual");
                     font-size: 10px;
@@ -377,53 +384,36 @@ export component GroupSummaryStrip inherits Rectangle {
         if root.active-node != "" : Text {
             text: "→ " + root.active-node;
             font-size: 12px;
-            font-weight: 600;
-            font-family: Theme.mono-font;
-            color: Theme.text-secondary;
+            font-weight: 700;
+            color: Theme.text-primary;
             vertical-alignment: center;
             overflow: elide;
         }
 
-        if root.active-latency-ms > 0 : Rectangle {
-            horizontal-stretch: 0;
-            min-width: 58px;
-            height: 22px;
-            y: (parent.height - self.height) / 2;
-            border-radius: Theme.radius-sm;
-            background: Theme.latency-bg(root.active-latency-ms, "healthy");
-            HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                Text {
-                    horizontal-stretch: 1;
-                    text: "\{root.active-latency-ms} ms";
-                    font-size: 11px;
-                    font-weight: 700;
-                    font-family: Theme.mono-font;
-                    color: Theme.latency-fg(root.active-latency-ms, "healthy");
-                    horizontal-alignment: right;
-                    vertical-alignment: center;
-                }
-            }
+        if root.active-latency-ms > 0 : Text {
+            text: "\{root.active-latency-ms} ms";
+            font-size: 12px;
+            font-weight: 800;
+            font-family: Theme.mono-font;
+            color: Theme.latency-fg(root.active-latency-ms, "healthy");
+            vertical-alignment: center;
         }
 
-        if TelemetryWaveState.spectrum.p50-ms > 0 : Rectangle {
+        if root.effective-p50 > 0 : Rectangle {
             horizontal-stretch: 0;
             height: 22px;
             y: (parent.height - self.height) / 2;
             border-radius: Theme.radius-sm;
-            border-width: 1px;
-            border-color: Theme.well-border;
             background: Theme.well-bg;
             HorizontalLayout {
                 padding-left: 7px;
                 padding-right: 7px;
                 Text {
-                    text: "P50 \{TelemetryWaveState.spectrum.p50-ms} ms";
+                    text: "P50 \{root.effective-p50} ms";
                     font-size: 10px;
                     font-weight: 700;
                     font-family: Theme.mono-font;
-                    color: Theme.latency-fg(TelemetryWaveState.spectrum.p50-ms, "healthy");
+                    color: Theme.text-secondary;
                     vertical-alignment: center;
                 }
             }
@@ -433,41 +423,35 @@ export component GroupSummaryStrip inherits Rectangle {
             horizontal-stretch: 0;
             height: 22px;
             y: (parent.height - self.height) / 2;
-            border-radius: 11px;
-            border-width: 1px;
-            border-color: Theme.well-border;
-            background: Theme.well-bg;
+            border-radius: Theme.radius-sm;
+            background: root.healthy-count > 0 ? Theme.live-emerald-soft : Theme.well-bg;
             HorizontalLayout {
-                padding-left: 8px;
-                padding-right: 8px;
-                spacing: 5px;
+                padding-left: 7px;
+                padding-right: 7px;
+                spacing: 4px;
                 Text {
-                    text: root.healthy-count > 0
-                        ? I18n.t("\{root.healthy-count}/\{root.total-count} 可用", "\{root.healthy-count}/\{root.total-count} ready")
-                        : I18n.t("\{root.total-count} 节点", "\{root.total-count} nodes");
+                    text: "\{root.healthy-count}/\{root.total-count}";
                     font-size: 10px;
                     font-weight: 700;
                     font-family: Theme.mono-font;
-                    color: Theme.text-primary;
+                    color: root.healthy-count > 0 ? Theme.live-emerald : Theme.text-primary;
                     vertical-alignment: center;
                 }
-                Rectangle {
-                    width: 6px;
-                    height: 6px;
-                    y: (parent.height - self.height) / 2;
-                    border-radius: 3px;
-                    background: root.healthy-count > 0 ? Theme.live-emerald : Theme.offline-fg;
+                Text {
+                    text: root.healthy-count > 0 ? I18n.t("可用", "ready") : I18n.t("节点", "nodes");
+                    font-size: 10px;
+                    font-weight: 700;
+                    color: root.healthy-count > 0 ? Theme.live-emerald : Theme.text-secondary;
+                    vertical-alignment: center;
                 }
             }
         }
     }
 
-    // Flush 3px 5-tier latency spectrum bar along bottom edge
     if TelemetryWaveState.spectrum.has-data : LatencySpectrumBar {
         x: 0px;
         y: parent.height - 3px;
         width: parent.width;
-        bar-radius: 0px;
         stats: TelemetryWaveState.spectrum;
     }
 }

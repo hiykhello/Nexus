@@ -35,7 +35,7 @@ inbounds {{ vless "edge" {{
  tls {{ certificate-file "{certder}"; private-key-file "{keyder}"; }}
 }} }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ rulesets {{ local path="{rules}" format="kdl"; }}; rules {{ - kind="rule-set" value="local" outbound="reject"; }}; final "direct"; }}
+routing {{ rulesets {{ local path="{rules}" format="kdl"; }}; rules {{ - rule-set="local" to="reject"; }}; final "direct"; }}
 ''')
         server=subprocess.Popen([binary,"run","--config",config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
         try:

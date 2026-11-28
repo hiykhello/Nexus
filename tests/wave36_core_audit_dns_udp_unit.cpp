@@ -18,7 +18,6 @@ import std;
 import capy;
 import corosio;
 import config;
-import cli.dns_cache_state;
 import cli.dns_cache_unified;
 import cli.dns_message_runtime;
 import cli.dns_transports;
@@ -164,7 +163,7 @@ namespace {
         return port;
     }
 
-    // R2 P1-1: DNS listener with message-cache-directory must honor hot-reloaded DNS rules & isolate cache views.
+    // R2 P1-1: DNS listener with unified cache must honor hot-reloaded DNS rules & isolate cache views.
     void test_r2_p1_1_message_cache_rule_reload() {
         MockDnsServer u1({198, 51, 100, 1});
         MockDnsServer u2({198, 51, 100, 2});
@@ -174,7 +173,8 @@ namespace {
         config::Config cfg{};
         config::DnsRouting dns_cfg{};
         dns_cfg.listen = config::DnsListen{{127, 0, 0, 1}, false, listen_port};
-        dns_cfg.message_cache_directory = cache_dir.path.string();
+        dns_cfg.unified_cache_root = cache_dir.path.string();
+        dns_cfg.unified_cache_bytes = 256 * 1024;
         dns_cfg.message_cache_policy = "w36-policy";
         dns_cfg.servers = {make_udp_server("u1", u1.port), make_udp_server("u2", u2.port)};
         dns_cfg.rules = {make_domain_rule("switch.test", 0)};
@@ -192,7 +192,7 @@ namespace {
         auto prep = rt.prepare(cfg, prot, [shared]() -> dns::MessageRuleSnapshot {
             std::lock_guard lk(shared->mu); return shared->snap;
         });
-        require(prep.has_value(), "prepare DnsMessageRuntime with message-cache-directory");
+        require(prep.has_value(), "prepare DnsMessageRuntime with unified cache");
         require(rt.start(true).has_value(), "start DnsMessageRuntime");
 
         // Under v1 (view=1): switch.test -> u1, cached on second query.

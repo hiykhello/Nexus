@@ -14,11 +14,13 @@ export global Shortcuts {
     in-out property <KeyBinding> open-rules: { ctrl: true, alt: false, shift: true, key: "r" };
     in-out property <KeyBinding> quit-app: { ctrl: true, alt: false, shift: false, key: "q" };
     in-out property <KeyBinding> tab-overview: { ctrl: true, alt: false, shift: false, key: "1" };
-    in-out property <KeyBinding> tab-groups: { ctrl: true, alt: false, shift: false, key: "2" };
-    in-out property <KeyBinding> tab-connections: { ctrl: true, alt: false, shift: false, key: "3" };
-    in-out property <KeyBinding> tab-profiles: { ctrl: true, alt: false, shift: false, key: "4" };
-    in-out property <KeyBinding> tab-logs: { ctrl: true, alt: false, shift: false, key: "5" };
-    in-out property <KeyBinding> tab-settings: { ctrl: true, alt: false, shift: false, key: "6" };
+    in-out property <KeyBinding> tab-profiles: { ctrl: true, alt: false, shift: false, key: "2" };
+    in-out property <KeyBinding> tab-groups: { ctrl: true, alt: false, shift: false, key: "3" };
+    in-out property <KeyBinding> tab-routing: { ctrl: true, alt: false, shift: false, key: "4" };
+    in-out property <KeyBinding> tab-dns-host: { ctrl: true, alt: false, shift: false, key: "5" };
+    in-out property <KeyBinding> tab-connections: { ctrl: true, alt: false, shift: false, key: "6" };
+    in-out property <KeyBinding> tab-logs: { ctrl: true, alt: false, shift: false, key: "7" };
+    in-out property <KeyBinding> tab-settings: { ctrl: true, alt: false, shift: false, key: "8" };
 
     in-out property <string> recording-action: "";
     in-out property <string> status-hint: "";
@@ -134,9 +136,11 @@ export global Shortcuts {
         else if (action == "open-rules") { open-rules = b; }
         else if (action == "quit-app") { quit-app = b; }
         else if (action == "tab-overview") { tab-overview = b; }
-        else if (action == "tab-groups") { tab-groups = b; }
-        else if (action == "tab-connections") { tab-connections = b; }
         else if (action == "tab-profiles") { tab-profiles = b; }
+        else if (action == "tab-groups") { tab-groups = b; }
+        else if (action == "tab-routing") { tab-routing = b; }
+        else if (action == "tab-dns-host") { tab-dns-host = b; }
+        else if (action == "tab-connections") { tab-connections = b; }
         else if (action == "tab-logs") { tab-logs = b; }
         else if (action == "tab-settings") { tab-settings = b; }
     }
@@ -180,9 +184,11 @@ export global Shortcuts {
         if (equals-binding(open-rules, nb)) { open-rules = { ctrl: false, alt: false, shift: false, key: "" }; }
         if (equals-binding(quit-app, nb)) { quit-app = { ctrl: false, alt: false, shift: false, key: "" }; }
         if (equals-binding(tab-overview, nb)) { tab-overview = { ctrl: false, alt: false, shift: false, key: "" }; }
-        if (equals-binding(tab-groups, nb)) { tab-groups = { ctrl: false, alt: false, shift: false, key: "" }; }
-        if (equals-binding(tab-connections, nb)) { tab-connections = { ctrl: false, alt: false, shift: false, key: "" }; }
         if (equals-binding(tab-profiles, nb)) { tab-profiles = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-groups, nb)) { tab-groups = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-routing, nb)) { tab-routing = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-dns-host, nb)) { tab-dns-host = { ctrl: false, alt: false, shift: false, key: "" }; }
+        if (equals-binding(tab-connections, nb)) { tab-connections = { ctrl: false, alt: false, shift: false, key: "" }; }
         if (equals-binding(tab-logs, nb)) { tab-logs = { ctrl: false, alt: false, shift: false, key: "" }; }
         if (equals-binding(tab-settings, nb)) { tab-settings = { ctrl: false, alt: false, shift: false, key: "" }; }
 
@@ -199,11 +205,13 @@ export global Shortcuts {
         open-rules = { ctrl: true, alt: false, shift: true, key: "r" };
         quit-app = { ctrl: true, alt: false, shift: false, key: "q" };
         tab-overview = { ctrl: true, alt: false, shift: false, key: "1" };
-        tab-groups = { ctrl: true, alt: false, shift: false, key: "2" };
-        tab-connections = { ctrl: true, alt: false, shift: false, key: "3" };
-        tab-profiles = { ctrl: true, alt: false, shift: false, key: "4" };
-        tab-logs = { ctrl: true, alt: false, shift: false, key: "5" };
-        tab-settings = { ctrl: true, alt: false, shift: false, key: "6" };
+        tab-profiles = { ctrl: true, alt: false, shift: false, key: "2" };
+        tab-groups = { ctrl: true, alt: false, shift: false, key: "3" };
+        tab-routing = { ctrl: true, alt: false, shift: false, key: "4" };
+        tab-dns-host = { ctrl: true, alt: false, shift: false, key: "5" };
+        tab-connections = { ctrl: true, alt: false, shift: false, key: "6" };
+        tab-logs = { ctrl: true, alt: false, shift: false, key: "7" };
+        tab-settings = { ctrl: true, alt: false, shift: false, key: "8" };
         recording-action = "";
         status-hint = I18n.t("已恢复全部默认快捷键", "Restored all default shortcuts");
     }

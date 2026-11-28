@@ -5,20 +5,11 @@ import encoding.base64;
 import encoding.hex;
 import glaze;
 import platform.ip_address;
+import utility.tls_fingerprint;
 import :detail;
 
 namespace provider::ws_detail {
     namespace {
-        auto normalize_fp(std::string_view raw) -> std::string {
-            auto l = lower_ascii(raw);
-            if (l == "chrome" || l == "chrome-133") return "chrome";
-            if (l == "firefox" || l == "firefox-135") return "firefox";
-            if (l == "safari" || l == "safari-18") return "safari";
-            if (l == "ios" || l == "android" || l == "edge" || l == "random" ||
-                l == "native" || l == "tls13-grease" || l == "tls13-randomized" || l == "tls12") return l;
-            return {};
-        }
-
         auto normalize_kx(std::string_view raw) -> std::string_view {
             auto l = lower_ascii(raw);
             if (l == "x25519") return "x25519";
@@ -152,8 +143,7 @@ namespace provider::ws_detail {
             }
             bool using_tls12 = false;
             if (!t.fingerprint.empty()) {
-                auto fp = lower_ascii(t.fingerprint);
-                auto norm = normalize_fp(fp);
+                auto norm = utility::normalize_external_tls_fingerprint(t.fingerprint);
                 if (!norm.empty() && (allow_tls12 || norm != "tls12")) {
                     os << "      fingerprint " << kdl_quote(norm) << '\n';
                     using_tls12 = (norm == "tls12");

@@ -2,7 +2,7 @@ import { ScrollView } from "std-widgets.slint";
 import { CommandPaletteState, PaletteItem } from "../command_palette_state.slint";
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { NexusVScrollBar } from "glass_primitives.slint";
+import { NexusVScrollBar } from "nexus_primitives.slint";
 import { NexusButton } from "nexus_buttons.slint";
 
 // 0ms Instant Global Command & Inline Route/DNS Diagnostic Palette (Ctrl+K)
@@ -59,7 +59,7 @@ export component CommandPaletteModal inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: max(40px, (parent.height - self.height) * 0.22);
         border-radius: Theme.radius-card;
-        border-width: 1px;
+        border-width: 1.5px;
         border-color: Theme.modal-border;
         background: Theme.overlay-bg;
         clip: true;

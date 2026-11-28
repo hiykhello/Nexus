@@ -21,7 +21,7 @@ extern "C" ssize_t __wrap_sendto(int fd,const void* data,size_t size,int flags,c
     return __real_sendto(fd,data,size,flags,dest,length);
 }
 struct Socket { int fd; ~Socket() { if(fd>=0) ::close(fd); } };
-auto lookahead_test(int client,r::RouteMatcher const& policy,std::vector<std::uint8_t> wire) -> int {
+auto lookahead_test(int client,r::RouteProgram const& policy,std::vector<std::uint8_t> wire) -> int {
     using Clock=std::chrono::steady_clock;
     auto association=s::UdpAssociation::create({1,{127,0,0,1},1234},{1,{},0});
     if(!association)return 100;
@@ -116,7 +116,7 @@ int main() {
         ::bind(attacker.fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr)) || ::bind(target.fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))) return 1;
     socklen_t length=sizeof(addr); if (::getsockname(target.fd,reinterpret_cast<sockaddr*>(&addr),&length)) return 2;
     auto target_port=ntohs(addr.sin_port);
-    auto policy=r::RouteMatcher::compile(std::span<r::RouteRule const>{},0,2);
+    auto policy=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},0,2);
     auto association=s::UdpAssociation::create({1,{127,0,0,1},1234},{1,{},0});
     if (!policy || !association) return 3;
     s::UdpIngress driver(*association,*policy);
@@ -228,7 +228,7 @@ int main() {
     domains.discard_domain();
     if (domains.pending_domain() || domains.send_resolved({1,{127,0,0,1},target_port})) return 32;
     r::RuleSet blocked_name{{{"domain-suffix","test"}}};
-    auto deny=r::RouteMatcher::compile(std::array{r::RouteRule{blocked_name,1}},0,2);
+    auto deny=r::RouteProgram::compile_policy(std::array{r::ProgramRule{blocked_name,{r::ProgramActionKind::route,1}}},0,2);
     auto fourth=s::UdpAssociation::create({1,{127,0,0,1},1234},{1,{},0});
     if (!deny || !fourth) return 34;
     s::UdpIngress blocked_driver(*fourth,*deny,true);
@@ -303,7 +303,7 @@ int main() {
     ipv6.close();
     Socket reuse6{::socket(AF_INET6,SOCK_DGRAM|SOCK_CLOEXEC,0)};
     if (reuse6.fd<0 || ::bind(reuse6.fd,reinterpret_cast<sockaddr*>(&addr6),sizeof(addr6))) return 50;
-    auto tunnel_policy=r::RouteMatcher::compile(std::span<r::RouteRule const>{},2,3);
+    auto tunnel_policy=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},2,3);
     auto tunnel_assoc=s::UdpAssociation::create({1,{127,0,0,1},1234},{1,{},0});
     if (!tunnel_policy || !tunnel_assoc) return 71;
     s::UdpIngress tunnels(*tunnel_assoc,*tunnel_policy,true,true);

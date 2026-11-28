@@ -90,7 +90,7 @@ auto timeout_and_drain(bool uring) -> bool {
 }
 
 auto expired_direct() -> bool {
-    auto policy=::rules::RouteMatcher::compile(std::span<::rules::RouteRule const>{},0,2);
+    auto policy=::rules::RouteProgram::compile_policy(std::span<::rules::ProgramRule const>{},0,2);
     if(!policy)return false;
     n::UdpSocket origin;
     if(!origin.open() || !origin.bind({4,{127,0,0,1},0}))return false;

@@ -293,12 +293,10 @@ namespace {
             auto found=snapshot.matcher.match_with_rule(candidate);
             if (!found) return std::unexpected(found.error().message);
             if (found->rule) {
-                auto const& rule=config.routes[*found->rule];
                 out.route_label="rule:"+std::to_string(*found->rule+1);
                 if (!query.oneline)
-                    std::cout << "rule=" << *found->rule+1 << " file=" << std::quoted(rule.file.path)
-                        << " predicate=" << *found->predicate+1 << ' ';
-                route(config,rule.outbound_name,found->outbound,query.oneline,out);
+                    std::cout << "rule=" << *found->rule+1 << ' ';
+                route(config,{},found->outbound,query.oneline,out);
                 return {};
             }
             out.route_label="default";

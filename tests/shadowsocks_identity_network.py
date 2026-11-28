@@ -128,7 +128,7 @@ inbounds {{
 outbounds {{ direct "direct"; block "blocked"; }}
 routing {{
   rulesets {{ "blocked" format="kdl" path="blocked.kdl"; }}
-  rules {{ - kind="rule-set" value="blocked" outbound="blocked"; }}; final "direct";
+  rules {{ - rule-set="blocked" to="blocked"; }}; final "direct";
 }}
 ''')
     box_client = root / "box-client.json"

@@ -1,0 +1,410 @@
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { NexusButton } from "nexus_buttons.slint";
+
+export component ProportionBar inherits Rectangle {
+    in property <float> first-ratio: 0.5;
+    in property <color> first-color: Theme.accent;
+    in property <color> second-color: Theme.telemetry-up;
+    in property <bool> has-data: true;
+    in property <bool> has-second: true;
+    in property <length> bar-height: 6px;
+
+    property <float> clamped-r: clamp(root.first-ratio, 0.0, 1.0);
+
+    vertical-stretch: 0;
+    height: root.bar-height;
+    border-radius: root.bar-height / 2;
+    background: Theme.inset-bg;
+    clip: true;
+
+    if root.has-data && root.clamped-r > 0.005 : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: parent.width * root.clamped-r;
+        height: parent.height;
+        border-radius: root.bar-height / 2;
+        background: root.first-color;
+        animate width { duration: Motion.fluid; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+    }
+
+    if root.has-data && root.has-second && (1.0 - root.clamped-r) > 0.005 : Rectangle {
+        x: parent.width * root.clamped-r + 1px;
+        y: 0px;
+        width: max(0px, parent.width * (1.0 - root.clamped-r) - 1px);
+        height: parent.height;
+        border-radius: root.bar-height / 2;
+        background: root.second-color;
+        animate x { duration: Motion.fluid; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+        animate width { duration: Motion.fluid; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+    }
+}
+
+export component SlidingSegmentBar inherits Rectangle {
+    in property <[string]> options: [];
+    in property <int> current-index: 0;
+    in property <length> bar-height: 34px;
+    callback selected(int);
+
+    property <int> count: max(1, root.options.length);
+    property <length> seg-w: max(0px, (root.width - 6px - 4px * (root.count - 1)) / root.count);
+
+    forward-focus: fs;
+    vertical-stretch: 0;
+    min-width: 0px;
+    height: root.bar-height;
+    border-radius: Theme.radius-md;
+    border-width: fs.has-focus ? 2px : 0px;
+    border-color: Theme.accent;
+    background: Theme.inset-bg;
+
+    fs := FocusScope {
+        key-pressed(ev) => {
+            if (ev.text == Key.RightArrow && root.count > 1) {
+                root.selected(Math.mod(clamp(root.current-index, 0, root.count - 1) + 1, root.count));
+                return accept;
+            }
+            if (ev.text == Key.LeftArrow && root.count > 1) {
+                root.selected(Math.mod(clamp(root.current-index, 0, root.count - 1) - 1 + root.count, root.count));
+                return accept;
+            }
+            reject
+        }
+    }
+
+    Rectangle {
+        x: 3px + clamp(root.current-index, 0, root.count - 1) * (root.seg-w + 4px);
+        y: 3px;
+        width: root.seg-w;
+        height: max(0px, parent.height - 6px);
+        border-radius: Theme.radius-xs;
+        border-width: 1px;
+        border-color: Theme.accent.with-alpha(Theme.dark ? 0.50 : 0.28);
+        background: Theme.cmd-seg-active-bg;
+        animate x { duration: Motion.normal; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+    }
+
+    HorizontalLayout {
+        padding: 3px;
+        spacing: 4px;
+
+        for opt[idx] in root.options : Rectangle {
+            property <bool> is-active: idx == clamp(root.current-index, 0, root.count - 1);
+            min-width: 0px;
+            preferred-width: 0px;
+            horizontal-stretch: 1;
+            border-radius: Theme.radius-xs;
+            background: !is-active && seg-ta.has-hover ? Theme.row-hover-bg : transparent;
+
+            accessible-role: tab;
+            accessible-label: opt;
+            accessible-action-default => { root.selected(idx); }
+
+            seg-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.selected(idx); }
+            }
+
+            Text {
+                width: 100%;
+                height: 100%;
+                text: opt;
+                font-size: 12px;
+                font-weight: is-active ? 700 : 500;
+                color: is-active ? Theme.cmd-seg-active-fg : (seg-ta.has-hover ? Theme.text-primary : Theme.text-secondary);
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+    }
+}
+
+export component NexusInput inherits Rectangle {
+    in-out property <string> text: "";
+    in property <string> placeholder-text: "";
+    in property <bool> mono: false;
+    in property <bool> password: false;
+    in property <bool> search-icon: false;
+    in property <bool> borderless: false;
+    in property <string> prefix: "";
+    in property <length> input-height: 32px;
+    in property <bool> enabled: true;
+    callback accepted();
+    callback edited(string);
+
+    public function focus-input() {
+        ti.focus();
+    }
+
+    forward-focus: ti;
+
+    vertical-stretch: 0;
+    height: root.input-height;
+    min-width: root.borderless ? 44px : 56px;
+    border-radius: Theme.radius-md;
+    border-width: root.borderless && !ti.has-focus && !in-ta.has-hover ? 0px : 1px;
+    border-color:
+        !root.enabled ? Theme.card-border
+        : ti.has-focus ? Theme.well-border
+        : in-ta.has-hover ? Theme.control-border-hover-brush
+        : Theme.control-border-brush;
+    background:
+        !root.enabled ? Theme.well-bg
+        : root.borderless
+            ? (ti.has-focus ? Theme.control-fill : in-ta.has-hover ? Theme.row-hover-bg : transparent)
+            : (ti.has-focus ? Theme.control-fill : in-ta.has-hover ? Theme.control-fill-hover : Theme.control-fill);
+    opacity: root.enabled ? 1.0 : 0.56;
+    clip: true;
+
+    // Fluent 2 signature bottom focus bar (1px rest hairline -> 2px accent bar on focus)
+    if !root.borderless || ti.has-focus : Rectangle {
+        x: 0px;
+        y: parent.height - self.height;
+        width: parent.width;
+        height: ti.has-focus ? 2px : 1px;
+        background:
+            !root.enabled ? transparent
+            : ti.has-focus ? Theme.accent
+            : Theme.input-bottom-rest;
+        animate height { duration: Motion.micro; }
+        animate background { duration: Motion.fast; }
+    }
+
+    in-ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? MouseCursor.text : MouseCursor.default;
+        clicked => { ti.focus(); }
+    }
+
+    HorizontalLayout {
+        padding-left: root.borderless ? 4px : 10px;
+        padding-right: root.borderless ? 4px : 8px;
+        spacing: root.borderless ? 0px : 6px;
+
+        if root.prefix != "" : Text {
+            horizontal-stretch: 0;
+            text: root.prefix;
+            font-size: 12px;
+            font-family: root.mono ? Theme.mono-font : "";
+            color: Theme.text-muted;
+            vertical-alignment: center;
+        }
+
+        if root.search-icon : Image {
+            width: 14px;
+            height: 14px;
+            y: (parent.height - self.height) / 2;
+            source: @image-url("../icons/search.svg");
+            colorize: ti.has-focus ? Theme.accent : Theme.text-muted;
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            clip: true;
+
+            if root.text == "" && root.placeholder-text != "" : Text {
+                x: 0px;
+                width: 100%;
+                height: 100%;
+                text: root.placeholder-text;
+                font-size: 12px;
+                color: Theme.text-muted;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+
+            ti := TextInput {
+                x: 0px;
+                width: 100%;
+                height: 100%;
+                text <=> root.text;
+                enabled: root.enabled;
+                input-type: root.password ? InputType.password : InputType.text;
+                font-size: 12px;
+                font-family: root.mono ? Theme.mono-font : "";
+                color: Theme.text-primary;
+                selection-background-color: Theme.accent.with-alpha(0.35);
+                selection-foreground-color: Theme.selection-fg;
+                vertical-alignment: center;
+                accepted => { root.accepted(); }
+                edited => { root.edited(self.text); }
+            }
+        }
+
+        if root.search-icon && root.text != "" && root.enabled : Rectangle {
+            width: 18px;
+            height: 18px;
+            y: (parent.height - self.height) / 2;
+            border-radius: 9px;
+            background: clr-ta.has-hover ? Theme.row-hover-bg : transparent;
+            clr-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => {
+                    root.text = "";
+                    root.edited("");
+                }
+            }
+            Image {
+                x: 3px;
+                y: 3px;
+                width: 12px;
+                height: 12px;
+                source: @image-url("../icons/x.svg");
+                colorize: Theme.text-muted;
+            }
+        }
+    }
+}
+
+export component EmptyStateCard inherits Rectangle {
+    in property <image> icon;
+    in property <string> title;
+    in property <string> subtitle: "";
+    in property <string> action-label: "";
+    in property <bool> primary-cta: true;
+    in property <string> secondary-action-label: "";
+    callback action-clicked();
+    callback secondary-action-clicked();
+
+    vertical-stretch: 1;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: Theme.space-xl;
+        spacing: Theme.space-sm;
+        alignment: center;
+
+        HorizontalLayout {
+            alignment: center;
+            Rectangle {
+                width: 44px;
+                height: 44px;
+                border-radius: 22px;
+                border-width: 1px;
+                border-color: Theme.accent.with-alpha(0.32);
+                background: Theme.accent-soft;
+
+                Image {
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    width: 20px;
+                    height: 20px;
+                    source: root.icon;
+                    colorize: Theme.accent;
+                }
+            }
+        }
+
+        Text {
+            text: root.title;
+            font-size: 14px;
+            font-weight: 700;
+            color: Theme.text-primary;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        if root.subtitle != "" : Text {
+            text: root.subtitle;
+            font-size: 12px;
+            color: Theme.text-muted;
+            horizontal-alignment: center;
+            wrap: word-wrap;
+        }
+
+        if root.action-label != "" || root.secondary-action-label != "" : HorizontalLayout {
+            alignment: center;
+            padding-top: 4px;
+            spacing: Theme.space-sm;
+
+            if root.action-label != "" : NexusButton {
+                label: root.action-label;
+                primary: root.primary-cta;
+                clicked => { root.action-clicked(); }
+            }
+
+            if root.secondary-action-label != "" : NexusButton {
+                label: root.secondary-action-label;
+                clicked => { root.secondary-action-clicked(); }
+            }
+        }
+    }
+}
+
+export component NexusVScrollBar inherits Rectangle {
+    in property <length> viewport-size: 1px;
+    in property <length> content-size: 1px;
+    in-out property <length> scroll-pos: 0px;
+
+    property <length> max-scroll: max(0px, root.content-size - root.viewport-size);
+    property <bool> can-scroll: root.max-scroll > 2px;
+    property <length> track-h: max(1px, root.height - 4px);
+    property <length> thumb-h: clamp(
+        root.track-h * (root.viewport-size / max(1px, root.content-size)),
+        36px,
+        max(36px, root.track-h - 24px)
+    );
+    property <float> progress: root.max-scroll > 0px ? clamp(-root.scroll-pos / root.max-scroll, 0.0, 1.0) : 0.0;
+    property <length> thumb-y: 2px + root.progress * max(0px, root.track-h - root.thumb-h);
+    private property <bool> dragging: false;
+    private property <length> drag-start-y: 0px;
+    private property <length> drag-start-scroll: 0px;
+
+    width: 10px;
+    visible: root.can-scroll;
+    clip: true;
+
+    Rectangle {
+        x: 1px;
+        y: 0px;
+        width: 8px;
+        height: parent.height;
+        border-radius: 4px;
+        border-width: 1px;
+        border-color: Theme.scrollbar-rail-border;
+        background: Theme.scrollbar-rail-bg;
+    }
+
+    Rectangle {
+        x: 2px;
+        y: root.thumb-y;
+        width: 6px;
+        height: root.thumb-h;
+        border-radius: 3px;
+        background:
+            ta.pressed ? Theme.accent
+            : ta.has-hover ? Theme.scrollbar-thumb-hover
+            : Theme.scrollbar-thumb;
+        animate background { duration: Motion.fast; }
+    }
+
+    ta := TouchArea {
+        enabled: root.can-scroll;
+        mouse-cursor: pointer;
+        pointer-event(ev) => {
+            if (ev.kind == PointerEventKind.down && ev.button == PointerEventButton.left) {
+                if (self.mouse-y < root.thumb-y || self.mouse-y > root.thumb-y + root.thumb-h) {
+                    let ratio = clamp((self.mouse-y - 2px - root.thumb-h / 2) / max(1px, root.track-h - root.thumb-h), 0.0, 1.0);
+                    root.scroll-pos = -ratio * root.max-scroll;
+                }
+                root.dragging = true;
+                root.drag-start-y = self.mouse-y;
+                root.drag-start-scroll = root.scroll-pos;
+            } else if (ev.kind == PointerEventKind.up || ev.kind == PointerEventKind.cancel) {
+                root.dragging = false;
+            }
+        }
+        moved => {
+            if (self.pressed && root.dragging && root.max-scroll > 0px) {
+                let dy = self.mouse-y - root.drag-start-y;
+                let d-scroll = (dy / max(1px, root.track-h - root.thumb-h)) * root.max-scroll;
+                root.scroll-pos = clamp(root.drag-start-scroll - d-scroll, -root.max-scroll, 0px);
+            }
+        }
+    }
+}

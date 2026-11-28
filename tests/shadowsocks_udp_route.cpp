@@ -55,10 +55,13 @@ int main() {
     if (!accepted || !server.forward(*accepted,ipv4) || server.sockets()!=1) return 9;
     std::array<std::uint8_t,8> data{}; if (recv(fd,data.data(),data.size(),0)!=1 || data[0]!=1) return 10;
     // Ordered policies must preserve first-match semantics across domain/IP.
-    auto ordered_test=[&](std::vector<::rules::RouteRule> rules,std::size_t fallback,
+    auto ordered_test=[&](std::vector<std::pair<::rules::RuleSet,std::size_t>> rules,std::size_t fallback,
                           std::optional<s::UdpRouteError> preflight_error,
                           std::optional<s::UdpRouteError> forward_error) {
-        auto compiled=::rules::RouteMatcher::compile(rules,fallback,3);
+        std::vector<::rules::ProgramRule> prog;
+        prog.reserve(rules.size());
+        for (auto& [rs, out] : rules) prog.push_back({std::move(rs), {::rules::ProgramActionKind::route, out}});
+        auto compiled=::rules::RouteProgram::compile_policy(prog,fallback,3);
         if (!compiled) return false;
         s::UdpRoutedServer routed(std::move(*compiled),4,4);
         s::UdpPacket query{{9},0,1000,{}, {3,7,'o','k','.','t','e','s','t',static_cast<std::uint8_t>(port>>8),static_cast<std::uint8_t>(port)}, {7}};
@@ -92,7 +95,7 @@ int main() {
     if (!mapped_request || !is_error(mapped_server.forward(*mapped_request,ipv4),s::UdpRouteError::blocked) ||
         mapped_server.sockets()!=0) return 20;
     ::rules::RuleSet source_rules{{{"source-port","1000",{}}},2};
-    auto source_policy=::rules::RouteMatcher::compile(std::array{::rules::RouteRule{source_rules,1}},0,2,
+    auto source_policy=::rules::RouteProgram::compile_policy(std::array{::rules::ProgramRule{source_rules,{::rules::ProgramActionKind::route,1}}},0,2,
         ::rules::SourceMetadata::provided);
     if (!source_policy) return 21;
     s::UdpRoutedServer source_server(std::move(*source_policy),4,4);

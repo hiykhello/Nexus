@@ -313,8 +313,8 @@ namespace {
 
     auto test_stream_datagrams_live_scale_and_eviction() -> void {
         auto ctx = corosio::make_io_context(false);
-        auto policy = rules::RouteMatcher::compile({}, 2, 602);
-        check(policy.has_value(), "stream_datagrams mock RouteMatcher compiled");
+        auto policy = rules::RouteProgram::compile_policy({}, 2, 602);
+        check(policy.has_value(), "stream_datagrams mock RouteProgram compiled");
         if (!policy) return;
 
         // 3a. Fixed-peer outbound: 512 cap -> 512 distinct peers succeed, touch #1, send #513..#520 ->

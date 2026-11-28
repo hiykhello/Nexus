@@ -38,6 +38,22 @@ fun formatTrafficBytes(bytes: Long): String {
     }
 }
 
+fun formatCompactQuotaBytes(bytes: Long): String {
+    val safe = bytes.coerceAtLeast(0L)
+    return when {
+        safe >= 1024L * 1024L * 1024L -> {
+            val gb = safe / (1024.0 * 1024.0 * 1024.0)
+            "%.1f".format(gb).removeSuffix(".0") + " GB"
+        }
+        safe >= 1024L * 1024L -> {
+            val mb = safe / (1024.0 * 1024.0)
+            "%.1f".format(mb).removeSuffix(".0") + " MB"
+        }
+        safe >= 1024L -> "${safe / 1024L} KB"
+        else -> "$safe B"
+    }
+}
+
 fun formatTrafficRate(bytesPerSec: Long): String {
     val (value, unit) = splitTrafficRate(bytesPerSec)
     return "$value $unit"

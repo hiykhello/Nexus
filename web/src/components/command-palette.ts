@@ -46,7 +46,6 @@ export class NexusCommandPalette extends LitElement {
         background: var(--nx-overlay);
         border: 1px solid var(--nx-border-strong);
         border-radius: 12px;
-        box-shadow: var(--nx-modal-shadow);
         display: flex;
         flex-direction: column;
         overflow: hidden;
@@ -57,6 +56,11 @@ export class NexusCommandPalette extends LitElement {
         gap: 8px;
         padding: 10px 12px;
         border-bottom: 1px solid var(--nx-border);
+        transition: border-color 120ms ease-out;
+      }
+      .input-row:focus-within {
+        border-bottom: 2px solid var(--nx-accent);
+        padding-bottom: 9px;
       }
       .input-row input {
         flex: 1;

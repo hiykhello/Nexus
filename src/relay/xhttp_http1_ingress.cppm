@@ -16,7 +16,7 @@ import :xhttp_http1;
 import :xhttp_inbound_types;
 
 namespace relay::vless_xhttp {
-    inline auto process(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+    inline auto process(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
         InboundProfile& profile, Lower& lower) -> capy::task<> {
         std::string input;
         while (!session.closed) {

@@ -43,9 +43,9 @@ namespace relay {
         auto compile_indexed_routes(std::span<IndexedRouteRule const> input,std::size_t fallback,
             std::size_t outbound_count,std::optional<std::string_view> inbound,
             std::vector<std::size_t>* referenced=nullptr)
-            -> std::expected<rules::RouteMatcher,std::string> {
+            -> std::expected<rules::RouteProgram,std::string> {
             if (fallback>=outbound_count || input.size()>rules::max_rules) return std::unexpected("invalid route action or count");
-            std::vector<rules::RouteRule> route_rules;
+            std::vector<rules::ProgramRule> route_rules;
             std::size_t predicate_count=0;
             for (std::size_t index=0;index<input.size();++index) {
                 auto const& rule=input[index];
@@ -63,7 +63,8 @@ namespace relay {
                     if (n > rules::max_rules - predicate_count) return std::unexpected("too many route predicates");
                     predicate_count += static_cast<std::size_t>(n);
                     if (mmap->has_domain() || mmap->has_ip() || mmap->tail_beve_bytes() > 0) {
-                        route_rules.push_back({{}, rule.outbound, index, std::move(mmap), rule.ip_cidr_match_source});
+                        route_rules.push_back({{}, {rules::ProgramActionKind::route, rule.outbound},
+                            rules::DomainSource::explicit_target, std::move(mmap), rule.ip_cidr_match_source, index});
                         if (referenced) referenced->push_back(rule.outbound);
                     }
                     continue;
@@ -73,11 +74,12 @@ namespace relay {
                 if (parsed->rules.size()>rules::max_rules-predicate_count) return std::unexpected("too many route predicates");
                 predicate_count+=parsed->rules.size();
                 if (!parsed->rules.empty()) {
-                    route_rules.push_back({std::move(*parsed),rule.outbound,index});
+                    route_rules.push_back({std::move(*parsed), {rules::ProgramActionKind::route, rule.outbound},
+                        rules::DomainSource::explicit_target, {}, false, index});
                     if (referenced) referenced->push_back(rule.outbound);
                 }
             }
-            auto matcher=rules::RouteMatcher::compile(route_rules,fallback,outbound_count,
+            auto matcher=rules::RouteProgram::compile_policy(route_rules,fallback,outbound_count,
                 rules::SourceMetadata::provided,inbound,rules::AuthMetadata::provided);
             if (!matcher) return std::unexpected(matcher.error().message);
             return std::move(*matcher);

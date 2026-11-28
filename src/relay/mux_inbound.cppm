@@ -155,7 +155,7 @@ namespace relay::mux_in {
     }
 
     template<class SessionT>
-    auto serve_mux_child(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto serve_mux_child(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy,
         SessionT& mux, std::uint32_t sid) -> capy::task<> {
         auto lease = parent.quota ? parent.quota->try_acquire() : std::nullopt;
         if (parent.quota && !lease) {
@@ -243,7 +243,7 @@ namespace relay::mux_in {
     };
 
     template<class MuxSession>
-    auto drive_mux_server(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto drive_mux_server(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy,
         MuxSession& mux) -> capy::task<> {
         std::stop_callback stop_cb(parent.stop.get_token(), [&]() noexcept { mux.cancel(); });
         if (parent.closed) co_return;
@@ -291,7 +291,7 @@ namespace relay::mux_in {
     }
 
     template<class Lower>
-    auto run_mux_server(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto run_mux_server(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy,
         Lower& lower, std::uint8_t proto, std::uint32_t max_streams) -> capy::task<> {
         auto const capped = std::clamp<std::size_t>(max_streams, 1, 1024);
         if (proto == mux::sing::proto_h2mux) {
@@ -306,7 +306,7 @@ namespace relay::mux_in {
 
 namespace relay {
     template<class Stream>
-    auto serve_mux_session(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto serve_mux_session(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
         Stream& underlying, config::InboundMultiplexConfig const& cfg) -> capy::task<> {
         auto req = co_await mux_in::read_session_request(underlying);
         if (!req || session.closed || (cfg.padding && !req->padding)) co_return;

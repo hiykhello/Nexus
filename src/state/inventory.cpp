@@ -78,23 +78,10 @@ namespace state {
         return info;
     }
 
-    auto inspect_fakeip(std::filesystem::path const& path,bool unified) -> Inventory {
-        auto [info,folder]=begin(path,unified ? "NXFP01" : "legacy");
+    auto inspect_fakeip(std::filesystem::path const& path) -> Inventory {
+        auto [info,folder]=begin(path,"NXFP01");
         if (!folder) return info;
         auto dir=folder->get();
-        if (!unified) {
-            stat_files(dir,info,[](auto name){return name=="history" || name=="highwater";});
-            if (info.health=="ok") {
-                auto magic=read_number(dir,"history",0,4,true);
-                auto entries=read_number(dir,"history",20,4,true);
-                if (magic==0x4e464801 && entries && *entries && *entries<=256) {
-                    info.version="NFH1";
-                    info.entries=*entries;
-                    info.health="legacy";
-                } else info.health="damaged";
-            }
-            return info;
-        }
         if (!stat_files(dir,info,[](auto name) {
             return name=="fakeip.meta" || name=="fakeip.wal" || name=="fakeip.ckpt";
         })) return info;

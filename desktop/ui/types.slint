@@ -73,6 +73,8 @@ export struct DnsRuleDraft {
 }
 
 export struct OutboundNodeDraft {
+    edit-id: string,
+    sub-id: string,
     proto: string,
     tag: string,
     host: string,
@@ -81,7 +83,9 @@ export struct OutboundNodeDraft {
     uuid-str: string,
     username: string,
     flow: string,
+    packet-encoding: string,
     hy2-ports: string,
+    hy2-hop-interval: string,
     hy2-salamander: string,
     hy2-up-mbps: string,
     hy2-down-mbps: string,
@@ -93,14 +97,25 @@ export struct OutboundNodeDraft {
     snell-obfs-host: string,
     naive-proto: string,
     ssh-host-sha: string,
+    wg-peer-pbk: string,
+    wg-psk: string,
+    wg-local-cidr: string,
+    wg-reserved: string,
+    wg-mtu: string,
+    masque-mode: string,
+    masque-path: string,
+    masque-local-cidr: string,
     sni: string,
     fingerprint: string,
+    key-exchange: string,
     cert-sha256: string,
     use-reality: bool,
     reality-pbk: string,
     reality-sid: string,
+    client-hello-fragment: bool,
     tls-fragment: bool,
     ech-dns: bool,
+    ech-config: string,
     ech-query-sni: string,
     transport: string,
     transport-path: string,
@@ -108,9 +123,37 @@ export struct OutboundNodeDraft {
     xhttp-mode: string,
     ws-max-early-data: string,
     ws-early-data-header: string,
+    grpc-permit-without-stream: bool,
     mux-enabled: bool,
     mux-proto: string,
     mux-max-conns: string,
     mux-min-streams: string,
     mux-padding: bool,
+}
+
+export struct PolicyGroupDraft {
+    edit-id: string,
+    remarks: string,
+    strategy: string,
+    member-ids-csv: string,
+    dynamic-sub-id: string,
+    include-regex: string,
+    exclude-regex: string,
+    probe-url: string,
+    probe-interval-ms: string,
+    tolerance-ms: string,
+    interrupt-exist: bool,
+}
+
+export struct ProxyChainDraft {
+    edit-id: string,
+    remarks: string,
+    hop-ids-csv: string,
+}
+
+export struct CustomKdlDraft {
+    edit-id: string,
+    remarks: string,
+    kind: string,
+    kdl-text: string,
 }

@@ -197,19 +197,25 @@ namespace desktop {
         if (cfg.max_selector_members < 1) cfg.max_selector_members = 128;
         if (cfg.max_selector_members > 4096) cfg.max_selector_members = 4096;
         if (cfg.platform == "desktop-linux" && cfg.enable_tun && cfg.tun_strict_route) {
-            bool const had_mixed = cfg.enable_mixed;
-            bool const had_extra = !cfg.second_local_listen.empty() || !cfg.lan_listen.empty();
-            if (had_mixed) cfg.enable_mixed = false;
-            if (had_mixed || had_extra) {
+            bool const had_local = cfg.enable_mixed || cfg.enable_http || cfg.enable_socks;
+            bool const had_extra = cfg.allow_lan || !cfg.second_local_listen.empty() || !cfg.lan_listen.empty();
+            if (had_local) {
+                cfg.enable_mixed = false;
+                cfg.enable_http = false;
+                cfg.enable_socks = false;
+            }
+            if (cfg.allow_lan) cfg.allow_lan = false;
+            if (had_local || had_extra) {
                 notices.push_back(is_en
-                    ? "Linux strict-route forbids a second inbound; mixed/LAN local listeners are disabled while strict-route is active."
-                    : "Linux 严格路由 (strict-route) 下核心不允许第二个入站，本地混合/局域网监听端口已自动禁用。");
+                    ? "Linux strict-route forbids extra local/LAN inbounds; local Mixed/HTTP/SOCKS and LAN listeners were disabled while strict-route is active."
+                    : "Linux 严格路由 (strict-route) 下核心已自动禁用本地 Mixed/HTTP/SOCKS 与局域网监听端口。");
             }
         }
-        if (!cfg.enable_mixed && !cfg.enable_tun && cfg.second_local_listen.empty() && cfg.lan_listen.empty()) {
+        if (!cfg.enable_mixed && !cfg.enable_http && !cfg.enable_socks &&
+            !cfg.enable_tun && cfg.second_local_listen.empty() && cfg.lan_listen.empty()) {
             notices.push_back(is_en
-                ? "No inbound enabled (both Mixed proxy and TUN are off); enable at least one inbound before starting Core."
-                : "混合代理与 TUN 入站均已关闭，启动核心前请至少启用一个入站。");
+                ? "No inbound enabled (Mixed, HTTP, SOCKS5, and TUN are all off); enable at least one inbound before starting Core."
+                : "Mixed、HTTP、SOCKS5 与 TUN 入站均已关闭，启动核心前请至少启用一个入站。");
         }
         if (!cfg.control_bearer_file.empty()) {
             std::filesystem::path bp(std::u8string_view(
@@ -225,6 +231,11 @@ namespace desktop {
         JsonObject desktop_obj{
             {"enable_mixed", cfg.enable_mixed},
             {"mixed_listen", cfg.mixed_listen},
+            {"enable_socks", cfg.enable_socks},
+            {"socks_listen", cfg.socks_listen},
+            {"enable_http", cfg.enable_http},
+            {"http_listen", cfg.http_listen},
+            {"allow_lan", cfg.allow_lan},
             {"second_local_listen", cfg.second_local_listen},
             {"lan_listen", cfg.lan_listen},
             {"lan_username", cfg.lan_username},
@@ -360,7 +371,14 @@ namespace desktop {
             cfg.enable_mixed = json_get_bool(obj, "enable_mixed", true);
             cfg.mixed_listen = json_get_string(obj, "mixed_listen", "127.0.0.1:7890");
             cfg.second_local_listen = json_get_string(obj, "second_local_listen", "");
+            bool const has_enable_socks = json_find(obj, "enable_socks") != nullptr;
+            cfg.enable_socks = has_enable_socks ? json_get_bool(obj, "enable_socks", false) : !cfg.second_local_listen.empty();
+            cfg.socks_listen = json_get_string(
+                obj, "socks_listen", !cfg.second_local_listen.empty() ? cfg.second_local_listen : "127.0.0.1:10808");
+            cfg.enable_http = json_get_bool(obj, "enable_http", false);
+            cfg.http_listen = json_get_string(obj, "http_listen", "127.0.0.1:10809");
             cfg.lan_listen = json_get_string(obj, "lan_listen", "");
+            cfg.allow_lan = json_get_bool(obj, "allow_lan", false);
             cfg.lan_username = json_get_string(obj, "lan_username", "");
             cfg.lan_password = json_get_string(obj, "lan_password", "");
             cfg.enable_tun = json_get_bool(obj, "enable_tun", false);

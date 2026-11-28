@@ -71,7 +71,7 @@ def vless_identity_failure(directory, upstream_port, selected=False):
     if selected:
         (directory / "route-rules.kdl").write_text('schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.0/8"\n')
         routing = ('rulesets { selected path="route-rules.kdl" format="kdl"; }; '
-                   'rules { - kind="rule-set" value="selected" outbound="edge"; }; final "direct";')
+                   'rules { - rule-set="selected" to="edge"; }; final "direct";')
     for name, ca in (("wrong.example", directory / "root.pem"), ("server.example", directory / "other.pem")):
         with socket.socket() as origin, socket.socket() as reservation:
             origin.bind(("127.0.0.1", 0))

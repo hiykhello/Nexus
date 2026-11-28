@@ -1,7 +1,8 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
 import { OutboundNodeDraft } from "../types.slint";
-import { NexusInput } from "glass_primitives.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { NexusInput } from "nexus_primitives.slint";
 import { NexusChip } from "nexus_buttons.slint";
 import { NexusSwitch } from "nexus_controls.slint";
 import { CollapsibleSection, NexusSelect } from "nexus_select.slint";
@@ -15,12 +16,15 @@ component OutboundTransportCard inherits VerticalLayout {
     in property <bool> can-tls-frag: true;
     in-out property <string> sni: "";
     in-out property <string> fingerprint: "chrome";
+    in-out property <string> key-exchange: "default";
     in-out property <string> cert-sha256: "";
     in-out property <bool> use-reality: true;
     in-out property <string> reality-pbk: "";
     in-out property <string> reality-sid: "";
+    in-out property <bool> client-hello-fragment: false;
     in-out property <bool> tls-fragment: false;
     in-out property <bool> ech-dns: false;
+    in-out property <string> ech-config: "";
     in-out property <string> ech-query-sni: "";
     in-out property <string> transport: "tcp";
     in-out property <string> transport-path: "/";
@@ -28,6 +32,7 @@ component OutboundTransportCard inherits VerticalLayout {
     in-out property <string> xhttp-mode: "auto";
     in-out property <string> ws-max-early-data: "";
     in-out property <string> ws-early-data-header: "";
+    in-out property <bool> grpc-permit-without-stream: false;
     in-out property <bool> mux-enabled: false;
     in-out property <string> mux-proto: "h2mux";
     in-out property <string> mux-max-conns: "4";
@@ -39,45 +44,66 @@ component OutboundTransportCard inherits VerticalLayout {
     spacing: Theme.space-sm;
 
     Text {
-        text: root.has-tls ? I18n.t("TLS、传输与多路复用", "TLS, Transport & Mux") : I18n.t("传输与多路复用", "Transport & Mux");
+        text: root.has-tls ? I18n.t("TLS、传输层与多路复用", "TLS, Transport & Multiplex") : I18n.t("传输层与多路复用", "Transport & Multiplex");
         font-size: 13px; font-weight: 700; color: Theme.text-primary;
+    }
+
+    if !root.has-tls && !root.has-transport && !root.can-mux : Rectangle {
+        height: 64px;
+        border-radius: Theme.radius-md;
+        background: Theme.well-bg;
+        HorizontalLayout {
+            padding: 12px;
+            Text {
+                text: I18n.t("当前协议使用原生内核/UDP 隧道封装，无需额外配置 TLS 或流传输。", "This protocol uses native UDP/tunnel encapsulation without extra TLS or stream transport.");
+                font-size: 12px; color: Theme.text-secondary; wrap: word-wrap; vertical-alignment: center;
+            }
+        }
     }
 
     if root.has-tls : HorizontalLayout {
         spacing: 6px;
-        Text { width: 64px; text: "SNI"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.sni; placeholder-text: I18n.t("默认同主机", "Defaults to host"); }
+        Text { width: 64px; text: "SNI"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.sni; placeholder-text: I18n.t("默认同服务器地址", "Defaults to server"); }
         Text { text: "uTLS"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusSelect { width: 92px; options: ["default", "chrome", "firefox", "safari", "ios", "edge", "random"]; current-value <=> root.fingerprint; }
+        NexusSelect { width: 94px; options: ["default", "chrome", "firefox", "safari", "ios", "edge", "random"]; current-value <=> root.fingerprint; }
+    }
+
+    if root.has-tls : HorizontalLayout {
+        spacing: 6px;
+        Text { width: 64px; text: I18n.t("密钥交换", "KEM"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusSelect { horizontal-stretch: 1; options: ["default", "x25519", "x25519-mlkem768"]; current-value <=> root.key-exchange; }
     }
 
     if root.has-tls : FlexboxLayout {
-        spacing: Theme.space-lg;
+        spacing: Theme.space-md;
         if root.has-transport : NexusSwitch { text: "REALITY"; checked <=> root.use-reality; }
-        if root.can-tls-frag : NexusSwitch { text: "TLS Frag"; checked <=> root.tls-fragment; }
-        NexusSwitch { text: "ECH DNS"; checked <=> root.ech-dns; }
+        if root.can-tls-frag : NexusSwitch { text: "Hello Frag"; checked <=> root.client-hello-fragment; }
+        if root.can-tls-frag : NexusSwitch { text: "Record Frag"; checked <=> root.tls-fragment; }
+        NexusSwitch { text: "ECH"; checked <=> root.ech-dns; }
     }
 
     if root.has-tls && root.ech-dns : HorizontalLayout {
         spacing: 6px;
-        Text { width: 64px; text: "ECH QSN"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { min-width: 80px; horizontal-stretch: 1; mono: true; text <=> root.ech-query-sni; placeholder-text: I18n.t("可选查询域名", "Optional ECH query SNI"); }
+        Text { width: 64px; text: "ECH"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; mono: true; text <=> root.ech-query-sni; placeholder-text: I18n.t("ECH 查询域名", "ECH query SNI"); }
+        NexusInput { horizontal-stretch: 1; mono: true; text <=> root.ech-config; placeholder-text: I18n.t("可选 ECH Config Base64", "Optional ECHList"); }
     }
 
     if root.has-tls && root.has-transport && root.use-reality : HorizontalLayout {
         spacing: 6px;
-        Text { width: 64px; text: I18n.t("公钥", "PubKey"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { min-width: 80px; horizontal-stretch: 1; mono: true; text <=> root.reality-pbk; placeholder-text: "Base64/Hex"; }
-        Text { text: "SID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { width: 68px; mono: true; text <=> root.reality-sid; placeholder-text: I18n.t("可选", "Opt"); }
+        Text { width: 64px; text: I18n.t("公钥", "PubKey"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { min-width: 80px; horizontal-stretch: 1; mono: true; text <=> root.reality-pbk; placeholder-text: "REALITY PublicKey"; }
+        Text { text: "ShortID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { width: 74px; mono: true; text <=> root.reality-sid; placeholder-text: "01ab"; }
     }
 
-    if root.has-tls && root.has-transport : HorizontalLayout {
+    if root.has-transport : HorizontalLayout {
         spacing: 6px;
-        Text { width: 64px; text: I18n.t("传输", "Transport"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+        Text { width: 64px; text: I18n.t("传输层", "Network"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
         FlexboxLayout {
             horizontal-stretch: 1;
-            spacing: 6px;
+            spacing: 5px;
             NexusChip { chip-height: 26px; label: "tcp"; active: root.transport == "tcp"; clicked => { root.transport = "tcp"; } }
             NexusChip { chip-height: 26px; label: "websocket"; active: root.transport == "websocket"; clicked => { root.transport = "websocket"; } }
             NexusChip { chip-height: 26px; label: "grpc"; active: root.transport == "grpc"; clicked => { root.transport = "grpc"; } }
@@ -86,40 +112,46 @@ component OutboundTransportCard inherits VerticalLayout {
         }
     }
 
-    if root.has-tls && root.has-transport && root.transport != "tcp" : HorizontalLayout {
+    if root.has-transport && root.transport != "tcp" : HorizontalLayout {
         spacing: 6px;
-        Text { width: 64px; text: root.transport == "grpc" ? "Service" : "Path"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+        Text { width: 64px; text: root.transport == "grpc" ? "Service" : "Path"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
         NexusInput { min-width: 68px; horizontal-stretch: 1; mono: true; text <=> root.transport-path; placeholder-text: "/ws"; }
-        Text { text: "Host"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { min-width: 68px; horizontal-stretch: 1; mono: true; text <=> root.transport-host; placeholder-text: I18n.t("可选", "Opt"); }
-        if root.transport == "xhttp" : NexusSelect { width: 92px; options: ["auto", "packet-up", "stream-up", "stream-one"]; current-value <=> root.xhttp-mode; }
+        Text { text: root.transport == "grpc" ? "Auth" : "Host"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { min-width: 68px; horizontal-stretch: 1; mono: true; text <=> root.transport-host; placeholder-text: I18n.t("可选", "Optional"); }
+        if root.transport == "xhttp" : NexusSelect { width: 96px; options: ["auto", "packet-up", "stream-up", "stream-one"]; current-value <=> root.xhttp-mode; }
     }
 
-    if root.has-tls && root.has-transport && root.transport == "websocket" : HorizontalLayout {
+    if root.has-transport && root.transport == "websocket" : HorizontalLayout {
         spacing: 6px;
-        Text { width: 64px; text: "EarlyData"; font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { width: 64px; mono: true; text <=> root.ws-max-early-data; placeholder-text: "0..8192"; }
-        Text { text: "Hdr"; font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { min-width: 68px; horizontal-stretch: 1; mono: true; text <=> root.ws-early-data-header; placeholder-text: "Sec-WebSocket-Protocol"; }
+        Text { width: 64px; text: "EarlyData"; font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { width: 68px; mono: true; text <=> root.ws-max-early-data; placeholder-text: "2048"; }
+        Text { text: "Header"; font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; mono: true; text <=> root.ws-early-data-header; placeholder-text: "Sec-WebSocket-Protocol"; }
+    }
+
+    if root.has-transport && root.transport == "grpc" : HorizontalLayout {
+        spacing: 8px;
+        NexusSwitch { text: I18n.t("gRPC 空闲保活 (Permit Without Stream)", "gRPC Permit Without Stream"); checked <=> root.grpc-permit-without-stream; }
+        Rectangle { horizontal-stretch: 1; }
     }
 
     if root.can-mux : FlexboxLayout {
         spacing: Theme.space-md;
         NexusSwitch { text: "Multiplex"; checked <=> root.mux-enabled; }
-        if root.mux-enabled : NexusSelect { width: 88px; options: ["h2mux", "smux-v2"]; current-value <=> root.mux-proto; }
-        if root.mux-enabled : NexusInput { width: 46px; mono: true; text <=> root.mux-max-conns; placeholder-text: "4"; }
-        if root.mux-enabled : NexusInput { width: 46px; mono: true; text <=> root.mux-min-streams; placeholder-text: "2"; }
-        if root.mux-enabled : NexusSwitch { text: "Pad"; checked <=> root.mux-padding; }
+        if root.mux-enabled : NexusSelect { width: 94px; options: ["h2mux", "smux-v2", "smux-v1"]; current-value <=> root.mux-proto; }
+        if root.mux-enabled : NexusInput { width: 48px; mono: true; text <=> root.mux-max-conns; placeholder-text: "4"; }
+        if root.mux-enabled : NexusInput { width: 48px; mono: true; text <=> root.mux-min-streams; placeholder-text: "2"; }
+        if root.mux-enabled : NexusSwitch { text: "Padding"; checked <=> root.mux-padding; }
     }
 
     if root.has-tls : CollapsibleSection {
-        title: I18n.t("证书指纹固定", "Certificate Pinning");
+        title: I18n.t("证书 SHA-256 指纹固定", "Certificate SHA-256 Pinning");
         expanded <=> root.advanced-open;
 
         HorizontalLayout {
             spacing: 6px;
-            Text { width: 64px; text: "SHA-256"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-            NexusInput { min-width: 84px; horizontal-stretch: 1; mono: true; text <=> root.cert-sha256; placeholder-text: I18n.t("可选证书 SHA-256 指纹", "Optional cert SHA-256 pin"); }
+            Text { width: 64px; text: "SHA-256"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; text <=> root.cert-sha256; placeholder-text: I18n.t("可选服务端证书 SHA-256 指纹", "Optional cert SHA-256 pin"); }
         }
     }
 }
@@ -130,149 +162,179 @@ export component OutboundEditorTab inherits VerticalLayout {
     in property <bool> status-ok: true;
     callback add-outbound-node(OutboundNodeDraft);
 
-    in-out property <string> proto: "vless";
-    in-out property <string> tag: "hk-01";
-    in-out property <string> host: "hk01.example.net";
-    in-out property <string> port: "443";
-    in-out property <string> secret: "";
-    in-out property <string> uuid-str: "";
-    in-out property <string> username: "";
-    in-out property <string> flow: "xtls-rprx-vision";
-    in-out property <string> hy2-ports: "";
-    in-out property <string> hy2-salamander: "";
-    in-out property <string> hy2-up-mbps: "";
-    in-out property <string> hy2-down-mbps: "";
-    in-out property <string> tuic-cc: "bbr";
-    in-out property <bool> tuic-udp-over-stream: false;
-    in-out property <string> ss-method: "2022-blake3-aes-128-gcm";
-    in-out property <int> snell-ver: 5;
-    in-out property <string> snell-obfs: "none";
-    in-out property <string> snell-obfs-host: "";
-    in-out property <string> naive-proto: "h2";
-    in-out property <string> ssh-host-sha: "";
-    in-out property <string> sni: "";
-    in-out property <string> fingerprint: "chrome";
-    in-out property <string> cert-sha256: "";
-    in-out property <bool> use-reality: true;
-    in-out property <string> reality-pbk: "";
-    in-out property <string> reality-sid: "";
-    in-out property <bool> tls-fragment: false;
-    in-out property <bool> ech-dns: false;
-    in-out property <string> ech-query-sni: "";
-    in-out property <string> transport: "tcp";
-    in-out property <string> transport-path: "/";
-    in-out property <string> transport-host: "";
-    in-out property <string> xhttp-mode: "auto";
-    in-out property <string> ws-max-early-data: "";
-    in-out property <string> ws-early-data-header: "";
-    in-out property <bool> mux-enabled: false;
-    in-out property <string> mux-proto: "h2mux";
-    in-out property <string> mux-max-conns: "4";
-    in-out property <string> mux-min-streams: "2";
-    in-out property <bool> mux-padding: false;
+    private property <int> observed-rev: WorkspaceState.editor-revision;
+    in-out property <string> edit-id: WorkspaceState.editor-node-draft.edit-id;
+    in-out property <string> sub-id: WorkspaceState.editor-node-draft.sub-id;
+    in-out property <string> proto: WorkspaceState.editor-node-draft.proto;
+    in-out property <string> tag: WorkspaceState.editor-node-draft.tag;
+    in-out property <string> host: WorkspaceState.editor-node-draft.host;
+    in-out property <string> port: WorkspaceState.editor-node-draft.port;
+    in-out property <string> secret: WorkspaceState.editor-node-draft.secret;
+    in-out property <string> uuid-str: WorkspaceState.editor-node-draft.uuid-str;
+    in-out property <string> username: WorkspaceState.editor-node-draft.username;
+    in-out property <string> flow: WorkspaceState.editor-node-draft.flow;
+    in-out property <string> packet-encoding: WorkspaceState.editor-node-draft.packet-encoding;
+    in-out property <string> hy2-ports: WorkspaceState.editor-node-draft.hy2-ports;
+    in-out property <string> hy2-hop-interval: WorkspaceState.editor-node-draft.hy2-hop-interval;
+    in-out property <string> hy2-salamander: WorkspaceState.editor-node-draft.hy2-salamander;
+    in-out property <string> hy2-up-mbps: WorkspaceState.editor-node-draft.hy2-up-mbps;
+    in-out property <string> hy2-down-mbps: WorkspaceState.editor-node-draft.hy2-down-mbps;
+    in-out property <string> tuic-cc: WorkspaceState.editor-node-draft.tuic-cc;
+    in-out property <bool> tuic-udp-over-stream: WorkspaceState.editor-node-draft.tuic-udp-over-stream;
+    in-out property <string> ss-method: WorkspaceState.editor-node-draft.ss-method;
+    in-out property <int> snell-ver: WorkspaceState.editor-node-draft.snell-ver;
+    in-out property <string> snell-obfs: WorkspaceState.editor-node-draft.snell-obfs;
+    in-out property <string> snell-obfs-host: WorkspaceState.editor-node-draft.snell-obfs-host;
+    in-out property <string> naive-proto: WorkspaceState.editor-node-draft.naive-proto;
+    in-out property <string> ssh-host-sha: WorkspaceState.editor-node-draft.ssh-host-sha;
+    in-out property <string> wg-peer-pbk: WorkspaceState.editor-node-draft.wg-peer-pbk;
+    in-out property <string> wg-psk: WorkspaceState.editor-node-draft.wg-psk;
+    in-out property <string> wg-local-cidr: WorkspaceState.editor-node-draft.wg-local-cidr;
+    in-out property <string> wg-reserved: WorkspaceState.editor-node-draft.wg-reserved;
+    in-out property <string> wg-mtu: WorkspaceState.editor-node-draft.wg-mtu;
+    in-out property <string> masque-mode: WorkspaceState.editor-node-draft.masque-mode;
+    in-out property <string> masque-path: WorkspaceState.editor-node-draft.masque-path;
+    in-out property <string> masque-local-cidr: WorkspaceState.editor-node-draft.masque-local-cidr;
+    in-out property <string> sni: WorkspaceState.editor-node-draft.sni;
+    in-out property <string> fingerprint: WorkspaceState.editor-node-draft.fingerprint;
+    in-out property <string> key-exchange: WorkspaceState.editor-node-draft.key-exchange;
+    in-out property <string> cert-sha256: WorkspaceState.editor-node-draft.cert-sha256;
+    in-out property <bool> use-reality: WorkspaceState.editor-node-draft.use-reality;
+    in-out property <string> reality-pbk: WorkspaceState.editor-node-draft.reality-pbk;
+    in-out property <string> reality-sid: WorkspaceState.editor-node-draft.reality-sid;
+    in-out property <bool> client-hello-fragment: WorkspaceState.editor-node-draft.client-hello-fragment;
+    in-out property <bool> tls-fragment: WorkspaceState.editor-node-draft.tls-fragment;
+    in-out property <bool> ech-dns: WorkspaceState.editor-node-draft.ech-dns;
+    in-out property <string> ech-config: WorkspaceState.editor-node-draft.ech-config;
+    in-out property <string> ech-query-sni: WorkspaceState.editor-node-draft.ech-query-sni;
+    in-out property <string> transport: WorkspaceState.editor-node-draft.transport;
+    in-out property <string> transport-path: WorkspaceState.editor-node-draft.transport-path;
+    in-out property <string> transport-host: WorkspaceState.editor-node-draft.transport-host;
+    in-out property <string> xhttp-mode: WorkspaceState.editor-node-draft.xhttp-mode;
+    in-out property <string> ws-max-early-data: WorkspaceState.editor-node-draft.ws-max-early-data;
+    in-out property <string> ws-early-data-header: WorkspaceState.editor-node-draft.ws-early-data-header;
+    in-out property <bool> grpc-permit-without-stream: WorkspaceState.editor-node-draft.grpc-permit-without-stream;
+    in-out property <bool> mux-enabled: WorkspaceState.editor-node-draft.mux-enabled;
+    in-out property <string> mux-proto: WorkspaceState.editor-node-draft.mux-proto;
+    in-out property <string> mux-max-conns: WorkspaceState.editor-node-draft.mux-max-conns;
+    in-out property <string> mux-min-streams: WorkspaceState.editor-node-draft.mux-min-streams;
+    in-out property <bool> mux-padding: WorkspaceState.editor-node-draft.mux-padding;
     in-out property <bool> advanced-open: false;
 
+    function load-from-state() {
+        let d = WorkspaceState.editor-node-draft;
+        root.edit-id = d.edit-id; root.sub-id = d.sub-id; root.proto = d.proto; root.tag = d.tag;
+        root.host = d.host; root.port = d.port; root.secret = d.secret; root.uuid-str = d.uuid-str;
+        root.username = d.username; root.flow = d.flow; root.packet-encoding = d.packet-encoding;
+        root.hy2-ports = d.hy2-ports; root.hy2-hop-interval = d.hy2-hop-interval;
+        root.hy2-salamander = d.hy2-salamander; root.hy2-up-mbps = d.hy2-up-mbps; root.hy2-down-mbps = d.hy2-down-mbps;
+        root.tuic-cc = d.tuic-cc; root.tuic-udp-over-stream = d.tuic-udp-over-stream; root.ss-method = d.ss-method;
+        root.snell-ver = d.snell-ver; root.snell-obfs = d.snell-obfs; root.snell-obfs-host = d.snell-obfs-host;
+        root.naive-proto = d.naive-proto; root.ssh-host-sha = d.ssh-host-sha;
+        root.wg-peer-pbk = d.wg-peer-pbk; root.wg-psk = d.wg-psk; root.wg-local-cidr = d.wg-local-cidr;
+        root.wg-reserved = d.wg-reserved; root.wg-mtu = d.wg-mtu;
+        root.masque-mode = d.masque-mode; root.masque-path = d.masque-path; root.masque-local-cidr = d.masque-local-cidr;
+        root.sni = d.sni; root.fingerprint = d.fingerprint; root.key-exchange = d.key-exchange; root.cert-sha256 = d.cert-sha256;
+        root.use-reality = d.use-reality; root.reality-pbk = d.reality-pbk; root.reality-sid = d.reality-sid;
+        root.client-hello-fragment = d.client-hello-fragment; root.tls-fragment = d.tls-fragment;
+        root.ech-dns = d.ech-dns; root.ech-config = d.ech-config; root.ech-query-sni = d.ech-query-sni;
+        root.transport = d.transport; root.transport-path = d.transport-path; root.transport-host = d.transport-host;
+        root.xhttp-mode = d.xhttp-mode; root.ws-max-early-data = d.ws-max-early-data; root.ws-early-data-header = d.ws-early-data-header;
+        root.grpc-permit-without-stream = d.grpc-permit-without-stream;
+        root.mux-enabled = d.mux-enabled; root.mux-proto = d.mux-proto;
+        root.mux-max-conns = d.mux-max-conns; root.mux-min-streams = d.mux-min-streams; root.mux-padding = d.mux-padding;
+    }
+
+    changed observed-rev => { root.load-from-state(); }
+
     property <bool> two-col: root.container-width >= 680px;
-    property <bool> has-tls: root.proto != "shadowsocks" && root.proto != "snell" && root.proto != "ssh";
+    property <bool> has-tls: root.proto != "shadowsocks" && root.proto != "snell" && root.proto != "ssh" && root.proto != "wireguard" && root.proto != "socks5";
     property <bool> has-transport: root.proto == "vless" || root.proto == "trojan" || root.proto == "anytls";
-    property <bool> can-mux: root.has-transport || root.proto == "shadowsocks" || root.proto == "snell";
-    property <bool> can-tls-frag: root.has-tls && root.proto != "hysteria2" && root.proto != "tuic";
+    property <bool> can-mux: root.has-transport || root.proto == "shadowsocks" || root.proto == "snell" || root.proto == "socks5";
+    property <bool> can-tls-frag: root.has-tls && root.proto != "hysteria2" && root.proto != "tuic" && root.proto != "masque";
 
     pure function current-draft() -> OutboundNodeDraft {
         {
-            proto: root.proto, tag: root.tag, host: root.host, port: root.port,
-            secret: root.secret, uuid-str: root.uuid-str, username: root.username, flow: root.flow,
-            hy2-ports: root.hy2-ports, hy2-salamander: root.hy2-salamander,
+            edit-id: root.edit-id, sub-id: root.sub-id, proto: root.proto, tag: root.tag, host: root.host, port: root.port,
+            secret: root.secret, uuid-str: root.uuid-str, username: root.username, flow: root.flow, packet-encoding: root.packet-encoding,
+            hy2-ports: root.hy2-ports, hy2-hop-interval: root.hy2-hop-interval, hy2-salamander: root.hy2-salamander,
             hy2-up-mbps: root.hy2-up-mbps, hy2-down-mbps: root.hy2-down-mbps,
             tuic-cc: root.tuic-cc, tuic-udp-over-stream: root.tuic-udp-over-stream,
             ss-method: root.ss-method, snell-ver: root.snell-ver, snell-obfs: root.snell-obfs, snell-obfs-host: root.snell-obfs-host,
             naive-proto: root.naive-proto, ssh-host-sha: root.ssh-host-sha,
-            sni: root.sni, fingerprint: root.fingerprint, cert-sha256: root.cert-sha256,
+            wg-peer-pbk: root.wg-peer-pbk, wg-psk: root.wg-psk, wg-local-cidr: root.wg-local-cidr, wg-reserved: root.wg-reserved, wg-mtu: root.wg-mtu,
+            masque-mode: root.masque-mode, masque-path: root.masque-path, masque-local-cidr: root.masque-local-cidr,
+            sni: root.sni, fingerprint: root.fingerprint, key-exchange: root.key-exchange, cert-sha256: root.cert-sha256,
             use-reality: root.use-reality, reality-pbk: root.reality-pbk, reality-sid: root.reality-sid,
-            tls-fragment: root.tls-fragment, ech-dns: root.ech-dns, ech-query-sni: root.ech-query-sni,
+            client-hello-fragment: root.client-hello-fragment, tls-fragment: root.tls-fragment,
+            ech-dns: root.ech-dns, ech-config: root.ech-config, ech-query-sni: root.ech-query-sni,
             transport: root.transport, transport-path: root.transport-path, transport-host: root.transport-host,
             xhttp-mode: root.xhttp-mode, ws-max-early-data: root.ws-max-early-data, ws-early-data-header: root.ws-early-data-header,
+            grpc-permit-without-stream: root.grpc-permit-without-stream,
             mux-enabled: root.mux-enabled, mux-proto: root.mux-proto,
             mux-max-conns: root.mux-max-conns, mux-min-streams: root.mux-min-streams, mux-padding: root.mux-padding,
         }
-    }
-
-    function reset-form() {
-        root.proto = "vless"; root.tag = "hk-01"; root.host = "hk01.example.net"; root.port = "443";
-        root.secret = ""; root.uuid-str = ""; root.username = ""; root.flow = "xtls-rprx-vision";
-        root.sni = ""; root.fingerprint = "chrome"; root.cert-sha256 = ""; root.use-reality = true;
-        root.reality-pbk = ""; root.reality-sid = ""; root.tls-fragment = false; root.ech-dns = false; root.ech-query-sni = "";
-        root.transport = "tcp"; root.transport-path = "/"; root.transport-host = ""; root.ws-max-early-data = ""; root.ws-early-data-header = "";
-        root.mux-enabled = false; root.mux-proto = "h2mux"; root.mux-max-conns = "4"; root.mux-min-streams = "2"; root.mux-padding = false;
     }
 
     vertical-stretch: 0;
     alignment: start;
     spacing: Theme.space-md;
 
-    if root.two-col : HorizontalLayout {
+    HorizontalLayout {
         spacing: Theme.space-lg;
 
         OutboundProtoCard {
-            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-            proto <=> root.proto; tag <=> root.tag; host <=> root.host; port <=> root.port;
-            secret <=> root.secret; uuid-str <=> root.uuid-str; username <=> root.username; flow <=> root.flow;
-            hy2-ports <=> root.hy2-ports; hy2-salamander <=> root.hy2-salamander;
+            horizontal-stretch: 1.08; preferred-width: 0px; min-width: 0px;
+            proto <=> root.proto; sub-id <=> root.sub-id; tag <=> root.tag; host <=> root.host; port <=> root.port;
+            secret <=> root.secret; uuid-str <=> root.uuid-str; username <=> root.username;
+            flow <=> root.flow; packet-encoding <=> root.packet-encoding;
+            hy2-ports <=> root.hy2-ports; hy2-hop-interval <=> root.hy2-hop-interval; hy2-salamander <=> root.hy2-salamander;
             hy2-up-mbps <=> root.hy2-up-mbps; hy2-down-mbps <=> root.hy2-down-mbps;
             tuic-cc <=> root.tuic-cc; tuic-udp-over-stream <=> root.tuic-udp-over-stream; ss-method <=> root.ss-method;
             snell-ver <=> root.snell-ver; snell-obfs <=> root.snell-obfs; snell-obfs-host <=> root.snell-obfs-host;
             naive-proto <=> root.naive-proto; ssh-host-sha <=> root.ssh-host-sha;
+            wg-peer-pbk <=> root.wg-peer-pbk; wg-psk <=> root.wg-psk; wg-local-cidr <=> root.wg-local-cidr;
+            wg-reserved <=> root.wg-reserved; wg-mtu <=> root.wg-mtu;
+            masque-mode <=> root.masque-mode; masque-path <=> root.masque-path; masque-local-cidr <=> root.masque-local-cidr;
         }
 
-        Rectangle { width: 1px; background: Theme.hairline-subtle; }
+        if root.two-col : Rectangle { width: 1px; background: Theme.hairline-subtle; }
 
-        OutboundTransportCard {
-            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+        if root.two-col : OutboundTransportCard {
+            horizontal-stretch: 1.0; preferred-width: 0px; min-width: 0px;
             has-tls: root.has-tls; has-transport: root.has-transport; can-mux: root.can-mux; can-tls-frag: root.can-tls-frag;
-            sni <=> root.sni; fingerprint <=> root.fingerprint; cert-sha256 <=> root.cert-sha256;
+            sni <=> root.sni; fingerprint <=> root.fingerprint; key-exchange <=> root.key-exchange; cert-sha256 <=> root.cert-sha256;
             use-reality <=> root.use-reality; reality-pbk <=> root.reality-pbk; reality-sid <=> root.reality-sid;
-            tls-fragment <=> root.tls-fragment; ech-dns <=> root.ech-dns; ech-query-sni <=> root.ech-query-sni;
+            client-hello-fragment <=> root.client-hello-fragment; tls-fragment <=> root.tls-fragment;
+            ech-dns <=> root.ech-dns; ech-config <=> root.ech-config; ech-query-sni <=> root.ech-query-sni;
             transport <=> root.transport; transport-path <=> root.transport-path; transport-host <=> root.transport-host; xhttp-mode <=> root.xhttp-mode;
             ws-max-early-data <=> root.ws-max-early-data; ws-early-data-header <=> root.ws-early-data-header;
+            grpc-permit-without-stream <=> root.grpc-permit-without-stream;
             mux-enabled <=> root.mux-enabled; mux-proto <=> root.mux-proto; mux-max-conns <=> root.mux-max-conns; mux-min-streams <=> root.mux-min-streams; mux-padding <=> root.mux-padding;
             advanced-open <=> root.advanced-open;
         }
     }
 
-    if !root.two-col : VerticalLayout {
-        spacing: Theme.space-md;
-
-        OutboundProtoCard {
-            proto <=> root.proto; tag <=> root.tag; host <=> root.host; port <=> root.port;
-            secret <=> root.secret; uuid-str <=> root.uuid-str; username <=> root.username; flow <=> root.flow;
-            hy2-ports <=> root.hy2-ports; hy2-salamander <=> root.hy2-salamander;
-            hy2-up-mbps <=> root.hy2-up-mbps; hy2-down-mbps <=> root.hy2-down-mbps;
-            tuic-cc <=> root.tuic-cc; tuic-udp-over-stream <=> root.tuic-udp-over-stream; ss-method <=> root.ss-method;
-            snell-ver <=> root.snell-ver; snell-obfs <=> root.snell-obfs; snell-obfs-host <=> root.snell-obfs-host;
-            naive-proto <=> root.naive-proto; ssh-host-sha <=> root.ssh-host-sha;
-        }
-
-        Rectangle { height: 1px; background: Theme.hairline-subtle; }
-
-        OutboundTransportCard {
-            has-tls: root.has-tls; has-transport: root.has-transport; can-mux: root.can-mux; can-tls-frag: root.can-tls-frag;
-            sni <=> root.sni; fingerprint <=> root.fingerprint; cert-sha256 <=> root.cert-sha256;
-            use-reality <=> root.use-reality; reality-pbk <=> root.reality-pbk; reality-sid <=> root.reality-sid;
-            tls-fragment <=> root.tls-fragment; ech-dns <=> root.ech-dns; ech-query-sni <=> root.ech-query-sni;
-            transport <=> root.transport; transport-path <=> root.transport-path; transport-host <=> root.transport-host; xhttp-mode <=> root.xhttp-mode;
-            ws-max-early-data <=> root.ws-max-early-data; ws-early-data-header <=> root.ws-early-data-header;
-            mux-enabled <=> root.mux-enabled; mux-proto <=> root.mux-proto; mux-max-conns <=> root.mux-max-conns; mux-min-streams <=> root.mux-min-streams; mux-padding <=> root.mux-padding;
-            advanced-open <=> root.advanced-open;
-        }
+    if !root.two-col : OutboundTransportCard {
+        has-tls: root.has-tls; has-transport: root.has-transport; can-mux: root.can-mux; can-tls-frag: root.can-tls-frag;
+        sni <=> root.sni; fingerprint <=> root.fingerprint; key-exchange <=> root.key-exchange; cert-sha256 <=> root.cert-sha256;
+        use-reality <=> root.use-reality; reality-pbk <=> root.reality-pbk; reality-sid <=> root.reality-sid;
+        client-hello-fragment <=> root.client-hello-fragment; tls-fragment <=> root.tls-fragment;
+        ech-dns <=> root.ech-dns; ech-config <=> root.ech-config; ech-query-sni <=> root.ech-query-sni;
+        transport <=> root.transport; transport-path <=> root.transport-path; transport-host <=> root.transport-host; xhttp-mode <=> root.xhttp-mode;
+        ws-max-early-data <=> root.ws-max-early-data; ws-early-data-header <=> root.ws-early-data-header;
+        grpc-permit-without-stream <=> root.grpc-permit-without-stream;
+        mux-enabled <=> root.mux-enabled; mux-proto <=> root.mux-proto; mux-max-conns <=> root.mux-max-conns; mux-min-streams <=> root.mux-min-streams; mux-padding <=> root.mux-padding;
+        advanced-open <=> root.advanced-open;
     }
 
     Rectangle { height: 1px; background: Theme.hairline-subtle; }
 
     RuleActionBar {
-        button-text: I18n.t("添加节点", "Add Node");
+        button-text: root.edit-id != "" ? I18n.t("保存节点修改", "Save Node") : I18n.t("保存并添加节点", "Add Server Node");
         status-text: root.status-text;
         status-ok: root.status-ok;
         commit => { root.add-outbound-node(root.current-draft()); }
-        reset => { root.reset-form(); }
+        reset => { WorkspaceState.request-new-profile("node"); root.load-from-state(); }
     }
 }

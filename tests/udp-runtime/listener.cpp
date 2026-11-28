@@ -33,8 +33,8 @@ int main(int argc,char** argv) {
     configure_udp_send_faults(mode);
 #endif
     auto limit=mode=="capacity" ? 2 : mode=="expiry" ? 1 : 64;
-    std::array ordered_rules{::rules::RouteRule{{{{"ip-cidr","127.0.0.2/32"},{"domain-suffix","blocked.test"}}},1}};
-    auto ordered=::rules::RouteMatcher::compile(ordered_rules,0,2);
+    std::array ordered_rules{::rules::ProgramRule{{{{"ip-cidr","127.0.0.2/32"},{"domain-suffix","blocked.test"}}},{::rules::ProgramActionKind::route,1}}};
+    auto ordered=::rules::RouteProgram::compile_policy(ordered_rules,0,2);
     if (!ordered) return 17;
     auto state=(mode=="ordered" || mode=="tcp-dns") ? registry.add(psk,std::move(*ordered),limit) : registry.add(psk,std::move(*policy),limit);
     if (!state) return 10;

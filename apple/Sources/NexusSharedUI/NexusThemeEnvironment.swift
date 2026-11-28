@@ -58,26 +58,26 @@ public struct NexusThemeTokens: Sendable, Equatable {
         NexusThemeTokens(
             preset: .obsidian,
             isDark: true,
-            chassisBackground: Color(red: 0x0D / 255.0, green: 0x0F / 255.0, blue: 0x13 / 255.0),
-            canvasBackground: Color(red: 0x12 / 255.0, green: 0x15 / 255.0, blue: 0x1B / 255.0),
-            cardSurface: Color(red: 0x19 / 255.0, green: 0x1D / 255.0, blue: 0x25 / 255.0),
-            wellSurface: Color(red: 0x20 / 255.0, green: 0x25 / 255.0, blue: 0x30 / 255.0),
-            hoverSurface: Color(red: 0x25 / 255.0, green: 0x2A / 255.0, blue: 0x35 / 255.0),
+            chassisBackground: Color(red: 0x13 / 255.0, green: 0x19 / 255.0, blue: 0x23 / 255.0),
+            canvasBackground: Color(red: 0x0F / 255.0, green: 0x14 / 255.0, blue: 0x1C / 255.0),
+            cardSurface: Color(red: 0x17 / 255.0, green: 0x1E / 255.0, blue: 0x29 / 255.0),
+            wellSurface: Color(red: 0x1E / 255.0, green: 0x27 / 255.0, blue: 0x36 / 255.0),
+            hoverSurface: Color(red: 0x21 / 255.0, green: 0x2C / 255.0, blue: 0x3D / 255.0),
             hairlineBorder: increasedContrast
-                ? Color(red: 0x6C / 255.0, green: 0x76 / 255.0, blue: 0x8B / 255.0)
-                : Color(red: 0x2A / 255.0, green: 0x30 / 255.0, blue: 0x3E / 255.0),
-            strongBorder: Color(red: 0x6C / 255.0, green: 0x76 / 255.0, blue: 0x8B / 255.0),
-            primaryInk: Color(red: 0xED / 255.0, green: 0xF0 / 255.0, blue: 0xF5 / 255.0),
-            secondaryInk: Color(red: 0x9B / 255.0, green: 0xA4 / 255.0, blue: 0xB5 / 255.0),
-            accentFill: Color(red: 0x3B / 255.0, green: 0x57 / 255.0, blue: 0xE0 / 255.0),
+                ? Color(red: 0x5B / 255.0, green: 0x6D / 255.0, blue: 0x87 / 255.0)
+                : Color(red: 0x26 / 255.0, green: 0x31 / 255.0, blue: 0x42 / 255.0),
+            strongBorder: Color(red: 0x47 / 255.0, green: 0x55 / 255.0, blue: 0x69 / 255.0),
+            primaryInk: Color(red: 0xF1 / 255.0, green: 0xF5 / 255.0, blue: 0xF9 / 255.0),
+            secondaryInk: Color(red: 0xA3 / 255.0, green: 0xB3 / 255.0, blue: 0xC9 / 255.0),
+            accentFill: Color(red: 0x25 / 255.0, green: 0x63 / 255.0, blue: 0xEB / 255.0),
             accentFillInk: Color.white,
-            accentText: Color(red: 0x7C / 255.0, green: 0x96 / 255.0, blue: 0xFF / 255.0),
+            accentText: Color(red: 0x60 / 255.0, green: 0xA5 / 255.0, blue: 0xFA / 255.0),
             signalEmerald: Color(red: 0x34 / 255.0, green: 0xD3 / 255.0, blue: 0x99 / 255.0),
             signalEmeraldFill: Color(red: 0x10 / 255.0, green: 0xB9 / 255.0, blue: 0x81 / 255.0),
             warning: Color(red: 0xFB / 255.0, green: 0xBF / 255.0, blue: 0x24 / 255.0),
             danger: Color(red: 0xF8 / 255.0, green: 0x71 / 255.0, blue: 0x71 / 255.0),
-            rxLine: Color(red: 0x38 / 255.0, green: 0xBD / 255.0, blue: 0xF8 / 255.0),
-            txLine: Color(red: 0xC0 / 255.0, green: 0x84 / 255.0, blue: 0xFC / 255.0)
+            rxLine: Color(red: 0x60 / 255.0, green: 0xA5 / 255.0, blue: 0xFA / 255.0),
+            txLine: Color(red: 0x10 / 255.0, green: 0xB9 / 255.0, blue: 0x81 / 255.0)
         )
     }
 
@@ -85,26 +85,26 @@ public struct NexusThemeTokens: Sendable, Equatable {
         NexusThemeTokens(
             preset: .paper,
             isDark: false,
-            chassisBackground: Color(red: 0xEC / 255.0, green: 0xEA / 255.0, blue: 0xE4 / 255.0),
-            canvasBackground: Color(red: 0xF6 / 255.0, green: 0xF5 / 255.0, blue: 0xF2 / 255.0),
+            chassisBackground: Color.white,
+            canvasBackground: Color(red: 0xF4 / 255.0, green: 0xF6 / 255.0, blue: 0xF9 / 255.0),
             cardSurface: Color.white,
-            wellSurface: Color(red: 0xF0 / 255.0, green: 0xEE / 255.0, blue: 0xE9 / 255.0),
-            hoverSurface: Color(red: 0xE6 / 255.0, green: 0xE3 / 255.0, blue: 0xDB / 255.0),
+            wellSurface: Color(red: 0xF8 / 255.0, green: 0xFA / 255.0, blue: 0xFC / 255.0),
+            hoverSurface: Color(red: 0xF1 / 255.0, green: 0xF5 / 255.0, blue: 0xF9 / 255.0),
             hairlineBorder: increasedContrast
-                ? Color(red: 0x7A / 255.0, green: 0x77 / 255.0, blue: 0x70 / 255.0)
-                : Color(red: 0xDD / 255.0, green: 0xD9 / 255.0, blue: 0xD0 / 255.0),
-            strongBorder: Color(red: 0x7A / 255.0, green: 0x77 / 255.0, blue: 0x70 / 255.0),
-            primaryInk: Color(red: 0x18 / 255.0, green: 0x1C / 255.0, blue: 0x24 / 255.0),
-            secondaryInk: Color(red: 0x52 / 255.0, green: 0x5A / 255.0, blue: 0x69 / 255.0),
-            accentFill: Color(red: 0x34 / 255.0, green: 0x51 / 255.0, blue: 0xD1 / 255.0),
+                ? Color(red: 0x94 / 255.0, green: 0xA3 / 255.0, blue: 0xB8 / 255.0)
+                : Color(red: 0xE2 / 255.0, green: 0xE8 / 255.0, blue: 0xF0 / 255.0),
+            strongBorder: Color(red: 0x94 / 255.0, green: 0xA3 / 255.0, blue: 0xB8 / 255.0),
+            primaryInk: Color(red: 0x0F / 255.0, green: 0x17 / 255.0, blue: 0x2A / 255.0),
+            secondaryInk: Color(red: 0x47 / 255.0, green: 0x55 / 255.0, blue: 0x69 / 255.0),
+            accentFill: Color(red: 0x25 / 255.0, green: 0x63 / 255.0, blue: 0xEB / 255.0),
             accentFillInk: Color.white,
-            accentText: Color(red: 0x34 / 255.0, green: 0x51 / 255.0, blue: 0xD1 / 255.0),
-            signalEmerald: Color(red: 0x04 / 255.0, green: 0x78 / 255.0, blue: 0x57 / 255.0),
-            signalEmeraldFill: Color(red: 0x04 / 255.0, green: 0x78 / 255.0, blue: 0x57 / 255.0),
-            warning: Color(red: 0xB4 / 255.0, green: 0x53 / 255.0, blue: 0x09 / 255.0),
-            danger: Color(red: 0xB9 / 255.0, green: 0x1C / 255.0, blue: 0x1C / 255.0),
-            rxLine: Color(red: 0x03 / 255.0, green: 0x69 / 255.0, blue: 0xA1 / 255.0),
-            txLine: Color(red: 0x6D / 255.0, green: 0x28 / 255.0, blue: 0xD9 / 255.0)
+            accentText: Color(red: 0x1D / 255.0, green: 0x4E / 255.0, blue: 0xD8 / 255.0),
+            signalEmerald: Color(red: 0x05 / 255.0, green: 0x96 / 255.0, blue: 0x69 / 255.0),
+            signalEmeraldFill: Color(red: 0x05 / 255.0, green: 0x96 / 255.0, blue: 0x69 / 255.0),
+            warning: Color(red: 0xD9 / 255.0, green: 0x77 / 255.0, blue: 0x06 / 255.0),
+            danger: Color(red: 0xDC / 255.0, green: 0x26 / 255.0, blue: 0x26 / 255.0),
+            rxLine: Color(red: 0x25 / 255.0, green: 0x63 / 255.0, blue: 0xEB / 255.0),
+            txLine: Color(red: 0x05 / 255.0, green: 0x96 / 255.0, blue: 0x69 / 255.0)
         )
     }
 
@@ -112,26 +112,26 @@ public struct NexusThemeTokens: Sendable, Equatable {
         NexusThemeTokens(
             preset: .studioAmber,
             isDark: true,
-            chassisBackground: Color(red: 0x0E / 255.0, green: 0x0D / 255.0, blue: 0x0C / 255.0),
-            canvasBackground: Color(red: 0x14 / 255.0, green: 0x13 / 255.0, blue: 0x11 / 255.0),
-            cardSurface: Color(red: 0x1C / 255.0, green: 0x1A / 255.0, blue: 0x17 / 255.0),
-            wellSurface: Color(red: 0x25 / 255.0, green: 0x22 / 255.0, blue: 0x1E / 255.0),
-            hoverSurface: Color(red: 0x2B / 255.0, green: 0x27 / 255.0, blue: 0x22 / 255.0),
+            chassisBackground: Color(red: 0x16 / 255.0, green: 0x14 / 255.0, blue: 0x11 / 255.0),
+            canvasBackground: Color(red: 0x12 / 255.0, green: 0x10 / 255.0, blue: 0x0E / 255.0),
+            cardSurface: Color(red: 0x1B / 255.0, green: 0x18 / 255.0, blue: 0x15 / 255.0),
+            wellSurface: Color(red: 0x24 / 255.0, green: 0x20 / 255.0, blue: 0x1B / 255.0),
+            hoverSurface: Color(red: 0x29 / 255.0, green: 0x24 / 255.0, blue: 0x1E / 255.0),
             hairlineBorder: increasedContrast
-                ? Color(red: 0x7A / 255.0, green: 0x72 / 255.0, blue: 0x66 / 255.0)
-                : Color(red: 0x30 / 255.0, green: 0x2C / 255.0, blue: 0x26 / 255.0),
-            strongBorder: Color(red: 0x7A / 255.0, green: 0x72 / 255.0, blue: 0x66 / 255.0),
-            primaryInk: Color(red: 0xF2 / 255.0, green: 0xEF / 255.0, blue: 0xE9 / 255.0),
-            secondaryInk: Color(red: 0xA6 / 255.0, green: 0x9E / 255.0, blue: 0x92 / 255.0),
-            accentFill: Color(red: 0xE5 / 255.0, green: 0x9A / 255.0, blue: 0x2E / 255.0),
+                ? Color(red: 0x6B / 255.0, green: 0x5F / 255.0, blue: 0x4F / 255.0)
+                : Color(red: 0x2F / 255.0, green: 0x2A / 255.0, blue: 0x23 / 255.0),
+            strongBorder: Color(red: 0x57 / 255.0, green: 0x4E / 255.0, blue: 0x42 / 255.0),
+            primaryInk: Color(red: 0xF5 / 255.0, green: 0xF1 / 255.0, blue: 0xE8 / 255.0),
+            secondaryInk: Color(red: 0xC2 / 255.0, green: 0xB8 / 255.0, blue: 0xAA / 255.0),
+            accentFill: Color(red: 0xF5 / 255.0, green: 0x9E / 255.0, blue: 0x0B / 255.0),
             accentFillInk: Color(red: 0x14 / 255.0, green: 0x12 / 255.0, blue: 0x0F / 255.0),
-            accentText: Color(red: 0xF0 / 255.0, green: 0xB1 / 255.0, blue: 0x4B / 255.0),
+            accentText: Color(red: 0xFB / 255.0, green: 0xBF / 255.0, blue: 0x24 / 255.0),
             signalEmerald: Color(red: 0x34 / 255.0, green: 0xD3 / 255.0, blue: 0x99 / 255.0),
             signalEmeraldFill: Color(red: 0x10 / 255.0, green: 0xB9 / 255.0, blue: 0x81 / 255.0),
             warning: Color(red: 0xFB / 255.0, green: 0xBF / 255.0, blue: 0x24 / 255.0),
             danger: Color(red: 0xF8 / 255.0, green: 0x71 / 255.0, blue: 0x71 / 255.0),
-            rxLine: Color(red: 0xF0 / 255.0, green: 0xB1 / 255.0, blue: 0x4B / 255.0),
-            txLine: Color(red: 0x60 / 255.0, green: 0xA5 / 255.0, blue: 0xFA / 255.0)
+            rxLine: Color(red: 0xF5 / 255.0, green: 0x9E / 255.0, blue: 0x0B / 255.0),
+            txLine: Color(red: 0x10 / 255.0, green: 0xB9 / 255.0, blue: 0x81 / 255.0)
         )
     }
 
@@ -201,7 +201,7 @@ public extension View {
 }
 
 /// High-contrast prominent CTA button style painting `theme.accentFillInk` over `theme.accentFill`
-/// (`#14120F` dark ink on `#E59A2E` Studio Amber = `8.01:1`, `5.79:1` Obsidian, `6.47:1` Paper).
+/// (`#14120F` dark ink on `#F59E0B` Studio Amber = `9.48:1`, `5.79:1` Obsidian, `6.47:1` Paper).
 public struct NexusProminentButtonStyle: ButtonStyle {
     public init() {}
 

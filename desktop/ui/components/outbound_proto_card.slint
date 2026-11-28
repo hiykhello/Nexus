@@ -1,12 +1,14 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { NexusInput } from "glass_primitives.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { NexusInput } from "nexus_primitives.slint";
 import { NexusChip } from "nexus_buttons.slint";
 import { NexusSwitch } from "nexus_controls.slint";
 import { NexusSelect } from "nexus_select.slint";
 
 export component OutboundProtoCard inherits VerticalLayout {
     in-out property <string> proto: "vless";
+    in-out property <string> sub-id: "manual";
     in-out property <string> tag: "hk-01";
     in-out property <string> host: "hk01.example.net";
     in-out property <string> port: "443";
@@ -14,7 +16,9 @@ export component OutboundProtoCard inherits VerticalLayout {
     in-out property <string> uuid-str: "";
     in-out property <string> username: "";
     in-out property <string> flow: "xtls-rprx-vision";
+    in-out property <string> packet-encoding: "xudp";
     in-out property <string> hy2-ports: "";
+    in-out property <string> hy2-hop-interval: "";
     in-out property <string> hy2-salamander: "";
     in-out property <string> hy2-up-mbps: "";
     in-out property <string> hy2-down-mbps: "";
@@ -26,142 +30,235 @@ export component OutboundProtoCard inherits VerticalLayout {
     in-out property <string> snell-obfs-host: "";
     in-out property <string> naive-proto: "h2";
     in-out property <string> ssh-host-sha: "";
+    in-out property <string> wg-peer-pbk: "";
+    in-out property <string> wg-psk: "";
+    in-out property <string> wg-local-cidr: "10.0.0.2/32";
+    in-out property <string> wg-reserved: "";
+    in-out property <string> wg-mtu: "1420";
+    in-out property <string> masque-mode: "connect-udp";
+    in-out property <string> masque-path: "";
+    in-out property <string> masque-local-cidr: "";
 
     alignment: start;
     spacing: Theme.space-sm;
 
-    Text { text: I18n.t("协议与凭据", "Protocol & Credentials"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
+    Text { text: I18n.t("出站协议与身份凭据", "Protocol & Credentials"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
 
     FlexboxLayout {
-        spacing: 6px;
-        NexusChip { chip-height: 26px; label: "vless"; active: root.proto == "vless"; clicked => { root.proto = "vless"; } }
-        NexusChip { chip-height: 26px; label: "trojan"; active: root.proto == "trojan"; clicked => { root.proto = "trojan"; } }
-        NexusChip { chip-height: 26px; label: "hysteria2"; active: root.proto == "hysteria2"; clicked => { root.proto = "hysteria2"; } }
-        NexusChip { chip-height: 26px; label: "tuic"; active: root.proto == "tuic"; clicked => { root.proto = "tuic"; } }
-        NexusChip { chip-height: 26px; label: "anytls"; active: root.proto == "anytls"; clicked => { root.proto = "anytls"; } }
-        NexusChip { chip-height: 26px; label: "shadowsocks"; active: root.proto == "shadowsocks"; clicked => { root.proto = "shadowsocks"; } }
-        NexusChip { chip-height: 26px; label: "snell"; active: root.proto == "snell"; clicked => { root.proto = "snell"; } }
-        NexusChip { chip-height: 26px; label: "naive"; active: root.proto == "naive"; clicked => { root.proto = "naive"; } }
-        NexusChip { chip-height: 26px; label: "ssh"; active: root.proto == "ssh"; clicked => { root.proto = "ssh"; } }
-        NexusChip { chip-height: 26px; label: "http-connect"; active: root.proto == "http-connect"; clicked => { root.proto = "http-connect"; } }
+        spacing: 5px;
+        NexusChip { chip-height: 26px; label: "VLESS"; active: root.proto == "vless"; clicked => { root.proto = "vless"; } }
+        NexusChip { chip-height: 26px; label: "Trojan"; active: root.proto == "trojan"; clicked => { root.proto = "trojan"; } }
+        NexusChip { chip-height: 26px; label: "Hysteria2"; active: root.proto == "hysteria2"; clicked => { root.proto = "hysteria2"; } }
+        NexusChip { chip-height: 26px; label: "TUIC"; active: root.proto == "tuic"; clicked => { root.proto = "tuic"; } }
+        NexusChip { chip-height: 26px; label: "WireGuard"; active: root.proto == "wireguard"; clicked => { root.proto = "wireguard"; if (root.port == "443") { root.port = "51820"; } } }
+        NexusChip { chip-height: 26px; label: "MASQUE"; active: root.proto == "masque"; clicked => { root.proto = "masque"; } }
+        NexusChip { chip-height: 26px; label: "Shadowsocks"; active: root.proto == "shadowsocks"; clicked => { root.proto = "shadowsocks"; } }
+        NexusChip { chip-height: 26px; label: "AnyTLS"; active: root.proto == "anytls"; clicked => { root.proto = "anytls"; } }
+        NexusChip { chip-height: 26px; label: "Naive"; active: root.proto == "naive"; clicked => { root.proto = "naive"; } }
+        NexusChip { chip-height: 26px; label: "Snell"; active: root.proto == "snell"; clicked => { root.proto = "snell"; } }
+        NexusChip { chip-height: 26px; label: "SSH"; active: root.proto == "ssh"; clicked => { root.proto = "ssh"; } }
+        NexusChip { chip-height: 26px; label: "SOCKS5"; active: root.proto == "socks5"; clicked => { root.proto = "socks5"; } }
+        NexusChip { chip-height: 26px; label: "HTTP"; active: root.proto == "http-connect"; clicked => { root.proto = "http-connect"; } }
     }
 
     HorizontalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("名称", "Name"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.tag; placeholder-text: "hk-01"; }
+        Text { width: 62px; text: I18n.t("别名", "Remarks"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { min-width: 80px; horizontal-stretch: 1; text <=> root.tag; placeholder-text: "东京 IPLC-01"; }
         Text { text: I18n.t("端口", "Port"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { width: 68px; mono: true; text <=> root.port; placeholder-text: "443"; }
+        NexusInput { width: 72px; mono: true; text <=> root.port; placeholder-text: "443"; }
     }
 
     HorizontalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("服务器", "Server"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+        Text { width: 62px; text: I18n.t("服务器", "Address"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
         NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.host; placeholder-text: "edge.example.net"; }
+    }
+
+    if WorkspaceState.subscriptions.length > 0 : HorizontalLayout {
+        spacing: 6px;
+        Text { width: 62px; text: I18n.t("所属分组", "Group"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        FlexboxLayout {
+            horizontal-stretch: 1;
+            spacing: 5px;
+            NexusChip { chip-height: 24px; label: I18n.t("手动配置", "Manual"); active: root.sub-id == "" || root.sub-id == "manual"; clicked => { root.sub-id = "manual"; } }
+            for s in WorkspaceState.subscriptions : NexusChip {
+                chip-height: 24px;
+                label: s.remarks != "" ? s.remarks : s.id;
+                active: root.sub-id == s.id;
+                clicked => { root.sub-id = s.id; }
+            }
+        }
     }
 
     if root.proto == "vless" : HorizontalLayout {
         spacing: 6px;
-        Text { width: 58px; text: "UUID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+        Text { width: 62px; text: "UUID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
         NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.secret; placeholder-text: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"; }
     }
 
     if root.proto == "vless" : HorizontalLayout {
         spacing: 6px;
-        Text { width: 58px; text: "Flow"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+        Text { width: 62px; text: "Flow"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
         NexusSelect { horizontal-stretch: 1; options: ["none", "xtls-rprx-vision"]; current-value <=> root.flow; }
+        Text { text: "UDP"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusSelect { width: 96px; options: ["xudp", "packetaddr", "none"]; current-value <=> root.packet-encoding; }
     }
 
     if root.proto == "trojan" || root.proto == "anytls" : HorizontalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+        Text { width: 62px; text: I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
         NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("输入节点密码", "Enter password"); }
     }
 
-    if root.proto == "hysteria2" : HorizontalLayout {
+    if root.proto == "hysteria2" : VerticalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("认证密码", "Auth password"); }
-        Text { text: I18n.t("跳端口", "Ports"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { width: 92px; mono: true; text <=> root.hy2-ports; placeholder-text: "20000-40000"; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("认证密码", "Auth password"); }
+            Text { text: I18n.t("跳端口", "Ports"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 96px; mono: true; text <=> root.hy2-ports; placeholder-text: "20000-40000"; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: "Salamander"; font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 56px; horizontal-stretch: 1; mono: true; password: true; text <=> root.hy2-salamander; placeholder-text: I18n.t("混淆密码(可选)", "Optional obfs"); }
+            Text { text: I18n.t("跳间隔ms", "Hop ms"); font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 64px; mono: true; text <=> root.hy2-hop-interval; placeholder-text: "30000"; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("带宽 Mbps", "Bandwidth"); font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; text <=> root.hy2-up-mbps; placeholder-text: I18n.t("上行 Mbps (如 100)", "Up Mbps"); }
+            NexusInput { horizontal-stretch: 1; mono: true; text <=> root.hy2-down-mbps; placeholder-text: I18n.t("下行 Mbps (如 300)", "Down Mbps"); }
+        }
     }
 
-    if root.proto == "hysteria2" : HorizontalLayout {
+    if root.proto == "tuic" : VerticalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("混淆", "Obfs"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { min-width: 56px; horizontal-stretch: 1; mono: true; password: true; text <=> root.hy2-salamander; placeholder-text: I18n.t("可选", "Optional"); }
-        Text { text: "Up"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { width: 58px; mono: true; text <=> root.hy2-up-mbps; placeholder-text: "100"; }
-        Text { text: "Down"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { width: 58px; mono: true; text <=> root.hy2-down-mbps; placeholder-text: "200"; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: "UUID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.uuid-str; placeholder-text: "TUIC UUID"; }
+            Text { text: I18n.t("密码", "Pass"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("密码", "Password"); }
+        }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { width: 62px; text: I18n.t("拥塞控制", "CC"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusSelect { width: 96px; options: ["bbr", "cubic", "reno"]; current-value <=> root.tuic-cc; }
+            NexusSwitch { text: "UDP over Stream"; checked <=> root.tuic-udp-over-stream; }
+            Rectangle { horizontal-stretch: 1; }
+        }
     }
 
-    if root.proto == "tuic" : HorizontalLayout {
+    if root.proto == "wireguard" : VerticalLayout {
         spacing: 6px;
-        Text { width: 58px; text: "UUID"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.uuid-str; placeholder-text: "TUIC UUID"; }
-        Text { text: I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("输入密码", "Password"); }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("本机私钥", "PrivKey"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: "Base64 Private Key"; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("对端公钥", "PeerKey"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; text <=> root.wg-peer-pbk; placeholder-text: "Base64 Peer Public Key"; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("内网地址", "Local IP"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; text <=> root.wg-local-cidr; placeholder-text: "10.0.0.2/32, fd00::2/128"; }
+            Text { text: "MTU"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 64px; mono: true; text <=> root.wg-mtu; placeholder-text: "1420"; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: "PSK"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; password: true; text <=> root.wg-psk; placeholder-text: I18n.t("预共享密钥(可选)", "Optional PSK"); }
+            Text { text: "Reserved"; font-size: 11px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { width: 84px; mono: true; text <=> root.wg-reserved; placeholder-text: "0,0,0"; }
+        }
     }
 
-    if root.proto == "tuic" : HorizontalLayout {
+    if root.proto == "masque" : VerticalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("拥塞", "CC"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusSelect { width: 92px; options: ["bbr", "cubic", "reno"]; current-value <=> root.tuic-cc; }
-        Rectangle { width: 6px; }
-        NexusSwitch { text: "UDP over Stream"; checked <=> root.tuic-udp-over-stream; }
-        Rectangle { horizontal-stretch: 1; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("隧道模式", "Mode"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusSelect { width: 128px; options: ["connect-udp", "connect-ip"]; current-value <=> root.masque-mode; }
+            Text { text: I18n.t("令牌/密钥", "Auth"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("可选 Bearer / 密码", "Optional secret"); }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: "URI Path"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; text <=> root.masque-path; placeholder-text: "/.well-known/masque/udp/{host}/{port}/"; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("虚拟地址", "Local IP"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; text <=> root.masque-local-cidr; placeholder-text: I18n.t("connect-ip 时可选 CIDR", "Optional CIDR for connect-ip"); }
+        }
     }
 
-    if root.proto == "shadowsocks" : HorizontalLayout {
+    if root.proto == "shadowsocks" : VerticalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("加密", "Method"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusSelect { horizontal-stretch: 1; options: ["2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305"]; current-value <=> root.ss-method; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("加密方式", "Cipher"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusSelect {
+                horizontal-stretch: 1;
+                options: ["2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305", "aes-256-gcm", "aes-128-gcm", "chacha20-ietf-poly1305"];
+                current-value <=> root.ss-method;
+            }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("密码/密钥", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("密码或 Base64 密钥", "Password or Base64 key"); }
+        }
     }
 
-    if root.proto == "shadowsocks" : HorizontalLayout {
+    if root.proto == "snell" : VerticalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("密钥", "Key"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { min-width: 80px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("Base64 密钥", "Base64 key"); }
-    }
-
-    if root.proto == "snell" : HorizontalLayout {
-        spacing: 6px;
-        Text { width: 58px; text: I18n.t("版本", "Ver"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusChip { chip-height: 26px; label: "v4"; active: root.snell-ver == 4; clicked => { root.snell-ver = 4; } }
-        NexusChip { chip-height: 26px; label: "v5"; active: root.snell-ver == 5; clicked => { root.snell-ver = 5; } }
-        Text { text: "PSK"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: I18n.t("输入 PSK", "Pre-shared key"); }
-    }
-
-    if root.proto == "snell" : HorizontalLayout {
-        spacing: 6px;
-        Text { width: 58px; text: I18n.t("混淆", "Obfs"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusChip { chip-height: 26px; label: "none"; active: root.snell-obfs == "none"; clicked => { root.snell-obfs = "none"; } }
-        NexusChip { chip-height: 26px; label: "http"; active: root.snell-obfs == "http"; clicked => { root.snell-obfs = "http"; } }
-        if root.snell-obfs == "http" : NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; text <=> root.snell-obfs-host; placeholder-text: "obfs host"; }
-        Rectangle { horizontal-stretch: 1; }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("版本", "Ver"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusChip { chip-height: 26px; label: "v4"; active: root.snell-ver == 4; clicked => { root.snell-ver = 4; } }
+            NexusChip { chip-height: 26px; label: "v5"; active: root.snell-ver == 5; clicked => { root.snell-ver = 5; } }
+            Text { text: "PSK"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusInput { horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: "Pre-shared key"; }
+        }
+        HorizontalLayout {
+            spacing: 6px;
+            Text { width: 62px; text: I18n.t("混淆", "Obfs"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            NexusChip { chip-height: 26px; label: "none"; active: root.snell-obfs == "none"; clicked => { root.snell-obfs = "none"; } }
+            NexusChip { chip-height: 26px; label: "http"; active: root.snell-obfs == "http"; clicked => { root.snell-obfs = "http"; } }
+            if root.snell-obfs == "http" : NexusInput { horizontal-stretch: 1; mono: true; text <=> root.snell-obfs-host; placeholder-text: "obfs host"; }
+            Rectangle { horizontal-stretch: 1; }
+        }
     }
 
     if root.proto == "naive" : HorizontalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("承载", "Proto"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
+        Text { width: 62px; text: I18n.t("承载协议", "Quic/H2"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
         NexusChip { chip-height: 26px; label: "h2"; active: root.naive-proto == "h2"; clicked => { root.naive-proto = "h2"; } }
         NexusChip { chip-height: 26px; label: "h3"; active: root.naive-proto == "h3"; clicked => { root.naive-proto = "h3"; } }
         Rectangle { horizontal-stretch: 1; }
     }
 
-    if root.proto == "naive" || root.proto == "http-connect" || root.proto == "ssh" : HorizontalLayout {
+    if root.proto == "naive" || root.proto == "http-connect" || root.proto == "socks5" || root.proto == "ssh" : HorizontalLayout {
         spacing: 6px;
-        Text { width: 58px; text: I18n.t("用户", "User"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { width: 78px; mono: true; text <=> root.username; placeholder-text: "user"; }
-        Text { text: root.proto == "ssh" ? I18n.t("密码/私钥", "Pass/Key") : I18n.t("密码", "Password"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-        NexusInput { min-width: 72px; horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: root.proto == "ssh" ? I18n.t("密码或 PEM 私钥", "Password or PEM key") : I18n.t("输入密码", "Password"); }
+        Text { width: 62px; text: I18n.t("用户名", "Username"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { width: 96px; mono: true; text <=> root.username; placeholder-text: root.proto == "socks5" || root.proto == "http-connect" ? I18n.t("可选", "Optional") : "user"; }
+        Text { text: root.proto == "ssh" ? I18n.t("密码/私钥", "Pass/Key") : I18n.t("密码", "Pass"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; mono: true; password: true; text <=> root.secret; placeholder-text: root.proto == "ssh" ? I18n.t("密码或 PEM 私钥", "Password or PEM") : I18n.t("密码", "Password"); }
     }
 
     if root.proto == "ssh" : HorizontalLayout {
         spacing: 6px;
-        Text { width: 58px; text: "HostKey"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-        NexusInput { min-width: 96px; horizontal-stretch: 1; mono: true; text <=> root.ssh-host-sha; placeholder-text: I18n.t("必填 SHA-256 指纹", "Required SHA-256"); }
+        Text { width: 62px; text: "HostKey"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+        NexusInput { horizontal-stretch: 1; mono: true; text <=> root.ssh-host-sha; placeholder-text: I18n.t("必填 SHA-256 指纹", "Required SHA-256"); }
     }
 }

@@ -35,7 +35,7 @@ export namespace endpoint {
         packet::tun_network_detail::LinkRecord link_;
         Clock::time_point next_check_{};
         HostDnsCleanup cleanup_;
-        bool servers_attempted_=false,domains_attempted_=false,started_=false,stopped_=false;
+        bool servers_attempted_=false,domains_attempted_=false,dot_attempted_=false,started_=false,stopped_=false;
         static auto failure(Error code,int native=0) noexcept -> std::unexpected<Failure> {return platform::resolved::fail(code,native);}
         auto issue(Failure problem,bool uncertain=true) noexcept -> void {if(!cleanup_.failure)cleanup_.failure=problem;cleanup_.uncertain|=uncertain;}
         static auto kernel_failure(packet::TunNetworkFailure const& problem) noexcept -> Failure {
@@ -102,6 +102,15 @@ export namespace endpoint {
             if(baseline->server_count || baseline->domain_count)return abort(Failure{Error::conflict});
             auto competing=client_.competing_domains(deadline);if(!competing)return abort(competing.error());if(*competing)return abort(Failure{Error::conflict});
             auto owner=identity(deadline);if(!owner)return abort(owner.error());
+            auto dot=client_.set_dns_over_tls("no",deadline);
+            if(dot)dot_attempted_=true;
+            else if(dot.error().code!=Error::remote ||
+                    (dot.error().system!=std::errc::function_not_supported &&
+                     dot.error().system!=std::errc::operation_not_supported)) {
+                dot_attempted_=dot.error().submitted;
+                cleanup_.uncertain|=dot.error().submitted;
+                return abort(dot.error());
+            }
             servers_attempted_=true;
             auto changed=client_.set_servers(desired_,deadline);
             if(!changed){servers_attempted_=changed.error().submitted;cleanup_.uncertain|=changed.error().submitted;return abort(changed.error());}
@@ -138,7 +147,7 @@ export namespace endpoint {
         [[nodiscard]] auto native_handle() const noexcept -> int {return client_.native_handle();}
         [[nodiscard]] auto stop(Clock::time_point deadline) noexcept -> HostDnsCleanup {
             if(stopped_)return cleanup_;started_=false;
-            if(servers_attempted_ || domains_attempted_) {
+            if(servers_attempted_ || domains_attempted_ || dot_attempted_) {
                 auto proof=identity<true>(deadline);
                 if(!proof)issue(proof.error());
                 else {
@@ -163,6 +172,10 @@ export namespace endpoint {
                                 else {servers_attempted_=domains_attempted_=false;cleanup_.restored=true;cleanup_.uncertain=false;}
                             }
                         } else if(current && !current->server_count && !current->domain_count){servers_attempted_=domains_attempted_=false;cleanup_.restored=true;cleanup_.uncertain=false;}
+                        if(dot_attempted_ && !cleanup_.preserved && !cleanup_.uncertain) {
+                            (void)client_.template set_dns_over_tls<false>("",deadline);
+                            dot_attempted_=false;
+                        }
                     }
                 }
             } else cleanup_.restored=true;

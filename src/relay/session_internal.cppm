@@ -54,12 +54,12 @@ namespace relay::session_detail {
         std::span<std::uint8_t const> prefix, ConnectReply response, bool redirect_dns = false,
         bool dns_hijack_only = false) -> capy::task<>;
 #ifdef NEXUS_ENABLE_SOCKS_UDP
-    auto udp_associate(Session& session, io::io_context& context, rules::RouteMatcher const& policy,
+    auto udp_associate(Session& session, io::io_context& context, rules::RouteProgram const& policy,
         socks5::Request const& request) -> capy::task<>;
 #endif
-    auto socks4_handshake(Session& session, io::io_context& context, rules::RouteMatcher const& policy,
+    auto socks4_handshake(Session& session, io::io_context& context, rules::RouteProgram const& policy,
         std::optional<Credentials> const& credentials, HandshakeReader& reader) -> capy::task<>;
-    auto http_handshake(Session& session, io::io_context& context, rules::RouteMatcher const& policy,
+    auto http_handshake(Session& session, io::io_context& context, rules::RouteProgram const& policy,
         std::uint8_t first, std::optional<Credentials> const& credentials,
         std::span<std::uint8_t const> initial_tail = {}) -> capy::task<>;
 }

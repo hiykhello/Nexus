@@ -67,7 +67,7 @@ public struct ConnectionDetailCard: View {
                 .buttonStyle(.bordered)
             }
         }
-        .bentoCard(padding: 12, cornerRadius: 14)
+        .bentoCard(padding: 12)
     }
 }
 #endif

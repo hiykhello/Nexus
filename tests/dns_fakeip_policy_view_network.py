@@ -47,27 +47,28 @@ def write_rules(path, name):
 def config_text(root, front, port, primary, secondary):
     state = root / "state"
     state.mkdir(mode=0o700)
-    for name, size in (("instance.id", 16), ("history.key", 32)):
-        file = state / name
-        file.touch(mode=0o600)
-        file.write_bytes(os.urandom(size))
     return f'''schema-version 1
 role "client"
 workers 2
-inbounds {{ mixed "front" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}; }}
-outbounds {{ direct "direct"; }}
+state {{ directory "{state}"; fakeip-crash-mode "per-mapping"; }}
+inbounds {{ inbound "front" type="mixed" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}; }}
+outbounds {{ outbound "direct" type="direct"; }}
 dns {{
     listen host="127.0.0.1" port={port}
-    server "fake" type="udp" host="127.0.0.1" port={primary.port}
-    server "primary" type="udp" host="127.0.0.1" port={primary.port}
-    server "secondary" type="udp" host="127.0.0.1" port={secondary.port}
+    servers {{
+        server "fake" type="udp" host="127.0.0.1" port={primary.port}
+        server "primary" type="udp" host="127.0.0.1" port={primary.port}
+        server "secondary" type="udp" host="127.0.0.1" port={secondary.port}
+    }}
     final "fake"
     strategy "ipv4_only"
     rulesets {{ "switch" path="dns.kdl" format="kdl"; }}
-    rule rule-set="switch" server="secondary"
-    rule domain="slow.test" server="primary"
-    rule domain="cache.test" server="primary"
-    fake-ip server="fake" ipv4-pool="198.18.0.0/29" ttl-seconds=2 state-directory="{state}" initialize=#true
+    rules {{
+        - rule-set="switch" server="secondary"
+        - domain="slow.test" server="primary"
+        - domain="cache.test" server="primary"
+    }}
+    fake-ip server="fake" ipv4-pool="198.18.0.0/29" ttl-seconds=2
 }}
 routing {{ final "direct"; }}
 '''
@@ -135,16 +136,15 @@ def verify(binary, root, origin, primary, secondary):
             with udp_client(front) as new_flow:
                 visit(new_flow, origin, old, False)
                 visit(new_flow, origin, new)
-    config.write_text(initial.replace(" initialize=#true", ""))
     with running(command, front, root / "restart.log"):
-        assert dns_request(port, "alias.test") == (2, None)
         with udp_client(front) as fresh:
             visit(fresh, origin, old, False)
-            visit(fresh, origin, new, False)
+            visit(fresh, origin, new)
         released = alias_query(port)
+        assert released == new, (released, new)
         with udp_client(front) as current:
             visit(current, origin, released)
-    print("DNS reload separated same-name aliases and cached answers, retained old in-flight upstream, and preserved restart quarantine")
+    print("DNS reload separated same-name aliases and cached answers, retained old in-flight upstream, and preserved unified view persistence")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,13 @@ export enum AccentPreset { ocean, emerald, violet, amber, rose }
 export global Theme {
     in-out property <ThemePreference> preference: ThemePreference.system;
     in-out property <AccentPreset> accent-preset: AccentPreset.ocean;
-    in-out property <bool> blur-enabled: true;
+    in-out property <bool> blur-enabled: false;
+    in-out property <float> window-opacity: 1.0;
+
+    out property <float> clamped-opacity: clamp(window-opacity, 0.40, 1.0);
+    out property <float> effective-alpha:
+        blur-enabled && clamped-opacity > 0.96 ? 0.88 : clamped-opacity;
+    out property <bool> is-translucent: blur-enabled || clamped-opacity < 0.995;
 
     public function apply-preference(pref: ThemePreference) {
         preference = pref;
@@ -34,137 +40,179 @@ export global Theme {
         : preference == ThemePreference.paper ? false
         : system-dark;
 
-    // Decoupled Signal Emerald channel (active tunnel / connected link state across ALL themes; WCAG AA >= 5.4:1)
-    out property <color> live-emerald: dark ? #10b981 : #047857;
-    out property <color> live-emerald-soft: dark ? #10b98124 : #dcfce7;
-    out property <color> live-emerald-border: dark ? #10b98158 : #04785745;
-    out property <color> live-emerald-on-fill: dark ? #07130f : #ffffff;
+    // Signal Emerald channel (live tunnel & fast RTT; WCAG AA >= 4.8:1)
+    out property <color> live-emerald: dark ? #10b981 : #059669;
+    out property <color> live-emerald-soft: dark ? #10b98124 : #ecfdf5;
+    out property <color> live-emerald-border: dark ? #10b98160 : #6ee7b7;
+    out property <color> live-emerald-on-fill: #ffffff;
 
-    // Interactive Brand Accent (Obsidian Indigo / Paper Indigo / Studio Amber Gold + optional accent overrides)
+    // Secondary / Rule-Interchange Accent
+    out property <color> rule-vermilion: dark ? #f87171 : #dc2626;
+    out property <color> rule-vermilion-soft: dark ? #f8717122 : #fef2f2;
+    out property <color> rule-vermilion-fg: #ffffff;
+
+    // Interactive Brand Accent (Electric Cobalt #2563EB / #60A5FA + optional user presets)
     out property <color> accent:
-        accent-preset == AccentPreset.emerald ? (dark ? #10b981 : #047857)
+        accent-preset == AccentPreset.emerald ? (dark ? #10b981 : #059669)
         : accent-preset == AccentPreset.violet ? (dark ? #a78bfa : #6d28d9)
-        : accent-preset == AccentPreset.amber ? (dark ? #e59a2e : #b45309)
-        : accent-preset == AccentPreset.rose ? (dark ? #f87171 : #dc2626)
-        : is-amber ? #e59a2e
-        : (dark ? #4f6ef7 : #3355e6);
+        : accent-preset == AccentPreset.amber ? (dark ? #f59e0b : #d97706)
+        : accent-preset == AccentPreset.rose ? (dark ? #f87171 : #e11d48)
+        : is-amber ? #f59e0b
+        : (dark ? #60a5fa : #2563eb);
 
-    // Solid button fill (separated from border accent so white text on Obsidian #3f5ce0 achieves 5.50:1 >= AA)
     out property <color> pill-active-top:
         accent-preset == AccentPreset.emerald ? (dark ? #10b981 : #059669)
-        : accent-preset == AccentPreset.violet ? (dark ? #8b5cf6 : #7c3aed)
-        : accent-preset == AccentPreset.amber ? (dark ? #e59a2e : #b45309)
-        : accent-preset == AccentPreset.rose ? (dark ? #ef4444 : #dc2626)
-        : is-amber ? #e59a2e
-        : (dark ? #4f6ef7 : #3355e6);
+        : accent-preset == AccentPreset.violet ? (dark ? #8b5cf6 : #6d28d9)
+        : accent-preset == AccentPreset.amber ? (dark ? #f59e0b : #d97706)
+        : accent-preset == AccentPreset.rose ? (dark ? #f43f5e : #e11d48)
+        : is-amber ? #f59e0b
+        : (dark ? #3b82f6 : #2563eb);
 
     out property <color> pill-active-bot:
-        accent-preset == AccentPreset.emerald ? (dark ? #10b981 : #047857)
-        : accent-preset == AccentPreset.violet ? (dark ? #6d28d9 : #6d28d9)
-        : accent-preset == AccentPreset.amber ? (dark ? #e59a2e : #b45309)
-        : accent-preset == AccentPreset.rose ? (dark ? #dc2626 : #dc2626)
-        : is-amber ? #e59a2e
-        : (dark ? #3f5ce0 : #2c4bd4);
+        accent-preset == AccentPreset.emerald ? (dark ? #059669 : #047857)
+        : accent-preset == AccentPreset.violet ? (dark ? #7c3aed : #5b21b6)
+        : accent-preset == AccentPreset.amber ? (dark ? #d97706 : #b45309)
+        : accent-preset == AccentPreset.rose ? (dark ? #e11d48 : #be123c)
+        : is-amber ? #d97706
+        : (dark ? #2563eb : #1d4ed8);
 
-    // Dark ink on bright amber/emerald dark fills (8.01:1 on #e59a2e, 7.46:1 on #10b981); white on Indigo/Violet/Rose
     out property <color> pill-active-fg:
-        dark && ((is-amber && accent-preset == AccentPreset.ocean) || accent-preset == AccentPreset.amber || accent-preset == AccentPreset.emerald)
+        (accent-preset == AccentPreset.amber && dark) || (accent-preset == AccentPreset.ocean && is-amber)
             ? #14120f : #ffffff;
     out property <color> accent-fg: pill-active-fg;
 
-    out property <color> accent-soft: accent.with-alpha(dark ? 0.16 : 0.11);
-    out property <color> nav-hover-bg: is-amber ? #2b2722 : dark ? #202530 : #e6e3db;
-    out property <color> nav-active-bg: accent.with-alpha(dark ? 0.18 : 0.12);
+    out property <color> accent-soft: accent.with-alpha(dark ? 0.18 : 0.10);
+    out property <color> nav-hover-bg: is-amber ? #ffffff0b : dark ? #ffffff0a : #0f172a08;
+    out property <color> nav-active-bg: is-amber ? #ffffff12 : dark ? #ffffff10 : #0f172a0b;
     out property <color> nav-active-fg:
-        accent-preset == AccentPreset.emerald ? (dark ? #34d399 : #047857)
+        accent-preset == AccentPreset.emerald ? (dark ? #34d399 : #059669)
         : accent-preset == AccentPreset.violet ? (dark ? #c4b5fd : #6d28d9)
-        : accent-preset == AccentPreset.amber ? (dark ? #f0ae4a : #b45309)
-        : accent-preset == AccentPreset.rose ? (dark ? #fda4af : #dc2626)
-        : is-amber ? #f0ae4a
-        : (dark ? #829bff : #2c4bd4);
-    out property <brush> selected-bg: accent.with-alpha(dark ? 0.16 : 0.10);
-    out property <brush> selected-border: accent.with-alpha(dark ? 0.72 : 0.58);
+        : accent-preset == AccentPreset.amber ? (dark ? #fbbf24 : #b45309)
+        : accent-preset == AccentPreset.rose ? (dark ? #fda4af : #be123c)
+        : is-amber ? #fbbf24
+        : (dark ? #60a5fa : #2563eb);
+    out property <brush> selected-bg: accent.with-alpha(dark ? 0.16 : 0.08);
+    out property <brush> selected-border: accent.with-alpha(dark ? 0.72 : 0.56);
 
-    // Decoupled Telemetry Channel Colors (fixed WCAG AA >= 5.7:1 across all themes)
-    out property <color> telemetry-down: dark ? #38bdf8 : #0369a1;
-    out property <color> telemetry-up: is-amber ? #f0ae4a : (dark ? #c084fc : #7c3aed);
-    out property <color> telemetry-up-soft: telemetry-up.with-alpha(dark ? 0.18 : 0.12);
+    // Fluent 2 Control Fill & Top-Lit Elevation Borders (zero drop shadow, physical hairline bevel)
+    out property <color> control-fill: is-amber ? #26221c : dark ? #202938 : #ffffff;
+    out property <color> control-fill-hover: is-amber ? #2e2922 : dark ? #273245 : #f8fafc;
+    out property <color> control-fill-pressed: is-amber ? #1d1a16 : dark ? #19212e : #f1f5f9;
+    out property <brush> control-border-brush: is-amber
+        ? @linear-gradient(180deg, #433b31 0%, #302a23 15%, #2b261f 100%)
+        : dark
+            ? @linear-gradient(180deg, #3c4b63 0%, #2a3649 16%, #253042 100%)
+            : @linear-gradient(180deg, #e2e8f0 0%, #dbe2ea 82%, #cbd5e1 100%);
+    out property <brush> control-border-hover-brush: is-amber
+        ? @linear-gradient(180deg, #544a3d 0%, #3b342b 18%, #342e26 100%)
+        : dark
+            ? @linear-gradient(180deg, #4c5f7d 0%, #35445c 18%, #2e3b50 100%)
+            : @linear-gradient(180deg, #cbd5e1 0%, #cbd5e1 80%, #94a3b8 100%);
+    out property <brush> accent-control-border:
+        @linear-gradient(180deg, pill-active-top.brighter(0.14) 0%, pill-active-top 18%, pill-active-bot.darker(0.22) 100%);
+    out property <color> input-bottom-rest: is-amber ? #6b5f4f : dark ? #5b6d87 : #94a3b8;
 
-    // 5-tier Semantic Latency Palette (<80 fast, <180 good, <350 mid, >=350 slow, timeout error)
-    out property <color> lat-fast-fg: dark ? #34d399 : #047857;
-    out property <color> lat-fast-bg: dark ? #10b98122 : #dcfce7;
-    out property <color> lat-good-fg: dark ? #38bdf8 : #0369a1;
-    out property <color> lat-good-bg: dark ? #0ea5e920 : #e0f2fe;
-    out property <color> lat-mid-fg: dark ? #f59e0b : #b45309;
-    out property <color> lat-mid-bg: dark ? #f59e0b22 : #fef3c7;
-    out property <color> lat-slow-fg: dark ? #fb923c : #c2410c;
-    out property <color> lat-slow-bg: dark ? #f9731622 : #ffedd5;
+    // Flagship Navigation Rail (Crisp Light / Elevated Slate Dark with Fluent 2 Subtle Wash)
+    out property <color> rail-bg-solid: is-amber ? #161411 : dark ? #131923 : #ffffff;
+    out property <color> rail-bg: is-translucent ? rail-bg-solid.with-alpha(clamp(effective-alpha + 0.04, 0.46, 1.0)) : rail-bg-solid;
+    out property <color> rail-fg: is-amber ? #f5f1e8 : dark ? #f1f5f9 : #0f172a;
+    out property <color> rail-fg-muted: is-amber ? #a89f91 : dark ? #94a3b8 : #64748b;
+    out property <color> rail-hover-bg: nav-hover-bg;
+    out property <color> rail-active-bg: nav-active-bg;
+    out property <color> rail-active-fg: nav-active-fg;
+    out property <color> rail-border: is-amber ? #2a2620 : dark ? #222c3c : #e2e8f0;
 
-    // Protocol semantic badges
-    out property <color> proto-quic-fg: dark ? #f59e0b : #b45309;
-    out property <color> proto-quic-bg: dark ? #f59e0b20 : #fef3c7;
-    out property <color> proto-tls-fg: dark ? #38bdf8 : #0369a1;
-    out property <color> proto-tls-bg: dark ? #0ea5e920 : #e0f2fe;
+    // Primary Tunnel Hero CTA Surface (hue-tinted secondary ink, NEVER neutral gray; WCAG AA >= 5.0:1)
+    out property <color> cmd-bg-solid: is-amber ? #b45309 : #2563eb;
+    out property <color> cmd-bg: cmd-bg-solid;
+    out property <color> cmd-well-bg: is-amber ? #24201a : dark ? #1e2736 : #f1f5f9;
+    out property <color> cmd-hover-bg: is-amber ? #c2410c : #1d4ed8;
+    out property <color> cmd-fg: #ffffff;
+    out property <color> cmd-fg-secondary: is-amber ? #fef3c7 : #dbeafe;
+    out property <color> cmd-rule: is-amber ? #42382b : dark ? #2b384d : #dbe4f0;
+    out property <color> cmd-seg-active-bg: card-bg-solid;
+    out property <color> cmd-seg-active-fg: nav-active-fg;
+
+    // Decoupled Telemetry Channel Colors (Cobalt RX + Emerald TX)
+    out property <color> telemetry-down: is-amber ? #fbbf24 : (dark ? #60a5fa : #2563eb);
+    out property <color> telemetry-up: live-emerald;
+    out property <color> telemetry-up-soft: live-emerald-soft;
+
+    // Latency Tiers
+    out property <color> lat-fast-fg: dark ? #34d399 : #059669;
+    out property <color> lat-fast-bg: dark ? #10b98122 : #ecfdf5;
+    out property <color> lat-good-fg: dark ? #60a5fa : #2563eb;
+    out property <color> lat-good-bg: dark ? #3b82f622 : #eff6ff;
+    out property <color> lat-mid-fg: dark ? #fbbf24 : #d97706;
+    out property <color> lat-mid-bg: dark ? #f59e0b22 : #fffbeb;
+    out property <color> lat-slow-fg: rule-vermilion;
+    out property <color> lat-slow-bg: rule-vermilion-soft;
+
+    // Protocol Badges
+    out property <color> proto-quic-fg: dark ? #fbbf24 : #b45309;
+    out property <color> proto-quic-bg: dark ? #f59e0b22 : #fef3c7;
+    out property <color> proto-tls-fg: nav-active-fg;
+    out property <color> proto-tls-bg: accent-soft;
     out property <color> proto-direct-fg: live-emerald;
     out property <color> proto-direct-bg: live-emerald-soft;
 
-    // Committed Instrument Matte Surface Hierarchy (Obsidian Chassis / Paper Daylight / Studio Amber)
-    out property <color> sidebar-card-bg-solid: is-amber ? #0e0d0c : dark ? #0d0f13 : #eceae4;
-    out property <color> surface-bg-solid: is-amber ? #141311 : dark ? #12151b : #f6f5f2;
-    out property <color> card-bg-solid: is-amber ? #1c1a17 : dark ? #191d25 : #ffffff;
-    out property <color> sidebar-card-bg: blur-enabled ? sidebar-card-bg-solid.with-alpha(dark ? 0.72 : 0.80) : sidebar-card-bg-solid;
-    out property <color> surface-bg: blur-enabled ? surface-bg-solid.with-alpha(dark ? 0.78 : 0.84) : surface-bg-solid;
-    out property <color> sidebar-border: is-amber ? #2c2822 : dark ? #262b36 : #dddad2;
+    // Canvas Ground (#F4F6F9 / #0F141C) vs Single-Level Card Surface (#FFFFFF / #171E29)
+    out property <color> sidebar-card-bg-solid: rail-bg-solid;
+    out property <color> surface-bg-solid: is-amber ? #12100e : dark ? #0f141c : #f4f6f9;
+    out property <color> card-bg-solid: is-amber ? #1b1815 : dark ? #171e29 : #ffffff;
+    out property <color> sidebar-card-bg: rail-bg;
+    out property <color> surface-bg: is-translucent ? surface-bg-solid.with-alpha(effective-alpha) : surface-bg-solid;
+    out property <color> sidebar-border: rail-border;
 
-    // L1 Matte Card / L2 Well / L3 Inset
-    out property <color> card-bg: blur-enabled ? card-bg-solid.with-alpha(dark ? 0.86 : 0.90) : card-bg-solid;
+    out property <color> card-bg: is-translucent ? card-bg-solid.with-alpha(clamp(effective-alpha + 0.10, 0.52, 1.0)) : card-bg-solid;
     out property <brush> card-surface: card-bg;
-    out property <color> overlay-bg: is-amber ? #211e1a : dark ? #1c212b : #ffffff;
-    out property <color> well-bg: is-amber ? #24211d : dark ? #202530 : #efede8;
-    out property <color> inset-bg: is-amber ? #2d2923 : dark ? #282e3b : #e5e2db;
+    out property <color> overlay-bg-solid: is-amber ? #211e1a : dark ? #1b2432 : #ffffff;
+    out property <color> overlay-bg: is-translucent ? overlay-bg-solid.with-alpha(clamp(effective-alpha + 0.18, 0.88, 1.0)) : overlay-bg-solid;
+    out property <color> well-bg-solid: is-amber ? #24201b : dark ? #1e2736 : #f8fafc;
+    out property <color> well-bg: is-translucent ? well-bg-solid.with-alpha(clamp(effective-alpha * 0.72, 0.36, 0.96)) : well-bg-solid;
+    out property <color> inset-bg-solid: is-amber ? #2e2923 : dark ? #263244 : #eef2f6;
+    out property <color> inset-bg: is-translucent ? inset-bg-solid.with-alpha(clamp(effective-alpha * 0.78, 0.42, 0.96)) : inset-bg-solid;
 
-    // 1px precision structural borders
-    out property <color> card-border: is-amber ? #2c2822 : dark ? #262b36 : #dddad2;
-    out property <color> well-border: is-amber ? #36312a : dark ? #2e3543 : #d4d0c7;
-    out property <color> hairline-subtle: is-amber ? #28241e : dark ? #242935 : #e6e3dc;
-    out property <color> hairline-strong: is-amber ? #474037 : dark ? #3b4354 : #beb9ae;
-    out property <color> modal-backdrop: dark ? #00000094 : #181c2454;
-    out property <color> modal-border: is-amber ? #474037 : dark ? #3b4354 : #c7c2b8;
-    out property <color> popup-border: is-amber ? #474037 : dark ? #3b4354 : #c7c2b8;
+    // Structural Hairlines & Card Borders
+    out property <color> card-border: is-amber ? #2f2a23 : dark ? #263142 : #e2e8f0;
+    out property <color> well-border: is-amber ? #3a342b : dark ? #303d52 : #dbe2ea;
+    out property <color> hairline-subtle: is-amber ? #28241e : dark ? #222c3c : #e9eef5;
+    out property <color> hairline-strong: is-amber ? #4a4237 : dark ? #475569 : #94a3b8;
+    out property <color> modal-backdrop: dark ? #020617a8 : #0f172a66;
+    out property <color> modal-border: is-amber ? #574e42 : dark ? #3e506b : #94a3b8;
+    out property <color> popup-border: modal-border;
     out property <color> control-knob-bg: #ffffff;
     out property <color> selection-fg: #ffffff;
-    out property <color> scrollbar-rail-border: is-amber ? #2c2822 : dark ? #262b36 : #dddad2;
-    out property <color> scrollbar-rail-bg: is-amber ? #161411 : dark ? #151820 : #efede8;
-    out property <color> scrollbar-thumb-hover: is-amber ? #aea79c : dark ? #9ea8ba : #4d5565;
-    out property <color> scrollbar-thumb: is-amber ? #5c5448 : dark ? #555e70 : #9c978d;
+    out property <color> scrollbar-rail-border: card-border;
+    out property <color> scrollbar-rail-bg: well-bg;
+    out property <color> scrollbar-thumb-hover: is-amber ? #aea79c : dark ? #94a3b8 : #475569;
+    out property <color> scrollbar-thumb: is-amber ? #5c5448 : dark ? #475569 : #94a3b8;
 
-    // Action pill semantic tones
     out property <color> pill-danger-bot: #dc2626;
-    out property <color> pill-direct-bot: #047857;
+    out property <color> pill-direct-bot: #059669;
 
     out property <string> mono-font: "monospace";
     out property <color> row-bg: card-bg;
-    out property <color> row-alt-bg-solid: is-amber ? #201d19 : dark ? #1d222b : #faf9f6;
-    out property <color> row-alt-bg: blur-enabled ? row-alt-bg-solid.with-alpha(dark ? 0.88 : 0.92) : row-alt-bg-solid;
-    out property <color> row-hover-bg: is-amber ? #2b2722 : dark ? #252a35 : #e6e3db;
+    out property <color> row-alt-bg-solid: is-amber ? #1f1b17 : dark ? #1b2330 : #f8fafc;
+    out property <color> row-alt-bg: is-translucent ? row-alt-bg-solid.with-alpha(effective-alpha) : row-alt-bg-solid;
+    out property <color> row-hover-bg: is-amber ? #29241e : dark ? #212c3d : #f1f5f9;
 
-    // Calibrated WCAG 2.1 AA Typography & Semantic Statuses
-    out property <brush> text-primary: is-amber ? #f2efe9 : dark ? #eef1f6 : #181c24;
-    out property <brush> text-secondary: is-amber ? #aea79c : dark ? #9ea8ba : #4d5565;
-    out property <brush> text-muted: is-amber ? #928b7f : dark ? #838ea3 : #5e6575;
+    // WCAG 2.1 AA Calibrated Ink Hierarchy
+    out property <brush> text-primary: is-amber ? #f5f1e8 : dark ? #f1f5f9 : #0f172a;
+    out property <brush> text-secondary: is-amber ? #c2b8aa : dark ? #a3b3c9 : #475569;
+    out property <brush> text-muted: is-amber ? #b0a698 : dark ? #94a3b8 : #526071;
     out property <brush> success-bg: live-emerald-soft;
     out property <color> success-fg: live-emerald;
     out property <color> success-on-fill: live-emerald-on-fill;
     out property <color> success-border: live-emerald-border;
-    out property <color> warn-bg: dark ? #f59e0b22 : #fef3c7;
-    out property <color> warn-fg: dark ? #f59e0b : #b45309;
-    out property <color> warn-border: dark ? #f59e0b48 : #b4530940;
-    out property <brush> error-bg: dark ? #f8717122 : #fee2e2;
-    out property <color> error-fg: dark ? #f87171 : #b91c1c;
-    out property <color> error-border: dark ? #f8717150 : #b91c1c40;
-    out property <color> offline-fg: is-amber ? #8f887d : dark ? #838ea3 : #5e6575;
+    out property <color> warn-bg: dark ? #f59e0b22 : #fffbeb;
+    out property <color> warn-fg: dark ? #fbbf24 : #d97706;
+    out property <color> warn-border: dark ? #f59e0b48 : #fde68a;
+    out property <brush> error-bg: dark ? #f8717122 : #fef2f2;
+    out property <color> error-fg: dark ? #f87171 : #dc2626;
+    out property <color> error-border: dark ? #f8717150 : #fecaca;
+    out property <color> offline-fg: is-amber ? #8f887d : dark ? #64748b : #94a3b8;
 
-    // Semantic Latency Helpers
     public pure function latency-fg(ms: int, state: string) -> color {
         if (ms <= 0) {
             return (state == "timeout" || state == "unreachable" || state == "error" || state == "failed")
@@ -179,7 +227,7 @@ export global Theme {
     public pure function latency-bg(ms: int, state: string) -> color {
         if (ms <= 0) {
             return (state == "timeout" || state == "unreachable" || state == "error" || state == "failed")
-                ? (dark ? #f8717122 : #fee2e2) : inset-bg;
+                ? (dark ? #f8717122 : #fef2f2) : inset-bg;
         }
         if (ms < 80) { return lat-fast-bg; }
         if (ms < 180) { return lat-good-bg; }
@@ -195,14 +243,14 @@ export global Theme {
         return 1;
     }
 
-    // 8px-grid Spacing & Radius Scale
+    // 8px-grid Spacing & Fluent 2 Desktop Radius Scale (4px / 6px / 10px)
     out property <length> space-xs: 4px;
     out property <length> space-sm: 8px;
     out property <length> space-md: 12px;
     out property <length> space-lg: 16px;
     out property <length> space-xl: 20px;
-    out property <length> radius-xs: 5px;
-    out property <length> radius-sm: 6px;
-    out property <length> radius-md: 8px;
-    out property <length> radius-card: 12px;
+    out property <length> radius-xs: 4px;
+    out property <length> radius-sm: 4px;
+    out property <length> radius-md: 6px;
+    out property <length> radius-card: 10px;
 }

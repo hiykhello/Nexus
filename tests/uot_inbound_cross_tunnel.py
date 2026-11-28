@@ -29,7 +29,7 @@ inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; method "
 outbound "direct" type="direct"
 outbound "first" type="shadowsocks" {{ server host="127.0.0.1" port={listeners[0].getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
 outbound "second" type="shadowsocks" {{ server host="127.0.0.1" port={listeners[1].getsockname()[1]}; method "2022-blake3-aes-128-gcm"; key-file "{root/'key'}"; udp-over-tcp "v2"; }}
-routing {{ rulesets {{ "second" path="second.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="second" outbound="second"; }}; final "first"; }}
+routing {{ rulesets {{ "second" path="second.kdl" format="kdl"; }}; rules {{ - rule-set="second" to="second"; }}; final "first"; }}
 ''')
             server=subprocess.Popen([nexus,"run","--config",root/"server.kdl"],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
             deadline=time.monotonic()+5

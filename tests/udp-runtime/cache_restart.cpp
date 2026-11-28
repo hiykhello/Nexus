@@ -41,7 +41,7 @@ int main(int argc,char** argv) {
         if (!value) return 2;
         ports[i]=*value;
     }
-    auto policy=::rules::RouteMatcher::compile({},0,1);
+    auto policy=::rules::RouteProgram::compile_policy({},0,1);
     if (!policy) return 3;
     std::array<std::uint8_t,16> first{},second{};
     std::iota(first.begin(),first.end(),0); std::iota(second.begin(),second.end(),16);

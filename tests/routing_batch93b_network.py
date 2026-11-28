@@ -82,8 +82,8 @@ def policy(root, source=None, ordered=False):
     }
 ''' if ordered else '''
     rules {
-        - kind="rule-set" value="allow" outbound="direct"
-        - kind="rule-set" value="deny" outbound="block"
+        - rule-set="allow" to="direct"
+        - rule-set="deny" to="block"
     }
 '''
     return f'''

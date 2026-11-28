@@ -236,6 +236,7 @@ export namespace rules {
         std::optional<std::string_view> source_user;
         std::optional<std::string_view> package_name;
         std::optional<std::string_view> client;
+        std::optional<std::span<std::uint8_t const>> ip_bytes;
         std::optional<std::span<std::string const>> process_paths;
     };
 
@@ -245,11 +246,13 @@ export namespace rules {
         DomainSource domain_source = DomainSource::explicit_target;
         std::shared_ptr<MmapMatcher const> mmap{};
         bool mmap_match_source = false;
+        std::optional<std::size_t> source_index{};
     };
 
     struct ProgramStep {
         std::size_t rule_index, next_index;
         ProgramAction action;
+        auto operator==(ProgramStep const&) const -> bool = default;
         [[nodiscard]] auto terminal() const noexcept -> bool {
             return action.kind == ProgramActionKind::route ||
                    action.kind == ProgramActionKind::bypass ||

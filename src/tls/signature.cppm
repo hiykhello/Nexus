@@ -19,6 +19,9 @@ export namespace tls {
         case 0x0503:return SignatureParameters{EVP_sha384(),evp_pkey_ec,nid_secp384r1};
         case 0x0603:return SignatureParameters{EVP_sha512(),evp_pkey_ec,nid_secp521r1};
         case 0x0807:return SignatureParameters{nullptr,evp_pkey_ed25519};
+        case 0x0904:return SignatureParameters{nullptr,evp_pkey_ml_dsa_44};
+        case 0x0905:return SignatureParameters{nullptr,evp_pkey_ml_dsa_65};
+        case 0x0906:return SignatureParameters{nullptr,evp_pkey_ml_dsa_87};
         default:return {};
         }
     }

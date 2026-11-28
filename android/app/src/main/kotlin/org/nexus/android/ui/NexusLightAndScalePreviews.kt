@@ -83,6 +83,7 @@ private fun ConfigPhoneLightPreview() {
             contentPadding = PaddingValues(16.dp),
             onOpenSplitTunnel = {},
             onOpenDiagnostics = {},
+            profileLatencies = PREVIEW_SAMPLE_LATENCIES,
             workspaceState = PREVIEW_SAMPLE_WORKSPACE,
         )
     }

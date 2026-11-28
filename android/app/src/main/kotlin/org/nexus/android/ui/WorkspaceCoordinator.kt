@@ -13,7 +13,7 @@ import org.nexus.android.bridge.profile.SecretFileIO
 import org.nexus.android.bridge.workspace.AndroidHostConfig
 import org.nexus.android.bridge.workspace.AndroidHostConfigStore
 import org.nexus.android.bridge.workspace.ComposeResult
-import org.nexus.android.bridge.workspace.DnsConfig
+import org.nexus.android.bridge.workspace.HostRuntimeAction
 import org.nexus.android.bridge.workspace.NexusClientDatabase
 import org.nexus.android.bridge.workspace.ProfileItem
 import org.nexus.android.bridge.workspace.ProfileKind
@@ -39,7 +39,7 @@ class WorkspaceCoordinator(
     private val socketPaths: RuntimeSocketPaths,
     val db: NexusClientDatabase,
     private val supervisor: CoreProcessSupervisor,
-    private val controlClient: NexusControlClient,
+    internal val controlClient: NexusControlClient,
 ) {
     val workspaceStore = WorkspaceStore(filesDir, db)
     val hostStore = AndroidHostConfigStore(File(filesDir, "host.json"), db)
@@ -60,6 +60,17 @@ class WorkspaceCoordinator(
             telemetryStore.setActiveProfileId(seed.id)
         }
         return seeded
+    }
+
+    internal suspend fun reloadActiveIfRunning(activeId: String) {
+        if (activeId.isEmpty()) return
+        val compose = composeForLaunch(activeId)
+        if (compose.ok) controlClient.reload()
+    }
+
+    internal suspend fun reloadCurrentRunning() {
+        val activeId = withContext(Dispatchers.IO) { telemetryStore.load().activeProfileId }
+        reloadActiveIfRunning(activeId)
     }
 
     suspend fun loadInitialState(): WorkspaceUiState = withContext(Dispatchers.IO) {
@@ -148,21 +159,29 @@ class WorkspaceCoordinator(
     }
 
     suspend fun importShareUri(uri: String, running: Boolean): Pair<WorkspaceUiState, String> {
-        val parsed = ShareLinkParser.parse(uri).getOrElse {
-            return loadInitialState() to "解析失败: ${it.message}"
+        val lines = SecretFileIO.decodeSubscriptionLines(uri).ifEmpty { listOf(uri.trim()) }
+        val parsedList = lines.mapNotNull { ShareLinkParser.parse(it).getOrNull() }
+        if (parsedList.isEmpty()) {
+            val singleErr = ShareLinkParser.parse(uri).exceptionOrNull()?.message ?: "无有效节点链接"
+            return loadInitialState() to "解析失败: $singleErr"
         }
-        val (savedItem, totalCount) = withContext(Dispatchers.IO) {
+        val (lastItem, addedCount, totalCount) = withContext(Dispatchers.IO) {
             val doc = workspaceStore.loadOrInit()
-            val id = WorkspaceStore.makeUniqueId(parsed.tag, doc.profiles.map { it.id }.toSet())
-            val item = WorkspaceDefaults.fromParsedOutbound(id = id, parsed = parsed, isFromSub = false)
-            val saved = workspaceStore.save(doc.copy(profiles = doc.profiles + item))
-            telemetryStore.setActiveProfileId(item.id)
-            item to saved.profiles.size
+            val ids = doc.profiles.map { it.id }.toMutableSet()
+            val added = parsedList.map { parsed ->
+                val id = WorkspaceStore.makeUniqueId(parsed.tag, ids)
+                ids.add(id)
+                WorkspaceDefaults.fromParsedOutbound(id = id, parsed = parsed, isFromSub = false)
+            }
+            val saved = workspaceStore.save(doc.copy(profiles = doc.profiles + added))
+            val last = added.last()
+            telemetryStore.setActiveProfileId(last.id)
+            Triple(last, added.size, saved.profiles.size)
         }
-        val compose = composeForLaunch(savedItem.id)
+        val compose = composeForLaunch(lastItem.id)
         if (running && compose.ok) controlClient.reload()
-        val msg = if (compose.ok) "已导入节点 ${savedItem.remarks}（共 $totalCount 个）"
-        else "已保存节点 ${savedItem.remarks}"
+        val msg = if (addedCount > 1) "已批量导入 $addedCount 个节点（共 $totalCount 个）"
+        else "已导入节点 ${lastItem.remarks}（共 $totalCount 个）"
         return loadInitialState() to msg
     }
 
@@ -193,20 +212,25 @@ class WorkspaceCoordinator(
     }
 
     suspend fun deleteProfile(profileId: String, running: Boolean): Pair<WorkspaceUiState, String> {
-        val nextActive = withContext(Dispatchers.IO) {
+        val (nextActive, switched) = withContext(Dispatchers.IO) {
             val doc = workspaceStore.loadOrInit()
-            val filtered = doc.profiles.filterNot { it.id == profileId }
-            workspaceStore.save(doc.copy(profiles = filtered))
             val cur = telemetryStore.load().activeProfileId
-            val resolved = if (cur == profileId) filtered.firstOrNull()?.id.orEmpty() else cur
+            val filtered = doc.profiles.filterNot { it.id == profileId }
+            val savedDoc = if (filtered.isEmpty()) {
+                workspaceStore.save(doc.copy(profiles = emptyList()))
+                loadOrSeedWorkspaceLocked()
+            } else {
+                workspaceStore.save(doc.copy(profiles = filtered))
+            }
+            val wasActive = (cur == profileId)
+            val resolved = if (wasActive || savedDoc.profiles.none { it.id == cur }) {
+                savedDoc.profiles.firstOrNull()?.id.orEmpty()
+            } else cur
             telemetryStore.setActiveProfileId(resolved)
-            resolved
+            resolved to wasActive
         }
-        if (running && nextActive.isNotEmpty()) {
-            val compose = composeForLaunch(nextActive)
-            if (compose.ok) controlClient.reload()
-        }
-        return loadInitialState() to "已删除档案"
+        if (running && switched && nextActive.isNotEmpty()) reloadActiveIfRunning(nextActive)
+        return loadInitialState() to if (switched) "已删除原活动配置并自动切换" else "已删除配置"
     }
 
     suspend fun addAndRefreshSubscription(name: String, url: String, running: Boolean): Pair<WorkspaceUiState, String> {
@@ -264,10 +288,7 @@ class WorkspaceCoordinator(
             }.getOrElse { err -> null to "订阅拉取失败: ${err.message}" }
         }
         val activeId = result.first
-        if (running && activeId != null) {
-            val compose = composeForLaunch(activeId)
-            if (compose.ok) controlClient.reload()
-        }
+        if (running && activeId != null) reloadActiveIfRunning(activeId)
         return loadInitialState() to result.second
     }
 
@@ -287,136 +308,56 @@ class WorkspaceCoordinator(
             val activeItem = saved.profiles.firstOrNull { it.id == curActiveId }
             if (activeItem?.subscriptionId == subId) curActiveId else ""
         }
-        if (running && activeForSub.isNotEmpty()) {
-            val compose = composeForLaunch(activeForSub)
-            if (compose.ok) {
-                controlClient.reload()
-            } else {
-                val err = compose.errors.firstOrNull().orEmpty()
-                return loadInitialState() to "已保存链式配置，但校验失败: $err"
-            }
-        }
+        if (running && activeForSub.isNotEmpty()) reloadActiveIfRunning(activeForSub)
         return loadInitialState() to "已更新订阅链式前置/落地配置"
     }
 
-    suspend fun selectRoutingProfile(routingId: String, running: Boolean): Pair<WorkspaceUiState, String> {
-        val activeProfile = withContext(Dispatchers.IO) {
-            val doc = workspaceStore.loadOrInit()
-            val nextRoutings = doc.routingProfiles.map { it.copy(isActive = it.id == routingId) }
-            workspaceStore.save(doc.copy(routingProfiles = nextRoutings))
-            telemetryStore.load().activeProfileId
-        }
-        if (running) {
-            val compose = composeForLaunch(activeProfile)
-            if (compose.ok) controlClient.reload()
-        }
-        return loadInitialState() to "已切换路由方案"
-    }
-
-    suspend fun addRoutingRule(rule: RoutingRuleItem, running: Boolean): Pair<WorkspaceUiState, String> {
-        val activeProfile = withContext(Dispatchers.IO) {
-            val doc = workspaceStore.loadOrInit()
-            val activeRp = doc.activeRoutingProfile()
-            val nextRoutings = doc.routingProfiles.map { rp ->
-                if (rp.id == activeRp.id) rp.copy(rules = listOf(rule) + rp.rules) else rp
-            }
-            workspaceStore.save(doc.copy(routingProfiles = nextRoutings))
-            telemetryStore.load().activeProfileId
-        }
-        if (running) {
-            val compose = composeForLaunch(activeProfile)
-            if (compose.ok) controlClient.reload()
-        }
-        return loadInitialState() to "已添加分流规则并同步"
-    }
-
-    suspend fun toggleRoutingRule(ruleId: String, enabled: Boolean, running: Boolean): Pair<WorkspaceUiState, String> {
-        val activeProfile = withContext(Dispatchers.IO) {
-            val doc = workspaceStore.loadOrInit()
-            val activeRp = doc.activeRoutingProfile()
-            val nextRoutings = doc.routingProfiles.map { rp ->
-                if (rp.id == activeRp.id) {
-                    rp.copy(rules = rp.rules.map { r -> if (r.id == ruleId && !r.locked) r.copy(enabled = enabled) else r })
-                } else rp
-            }
-            workspaceStore.save(doc.copy(routingProfiles = nextRoutings))
-            telemetryStore.load().activeProfileId
-        }
-        if (running) {
-            val compose = composeForLaunch(activeProfile)
-            if (compose.ok) controlClient.reload()
-        }
-        return loadInitialState() to if (enabled) "已启用规则" else "已停用规则"
-    }
-
-    suspend fun deleteRoutingRule(ruleId: String, running: Boolean): Pair<WorkspaceUiState, String> {
-        val activeProfile = withContext(Dispatchers.IO) {
-            val doc = workspaceStore.loadOrInit()
-            val activeRp = doc.activeRoutingProfile()
-            val nextRoutings = doc.routingProfiles.map { rp ->
-                if (rp.id == activeRp.id) {
-                    rp.copy(rules = rp.rules.filterNot { r -> r.id == ruleId && !r.locked })
-                } else rp
-            }
-            workspaceStore.save(doc.copy(routingProfiles = nextRoutings))
-            telemetryStore.load().activeProfileId
-        }
-        if (running) {
-            val compose = composeForLaunch(activeProfile)
-            if (compose.ok) controlClient.reload()
-        }
-        return loadInitialState() to "已删除分流规则"
-    }
-
-    suspend fun updateRoutingProfileFlags(
-        autoDetectInterface: Boolean,
-        findProcess: Boolean,
-        running: Boolean,
+    suspend fun mutateHost(
+        running: Boolean = false,
+        onRestartNeeded: (() -> Unit)? = null,
+        transform: (AndroidHostConfig) -> AndroidHostConfig,
     ): Pair<WorkspaceUiState, String> {
-        val activeProfile = withContext(Dispatchers.IO) {
-            val doc = workspaceStore.loadOrInit()
-            val activeRp = doc.activeRoutingProfile()
-            val nextRoutings = doc.routingProfiles.map { rp ->
-                if (rp.id == activeRp.id) {
-                    rp.copy(autoDetectInterface = autoDetectInterface, findProcess = findProcess)
-                } else rp
-            }
-            workspaceStore.save(doc.copy(routingProfiles = nextRoutings))
-            telemetryStore.load().activeProfileId
-        }
-        if (running) {
-            val compose = composeForLaunch(activeProfile)
-            if (compose.ok) controlClient.reload()
-        }
-        return loadInitialState() to "已更新路由高级选项"
-    }
-
-    suspend fun updateDns(dns: DnsConfig, running: Boolean): Pair<WorkspaceUiState, String> {
-        val activeProfile = withContext(Dispatchers.IO) {
-            val doc = workspaceStore.loadOrInit()
-            workspaceStore.save(doc.copy(dns = dns))
-            telemetryStore.load().activeProfileId
-        }
-        if (running) {
-            val compose = composeForLaunch(activeProfile)
-            if (compose.ok) controlClient.reload()
-        }
-        return loadInitialState() to "已更新 DNS 方案"
-    }
-
-    suspend fun mutateHost(transform: (AndroidHostConfig) -> AndroidHostConfig): Pair<WorkspaceUiState, String> {
-        withContext(Dispatchers.IO) {
+        val (action, notice, activeId) = withContext(Dispatchers.IO) {
             hostMutex.withLock {
-                val latest = hostStore.load(socketPaths)
-                val bound = transform(latest).boundToPaths(socketPaths)
+                val prev = hostStore.load(socketPaths)
+                val (normalized, warn) = AndroidHostConfig.normalizeForSave(transform(prev))
+                val bound = normalized.boundToPaths(socketPaths)
                 hostStore.save(bound)
+                val act = AndroidHostConfig.classifyRuntimeAction(prev, bound)
+                val curActive = telemetryStore.load().activeProfileId
+                Triple(act, warn, curActive)
             }
         }
-        return loadInitialState() to "已保存本机网络与 VPN 设置"
+        if (!running) {
+            val msg = notice ?: when (action) {
+                HostRuntimeAction.NONE -> "已更新界面与本机偏好"
+                else -> "已保存入站与网络设置（连接时生效）"
+            }
+            return loadInitialState() to msg
+        }
+        return when (action) {
+            HostRuntimeAction.NONE -> loadInitialState() to (notice ?: "设置已实时生效")
+            HostRuntimeAction.RELOAD_CORE -> {
+                val compose = composeForLaunch(activeId)
+                if (compose.ok && controlClient.reload().ok) {
+                    loadInitialState() to (notice ?: "已热重载本地入站配置（零断流生效）")
+                } else {
+                    onRestartNeeded?.invoke()
+                    loadInitialState() to (notice ?: "已保存入站配置并平滑重连隧道")
+                }
+            }
+            HostRuntimeAction.RESTART_VPN -> {
+                onRestartNeeded?.invoke()
+                loadInitialState() to (notice ?: "已应用网络参数并平滑重连隧道")
+            }
+        }
     }
 
-    suspend fun updateHost(nextHost: AndroidHostConfig): Pair<WorkspaceUiState, String> =
-        mutateHost { nextHost }
+    suspend fun updateHost(
+        nextHost: AndroidHostConfig,
+        running: Boolean = false,
+        onRestartNeeded: (() -> Unit)? = null,
+    ): Pair<WorkspaceUiState, String> = mutateHost(running = running, onRestartNeeded = onRestartNeeded) { nextHost }
 
     suspend fun switchOutboundMode(mode: String, running: Boolean): Pair<WorkspaceUiState, String> {
         withContext(Dispatchers.IO) { telemetryStore.setOutboundMode(mode) }
@@ -444,10 +385,7 @@ class WorkspaceCoordinator(
                 firstId to "已导入便携工作区（${imported.profiles.size} 个档案）"
             }.getOrElse { err -> null to "工作区数据格式无效: ${err.message}" }
         }
-        if (running && result.first != null) {
-            val compose = composeForLaunch(result.first!!)
-            if (compose.ok) controlClient.reload()
-        }
+        if (running && result.first != null) reloadActiveIfRunning(result.first!!)
         return loadInitialState() to result.second
     }
 

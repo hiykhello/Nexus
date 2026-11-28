@@ -1,16 +1,17 @@
 package org.nexus.android.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -44,28 +45,26 @@ import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 
 /**
- * Unified Dual-Track RX/TX Instrument Sparkline Card:
- * - Single calibrated Y-axis shared by Download (solid `2.2.dp` stroke + matte low-alpha fill)
- *   and Upload (dashed `1.8.dp` stroke, distinguishable without relying on color alone)
- * - Calibrated Peak Scale Ceiling label + 50% horizontal reference hairline
- * - Vertical dashed Onset Marker lines on node/mode switches with top tag for newest event
- * - Zero per-tick heap allocations (`Path.rewind()` + preallocated `WaveScratchBuffers`)
+ * Card 2 — Realtime Network Throughput Card (`12dp` single-level Card Console container):
+ * - Tabular Cobalt RX & Signal Emerald TX live rates + cumulative totals
+ * - Borderless `wellSurface` dual-track Bezier area plot with clean Standby state hint
+ * - Bottom cumulative RX/TX proportion bar
  */
 @Composable
 fun ThroughputSparklineCard(
     running: Boolean,
     downloadRateBps: Long,
     uploadRateBps: Long,
-    @Suppress("UNUSED_PARAMETER") peakRateBps: Long,
     downloadSamples: List<Long>,
     uploadSamples: List<Long>,
     downloadTotalBytes: Long = 0L,
     uploadTotalBytes: Long = 0L,
+    activeSessions: Long = 0L,
     onsetMarkers: List<SparklineOnset> = emptyList(),
+    onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val ext = NexusTheme.colors
-    val primary = MaterialTheme.colorScheme.primary
     val rxLinePath = remember { Path() }
     val rxAreaPath = remember { Path() }
     val txLinePath = remember { Path() }
@@ -78,42 +77,65 @@ fun ThroughputSparklineCard(
         computeSharedPeakScaleBps(activeRx, activeTx)
     }
     val ceilingText = remember(sharedScaleBps, running) {
-        if (running) "峰值 ${formatTrafficRate(sharedScaleBps.toLong())}" else "待机"
+        if (running) formatTrafficRate(sharedScaleBps.toLong()) else "0.0 KB/s"
     }
     val latestOnset = activeOnsets.lastOrNull()
 
     val a11ySummary = if (running) {
-        "下载 ${formatTrafficRate(downloadRateBps)}，上传 ${formatTrafficRate(uploadRateBps)}，$ceilingText" +
+        "下载 ${formatTrafficRate(downloadRateBps)}，上传 ${formatTrafficRate(uploadRateBps)}，量程 $ceilingText" +
             (latestOnset?.let { "，最近切换 ${it.label}" }.orEmpty())
     } else {
-        "实时吞吐待机"
+        "实时网络速率待机"
     }
 
     OpticalCard(
+        cornerRadius = 12.dp,
         modifier = modifier
             .fillMaxWidth()
             .semantics(mergeDescendants = true) { contentDescription = a11ySummary },
-        cornerRadius = 16.dp,
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.Top,
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "实时网络速率",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                StatusPill(
+                    text = if (running && activeSessions > 0L) "$activeSessions 流 · $ceilingText" else "峰值 $ceilingText",
+                    containerColor = if (running) ext.telemetryDownloadContainer else ext.wellSurface,
+                    contentColor = if (running) ext.telemetryDownload else MaterialTheme.colorScheme.onSurfaceVariant,
+                    mono = true,
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 ChannelReadoutColumn(
-                    label = "下载",
+                    label = "下行",
                     rateBps = if (running) downloadRateBps else 0L,
                     totalBytes = downloadTotalBytes,
                     accentColor = ext.telemetryDownload,
                     dashedLegend = false,
                     modifier = Modifier.weight(1f),
                 )
+                Box(modifier = Modifier.width(1.dp).height(38.dp).background(ext.hairline))
                 ChannelReadoutColumn(
-                    label = "上传",
+                    label = "上行",
                     rateBps = if (running) uploadRateBps else 0L,
                     totalBytes = uploadTotalBytes,
                     accentColor = ext.telemetryUpload,
@@ -123,137 +145,151 @@ fun ThroughputSparklineCard(
             }
 
             val fontScale = LocalDensity.current.fontScale
-            val chartHeight = if (fontScale > 1.3f) 108.dp else 96.dp
-            val topReserveDp = (24f * fontScale.coerceIn(1f, 1.55f)).dp
+            val chartHeight = if (fontScale > 1.3f) 110.dp else 98.dp
+            val topReserveDp = (20f * fontScale.coerceIn(1f, 1.5f)).dp
 
-            Box(
+            // Borderless inner plot well (never a nested bordered card)
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = ext.wellSurface,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(chartHeight)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(ext.wellSurface.copy(alpha = if (ext.isDark) 0.55f else 0.60f))
-                    .clipToBounds()
-                    .drawWithCache {
-                        val padTop = topReserveDp.toPx()
-                        val padBottom = 3.dp.toPx()
-                        val baselineY = size.height - padBottom
-                        val midY = padTop + (baselineY - padTop) * 0.5f
-
-                        val rxStrokePx = 2.2.dp.toPx()
-                        val rxStroke = Stroke(width = rxStrokePx, cap = StrokeCap.Round, join = StrokeJoin.Round)
-                        val txStrokePx = 1.8.dp.toPx()
-                        val txDash = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()), 0f)
-                        val txStroke = Stroke(
-                            width = txStrokePx,
-                            cap = StrokeCap.Round,
-                            join = StrokeJoin.Round,
-                            pathEffect = txDash,
-                        )
-                        val onsetDash = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 3.dp.toPx()), 0f)
-                        val refDash = PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 4.dp.toPx()), 0f)
-
-                        val rxFillColor = ext.telemetryDownload.copy(alpha = if (ext.isDark) 0.16f else 0.11f)
-                        val refLineColor = ext.hairlineStrong.copy(alpha = if (ext.isDark) 0.55f else 0.65f)
-                        val onsetColor = primary.copy(alpha = 0.72f)
-                        val sampleCount = maxOf(activeRx.size, activeTx.size, 12)
-
-                        val hasRx = buildCalibratedWavePaths(
-                            samples = activeRx,
-                            topScale = sharedScaleBps,
-                            width = size.width,
-                            leftOffset = 0f,
-                            chartTop = padTop,
-                            baselineY = baselineY,
-                            strokeWidthPx = rxStrokePx,
-                            linePath = rxLinePath,
-                            areaPath = rxAreaPath,
-                            scratch = scratch,
-                        )
-                        val hasTx = buildCalibratedWavePaths(
-                            samples = activeTx,
-                            topScale = sharedScaleBps,
-                            width = size.width,
-                            leftOffset = 0f,
-                            chartTop = padTop,
-                            baselineY = baselineY,
-                            strokeWidthPx = txStrokePx,
-                            linePath = txLinePath,
-                            areaPath = null,
-                            scratch = scratch,
-                        )
-                        val onsetXs = activeOnsets.map { m ->
-                            onsetSampleX(m.sampleIndex, sampleCount, size.width, 0f)
-                        }
-                        val onsetDotRadius = 2.5.dp.toPx()
-                        val onsetTopY = padTop + onsetDotRadius
-
-                        onDrawBehind {
-                            drawLine(
-                                color = refLineColor,
-                                start = Offset(0f, midY),
-                                end = Offset(size.width, midY),
-                                strokeWidth = 1.dp.toPx(),
-                                pathEffect = refDash,
-                            )
-                            if (hasRx) {
-                                drawPath(path = rxAreaPath, color = rxFillColor)
-                                drawPath(path = rxLinePath, color = ext.telemetryDownload, style = rxStroke)
-                            }
-                            if (hasTx) {
-                                drawPath(path = txLinePath, color = ext.telemetryUpload, style = txStroke)
-                            }
-                            onsetXs.forEach { x ->
-                                drawLine(
-                                    color = onsetColor,
-                                    start = Offset(x, onsetTopY),
-                                    end = Offset(x, baselineY),
-                                    strokeWidth = 1.dp.toPx(),
-                                    pathEffect = onsetDash,
-                                )
-                                drawCircle(
-                                    color = primary,
-                                    radius = onsetDotRadius,
-                                    center = Offset(x, onsetTopY),
-                                )
-                            }
-                        }
-                    },
+                    .clip(RoundedCornerShape(8.dp))
+                    .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
             ) {
-                Row(
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .align(Alignment.TopCenter)
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .fillMaxSize()
+                        .clipToBounds()
+                        .drawWithCache {
+                            val padTop = topReserveDp.toPx()
+                            val padBottom = 4.dp.toPx()
+                            val baselineY = size.height - padBottom
+                            val q1Y = padTop + (baselineY - padTop) * 0.25f
+                            val midY = padTop + (baselineY - padTop) * 0.50f
+                            val q3Y = padTop + (baselineY - padTop) * 0.75f
+
+                            val rxStrokePx = 2.2.dp.toPx()
+                            val rxStroke = Stroke(width = rxStrokePx, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                            val txStrokePx = 1.7.dp.toPx()
+                            val txDash = PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()), 0f)
+                            val txStroke = Stroke(width = txStrokePx, cap = StrokeCap.Round, join = StrokeJoin.Round, pathEffect = txDash)
+                            val onsetDash = PathEffect.dashPathEffect(floatArrayOf(3.dp.toPx(), 3.dp.toPx()), 0f)
+
+                            val rxFillColor = ext.telemetryDownload.copy(alpha = if (ext.isDark) 0.20f else 0.12f)
+                            val gridMinor = ext.hairline.copy(alpha = 0.70f)
+                            val gridMajor = ext.hairlineStrong.copy(alpha = 0.55f)
+                            val amber = ext.warning
+                            val sampleCount = maxOf(activeRx.size, activeTx.size, 12)
+
+                            val hasRx = buildCalibratedWavePaths(
+                                samples = activeRx,
+                                topScale = sharedScaleBps,
+                                width = size.width,
+                                leftOffset = 0f,
+                                chartTop = padTop,
+                                baselineY = baselineY,
+                                strokeWidthPx = rxStrokePx,
+                                linePath = rxLinePath,
+                                areaPath = rxAreaPath,
+                                scratch = scratch,
+                            )
+                            val hasTx = buildCalibratedWavePaths(
+                                samples = activeTx,
+                                topScale = sharedScaleBps,
+                                width = size.width,
+                                leftOffset = 0f,
+                                chartTop = padTop,
+                                baselineY = baselineY,
+                                strokeWidthPx = txStrokePx,
+                                linePath = txLinePath,
+                                areaPath = null,
+                                scratch = scratch,
+                            )
+                            val onsetXs = activeOnsets.map { m ->
+                                onsetSampleX(m.sampleIndex, sampleCount, size.width, 0f)
+                            }
+
+                            onDrawBehind {
+                                drawLine(gridMinor, Offset(0f, q1Y), Offset(size.width, q1Y), 1f)
+                                drawLine(gridMajor, Offset(0f, midY), Offset(size.width, midY), 1f)
+                                drawLine(gridMinor, Offset(0f, q3Y), Offset(size.width, q3Y), 1f)
+                                drawLine(gridMinor, Offset(size.width * 0.25f, 0f), Offset(size.width * 0.25f, size.height), 1f)
+                                drawLine(gridMinor, Offset(size.width * 0.50f, 0f), Offset(size.width * 0.50f, size.height), 1f)
+                                drawLine(gridMinor, Offset(size.width * 0.75f, 0f), Offset(size.width * 0.75f, size.height), 1f)
+
+                                if (hasRx) {
+                                    drawPath(path = rxAreaPath, color = rxFillColor)
+                                    drawPath(path = rxLinePath, color = ext.telemetryDownload, style = rxStroke)
+                                } else {
+                                    drawLine(
+                                        color = ext.telemetryDownload.copy(alpha = 0.45f),
+                                        start = Offset(0f, baselineY),
+                                        end = Offset(size.width, baselineY),
+                                        strokeWidth = 1.6.dp.toPx(),
+                                    )
+                                }
+                                if (hasTx) {
+                                    drawPath(path = txLinePath, color = ext.telemetryUpload, style = txStroke)
+                                }
+                                onsetXs.forEach { x ->
+                                    drawLine(
+                                        color = amber,
+                                        start = Offset(x, 0f),
+                                        end = Offset(x, baselineY),
+                                        strokeWidth = 1.dp.toPx(),
+                                        pathEffect = onsetDash,
+                                    )
+                                }
+                            }
+                        },
                 ) {
-                    if (latestOnset != null) {
-                        Surface(
-                            modifier = Modifier.weight(1f, fill = false).padding(end = 6.dp),
-                            shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.85f),
-                        ) {
+                    if (!running) {
+                        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
-                                text = "切换 · ${latestOnset.label}",
-                                style = NexusNumericStyles.monoBadge,
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                text = "待机中 · 启动连接后实时采样上下行曲线",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                    } else {
-                        Box(Modifier.size(1.dp))
+                    } else if (latestOnset != null) {
+                        Surface(
+                            modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                            shape = RoundedCornerShape(6.dp),
+                            color = ext.warningContainer,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = "切换",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ext.warning,
+                                )
+                                Text(
+                                    text = latestOnset.label,
+                                    style = NexusNumericStyles.monoBadge,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ext.warning,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
                     }
-                    Text(
-                        text = ceilingText,
-                        style = NexusNumericStyles.monoBadge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        softWrap = false,
-                    )
                 }
             }
+
+            NexusProportionBar(
+                firstBytes = downloadTotalBytes,
+                secondBytes = uploadTotalBytes,
+                firstColor = ext.telemetryDownload,
+                secondColor = ext.telemetryUpload,
+            )
         }
     }
 }
@@ -269,14 +305,15 @@ private fun ChannelReadoutColumn(
 ) {
     val (figureValue, figureUnit) = remember(rateBps) { splitTrafficRate(rateBps) }
     val unitColor = MaterialTheme.colorScheme.onSurfaceVariant
-    val figureText = remember(figureValue, figureUnit, unitColor) {
+    val figureText = remember(figureValue, figureUnit, unitColor, accentColor) {
         buildAnnotatedString {
             withStyle(
                 SpanStyle(
-                    fontFamily = FontFamily.SansSerif,
+                    color = accentColor,
+                    fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.ExtraBold,
                     fontSize = 19.sp,
-                    letterSpacing = (-0.5).sp,
+                    letterSpacing = (-0.3).sp,
                     fontFeatureSettings = "tnum",
                 ),
             ) {
@@ -285,9 +322,9 @@ private fun ChannelReadoutColumn(
             withStyle(
                 SpanStyle(
                     color = unitColor,
-                    fontFamily = FontFamily.SansSerif,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 11.5.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
                     fontFeatureSettings = "tnum",
                 ),
             ) {
@@ -297,39 +334,37 @@ private fun ChannelReadoutColumn(
         }
     }
 
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(5.dp),
         ) {
             if (dashedLegend) {
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                    Box(Modifier.width(5.dp).height(2.dp).background(accentColor, CircleShape))
-                    Box(Modifier.width(4.dp).height(2.dp).background(accentColor, CircleShape))
+                    Box(Modifier.width(5.dp).height(2.5.dp).background(accentColor))
+                    Box(Modifier.width(4.dp).height(2.5.dp).background(accentColor))
                 }
             } else {
-                Box(Modifier.size(7.dp).background(accentColor, CircleShape))
+                Box(Modifier.width(10.dp).height(2.5.dp).background(accentColor))
             }
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelMedium,
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
+            Spacer(Modifier.weight(1f))
             Text(
                 text = formatTrafficBytes(totalBytes),
                 style = NexusNumericStyles.monoBadge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
                 softWrap = false,
-                overflow = TextOverflow.Ellipsis,
             )
         }
         Text(
             text = figureText,
-            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             softWrap = false,
             overflow = TextOverflow.Ellipsis,

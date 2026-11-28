@@ -171,7 +171,7 @@ namespace relay {
             sniff::TcpReplay replay(result.first_sent ? std::span<std::uint8_t const>{} : sniffer.wire());
             co_return co_await replay_ordered_tcp(session, replay, deadline);
         }
-        auto serve(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
+        auto serve(Session& session,io::io_context& context,rules::RouteProgram const& policy,
                    std::span<std::uint8_t const> key,shadowsocks::ReplayTable* replay,
                    shadowsocks::CipherMethod method,IdentityProfile const* identity=nullptr,
                    std::optional<config::InboundMultiplexConfig> multiplex={}) -> capy::task<> {
@@ -323,13 +323,13 @@ namespace relay {
                 profile->names.emplace_back(user.name);
             }
             profile->user_index = shadowsocks::detail::IdentityTable(profile->users);
-            return InboundFactory([profile=std::move(profile),multiplex=std::move(multiplex)](Session& session,io::io_context& context,rules::RouteMatcher const& policy) {
+            return InboundFactory([profile=std::move(profile),multiplex=std::move(multiplex)](Session& session,io::io_context& context,rules::RouteProgram const& policy) {
                 return serve(session,context,policy,profile->key,nullptr,shadowsocks::CipherMethod::aes,profile.get(),multiplex);
             });
         }
         auto profile=shared_profile(key);
         if (!profile) return std::unexpected(profile.error());
-        return InboundFactory([profile=*profile,method,multiplex=std::move(multiplex)](Session& session,io::io_context& context,rules::RouteMatcher const& policy) {
+        return InboundFactory([profile=*profile,method,multiplex=std::move(multiplex)](Session& session,io::io_context& context,rules::RouteProgram const& policy) {
             return serve(session,context,policy,profile->key,&profile->replay,method,nullptr,multiplex);
         });
     }

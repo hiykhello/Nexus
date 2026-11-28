@@ -35,9 +35,9 @@ auto main() -> int {
             auto copied=copy.match({.network=Network::tcp,.auth_user="Alice"});
             check(copied && *copied==std::optional<std::size_t>(0),"authenticated user survives matcher copy");
         } else check(false,"compile authenticated user matcher");
-        std::array routes{RouteRule{*auth_rules,1}};
-        check(!RouteMatcher::compile(routes,0,2),"route without authenticated user metadata rejected");
-        auto route=RouteMatcher::compile(routes,0,2,SourceMetadata::provided,{},AuthMetadata::provided);
+        std::array routes{ProgramRule{*auth_rules,{ProgramActionKind::route,1}}};
+        check(!RouteProgram::compile_policy(routes,0,2),"route without authenticated user metadata rejected");
+        auto route=RouteProgram::compile_policy(routes,0,2,SourceMetadata::provided,{},AuthMetadata::provided);
         if (route) {
             auto unknown=route->preflight({.domain="example.test",.network=Network::tcp});
             auto known=route->preflight({.domain="example.test",.network=Network::tcp,.auth_user="Alice"});
@@ -75,9 +75,9 @@ auto main() -> int {
             Matcher copy=*matcher; *matcher=Matcher{};
             check(copy.match({.inbound="Edge"})->value_or(99)==0,"inbound text survives matcher copy");
         } else check(false,"compile inbound matcher");
-        std::array routes{RouteRule{*inbound_rules,1}};
-        check(!RouteMatcher::compile(routes,0,2),"unbound inbound route rejected");
-        auto route=RouteMatcher::compile(routes,0,2,SourceMetadata::provided,"Edge");
+        std::array routes{ProgramRule{*inbound_rules,{ProgramActionKind::route,1}}};
+        check(!RouteProgram::compile_policy(routes,0,2),"unbound inbound route rejected");
+        auto route=RouteProgram::compile_policy(routes,0,2,SourceMetadata::provided,"Edge");
         if (route) {
             auto copy=*route;
             auto match=copy.match({}); auto preflight=copy.preflight({.domain="example.test"});
@@ -200,7 +200,7 @@ rule type="not" { rule type="domain-keyword" value="safe"; }
                   mapped_version && *mapped_version==std::optional<std::size_t>(1) && unknown && !*unknown,
                   "IP version uses supplied address family, including mapped IPv6");
         } else check(false,"compile IP version rules");
-        auto policy=RouteMatcher::compile(std::vector<RouteRule>{{*version_rules,1}},0,2);
+        auto policy=RouteProgram::compile_policy(std::vector<ProgramRule>{{*version_rules,{ProgramActionKind::route,1}}},0,2);
         if (policy) {
             auto preflight=policy->preflight({.domain="example.test"});
             check(preflight && !*preflight,"IP version delays route until address is known");
@@ -239,7 +239,7 @@ rule type="not" { rule type="source-ip-is-private" value="true"; }
 )");
     check(bool(source_rules),"parse source rules");
     if (source_rules) {
-        check(!RouteMatcher::compile(std::vector<RouteRule>{{*source_rules,1}},0,2),
+        check(!RouteProgram::compile_policy(std::vector<ProgramRule>{{*source_rules,{ProgramActionKind::route,1}}},0,2),
               "production route rejects source rules until all inbounds provide metadata");
         auto encoded=write_beve(*source_rules);
         if (encoded) { auto decoded=parse_beve(*encoded); check(decoded && *decoded==*source_rules,"source rules BEVE roundtrip"); }
@@ -280,8 +280,8 @@ rule type="not" { rule type="source-ip-is-private" value="true"; }
     auto third=parse("rule type=\"domain-suffix\" value=\"example.com\"");
     check(first && second && third,"parse ordered rules");
     if (first && second && third) {
-        std::vector<RouteRule> routes{{*first,1},{*second,2},{*third,0}};
-        auto policy=RouteMatcher::compile(routes,0,3);
+        std::vector<ProgramRule> routes{{*first,{ProgramActionKind::route,1}},{*second,{ProgramActionKind::route,2}},{*third,{ProgramActionKind::route,0}}};
+        auto policy=RouteProgram::compile_policy(routes,0,3);
         check(bool(policy),"compile ordered logical rules");
         if (policy) {
             auto immediate=policy->preflight({.domain="example.com",.port=443,.network=Network::tcp});
@@ -299,7 +299,7 @@ rule type="not" { rule type="source-ip-is-private" value="true"; }
  rule type="ip-cidr" value="::ffff:0:0/96"
 })");
     if (mapped) {
-        auto policy=RouteMatcher::compile(std::vector<RouteRule>{{*mapped,1}},0,2);
+        auto policy=RouteProgram::compile_policy(std::vector<ProgramRule>{{*mapped,{ProgramActionKind::route,1}}},0,2);
         check(policy && policy->match({.ip="::ffff:10.1.2.3"})==1,"mapped IP satisfies both family predicates");
         auto simple=Matcher::compile(*mapped);
         if (simple) {
@@ -311,7 +311,7 @@ rule type="not" { rule type="source-ip-is-private" value="true"; }
     } else check(false,"parse mapped rule");
     auto negated=parse("rule type=\"not\" { rule type=\"ip-cidr\" value=\"10.0.0.0/8\"; }");
     if (negated) {
-        auto policy=RouteMatcher::compile(std::vector<RouteRule>{{*negated,1}},0,2);
+        auto policy=RouteProgram::compile_policy(std::vector<ProgramRule>{{*negated,{ProgramActionKind::route,1}}},0,2);
         check(policy && policy->preflight("test.example") && !*policy->preflight("test.example"),"negated unknown IP requires DNS");
     } else check(false,"parse negation");
     for (auto invalid : {"rule type=\"port\" value=\"0\"", "rule type=\"port\" value=\"65536\"",

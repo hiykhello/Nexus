@@ -263,20 +263,19 @@ namespace desktop_ui_helpers {
         std::string socks_host;
         std::uint16_t http_port = 0;
         std::uint16_t socks_port = 0;
-        if (inb.mixed.enabled && inb.mixed.port > 0) {
+        if (inb.http.enabled && inb.http.port > 0) {
+            http_host = inb.http.host;
+            http_port = inb.http.port;
+        } else if (inb.mixed.enabled && inb.mixed.port > 0) {
             http_host = inb.mixed.host;
-            socks_host = inb.mixed.host;
             http_port = inb.mixed.port;
+        }
+        if (inb.socks5.enabled && inb.socks5.port > 0) {
+            socks_host = inb.socks5.host;
+            socks_port = inb.socks5.port;
+        } else if (inb.mixed.enabled && inb.mixed.port > 0) {
+            socks_host = inb.mixed.host;
             socks_port = inb.mixed.port;
-        } else {
-            if (inb.http.enabled && inb.http.port > 0) {
-                http_host = inb.http.host;
-                http_port = inb.http.port;
-            }
-            if (inb.socks5.enabled && inb.socks5.port > 0) {
-                socks_host = inb.socks5.host;
-                socks_port = inb.socks5.port;
-            }
         }
         return desktop::build_proxy_export_command(http_host, http_port, socks_port, socks_host);
     }

@@ -1,110 +1,420 @@
-import { ScrollView } from "std-widgets.slint";
+import { ListView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { WorkspaceState } from "../workspace_state.slint";
-import { NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
+import { WorkspaceProfileRow, WorkspaceState } from "../workspace_state.slint";
+import { EmptyStateCard, NexusInput } from "nexus_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
-import { WorkspaceProfilesView, WorkspaceSubscriptionsView } from "workspace_panels.slint";
-import { WorkspaceRoutingDnsView } from "workspace_routing_dns_view.slint";
-import { WorkspaceHostPortableView } from "workspace_host_view.slint";
+import { NexusButton, NexusChip } from "nexus_buttons.slint";
+import { WorkspaceSubscriptionsDrawer } from "workspace_panels.slint";
 
 export component ProfilesPanel inherits VerticalLayout {
+    in property <length> window-width: 1280px;
     in property <string> diagnostic-message: "";
     in property <bool> diagnostic-ok: true;
 
     callback refresh-profiles();
     callback open-add-outbound();
+    callback open-edit-outbound(string);
 
-    spacing: Theme.space-md;
+    property <bool> compact-bar: root.window-width < 1080px;
+    property <bool> show-group-col: root.window-width >= 920px;
 
-    // Unified 4-Layer Workspace Sub-Tab Bar (zero duplicate Share-URI input; 8px concentric bar)
-    HorizontalLayout {
+    spacing: 12px;
+
+    // 1. Top Action & Filter Toolbar (Single row on wide, 2 balanced rows on <1080px so zero buttons truncate)
+    if !root.compact-bar : HorizontalLayout {
         vertical-stretch: 0;
-        padding-right: 18px;
-        spacing: Theme.space-sm;
+        spacing: 8px;
 
-        SlidingSegmentBar {
+        NexusInput {
             horizontal-stretch: 1;
-            max-width: 460px;
-            bar-height: 32px;
-            options: [
-                I18n.t("配置项", "Profiles"),
-                I18n.t("订阅", "Subs"),
-                I18n.t("路由与 DNS", "Route & DNS"),
-                I18n.t("本机设置", "Local"),
-            ];
-            current-index: WorkspaceState.active-subtab;
-            selected(idx) => {
-                WorkspaceState.active-subtab = idx;
-                sv.content-y = 0px;
+            min-width: 150px;
+            search-icon: true;
+            text <=> WorkspaceState.profile-search;
+            placeholder-text: I18n.t("搜索节点、地址或协议...", "Search node, host, protocol...");
+            edited(q) => { WorkspaceState.set-profile-search(q); }
+        }
+
+        NexusInput {
+            width: 196px;
+            mono: true;
+            text <=> WorkspaceState.draft-payload;
+            placeholder-text: I18n.t("粘贴链接回车导入", "Paste URI & Enter");
+            accepted => {
+                if (WorkspaceState.draft-payload != "") {
+                    WorkspaceState.create-profile("node", "", WorkspaceState.draft-payload);
+                    WorkspaceState.draft-payload = "";
+                }
             }
         }
 
-        Rectangle { horizontal-stretch: 1; }
+        NexusButton {
+            has-icon: true;
+            icon: @image-url("../icons/download.svg");
+            label: I18n.t("导入", "Import");
+            clicked => { WorkspaceState.import-clipboard-uris(); }
+        }
 
-        IconActionButton {
+        NexusButton {
+            has-icon: true;
             icon: @image-url("../icons/refresh.svg");
-            label: I18n.t("刷新", "Refresh");
-            clicked => { root.refresh-profiles(); }
+            label: WorkspaceState.sub-updating ? I18n.t("更新中...", "Updating...") : I18n.t("更新订阅", "Update");
+            enabled: !WorkspaceState.sub-updating;
+            clicked => {
+                WorkspaceState.refresh-subscription(
+                    (WorkspaceState.selected-sub-tab == "all" || WorkspaceState.selected-sub-tab == "manual")
+                        ? "" : WorkspaceState.selected-sub-tab
+                );
+            }
+        }
+
+        NexusButton {
+            label: I18n.t("订阅 (\{WorkspaceState.subscriptions.length})", "Subs (\{WorkspaceState.subscriptions.length})");
+            active: WorkspaceState.sub-drawer-open;
+            clicked => { WorkspaceState.sub-drawer-open = !WorkspaceState.sub-drawer-open; }
+        }
+
+        NexusButton {
+            has-icon: true;
+            icon: @image-url("../icons/sort.svg");
+            label: WorkspaceState.profile-sort == "latency" ? I18n.t("按延迟", "Latency")
+                : WorkspaceState.profile-sort == "name" ? I18n.t("按名称", "Name")
+                : I18n.t("默认序", "Order");
+            clicked => { WorkspaceState.cycle-profile-sort(); }
+        }
+
+        NexusButton {
+            has-icon: true;
+            icon: @image-url("../icons/plus.svg");
+            label: I18n.t("新建", "New");
+            primary: true;
+            clicked => {
+                WorkspaceState.request-new-profile("node");
+                root.open-add-outbound();
+            }
         }
     }
 
-    if root.diagnostic-message != "" : HorizontalLayout {
+    if root.compact-bar : VerticalLayout {
         vertical-stretch: 0;
-        padding-right: 18px;
-        Rectangle {
-            horizontal-stretch: 1; min-width: 0px;
-            border-radius: Theme.radius-sm; border-width: 1px;
-            border-color: root.diagnostic-ok ? Theme.success-border : Theme.error-border;
-            background: root.diagnostic-ok ? Theme.success-bg : Theme.error-bg;
-            HorizontalLayout {
-                padding-left: 12px; padding-right: 12px; padding-top: 7px; padding-bottom: 7px;
-                Text {
-                    text: root.diagnostic-message; font-size: 11px; font-weight: 600;
-                    color: root.diagnostic-ok ? Theme.success-fg : Theme.error-fg; overflow: elide;
+        spacing: 8px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            NexusInput {
+                horizontal-stretch: 1.15;
+                min-width: 150px;
+                search-icon: true;
+                text <=> WorkspaceState.profile-search;
+                placeholder-text: I18n.t("搜索别名、地址、协议...", "Search remarks, server, protocol...");
+                edited(q) => { WorkspaceState.set-profile-search(q); }
+            }
+            NexusInput {
+                horizontal-stretch: 1.0;
+                min-width: 170px;
+                mono: true;
+                text <=> WorkspaceState.draft-payload;
+                placeholder-text: I18n.t("粘贴分享链接回车快速导入", "Paste URI & press Enter");
+                accepted => {
+                    if (WorkspaceState.draft-payload != "") {
+                        WorkspaceState.create-profile("node", "", WorkspaceState.draft-payload);
+                        WorkspaceState.draft-payload = "";
+                    }
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            NexusButton {
+                has-icon: true;
+                icon: @image-url("../icons/download.svg");
+                label: I18n.t("剪贴板导入", "Clipboard");
+                clicked => { WorkspaceState.import-clipboard-uris(); }
+            }
+            NexusButton {
+                has-icon: true;
+                icon: @image-url("../icons/refresh.svg");
+                label: WorkspaceState.sub-updating ? I18n.t("更新中...", "Updating...") : I18n.t("更新订阅", "Update Sub");
+                enabled: !WorkspaceState.sub-updating;
+                clicked => {
+                    WorkspaceState.refresh-subscription(
+                        (WorkspaceState.selected-sub-tab == "all" || WorkspaceState.selected-sub-tab == "manual")
+                            ? "" : WorkspaceState.selected-sub-tab
+                    );
+                }
+            }
+            NexusButton {
+                label: I18n.t("订阅分组 (\{WorkspaceState.subscriptions.length})", "Subs (\{WorkspaceState.subscriptions.length})");
+                active: WorkspaceState.sub-drawer-open;
+                clicked => { WorkspaceState.sub-drawer-open = !WorkspaceState.sub-drawer-open; }
+            }
+            NexusButton {
+                has-icon: true;
+                icon: @image-url("../icons/sort.svg");
+                label: WorkspaceState.profile-sort == "latency" ? I18n.t("按延迟", "Latency")
+                    : WorkspaceState.profile-sort == "name" ? I18n.t("按名称", "Name")
+                    : I18n.t("默认序", "Order");
+                clicked => { WorkspaceState.cycle-profile-sort(); }
+            }
+            Rectangle { horizontal-stretch: 1; }
+            NexusButton {
+                has-icon: true;
+                icon: @image-url("../icons/plus.svg");
+                label: I18n.t("新建配置", "New Profile");
+                primary: true;
+                clicked => {
+                    WorkspaceState.request-new-profile("node");
+                    root.open-add-outbound();
                 }
             }
         }
     }
 
-    // Main Scrollable 4-Layer Workspace Surface
-    Rectangle {
+    // 2. Subscription Group Tab Bar ([全部] [手动配置] [<Sub 1>] [<Sub 2>] ...)
+    FlexboxLayout {
+        vertical-stretch: 0;
+        spacing: 6px;
+
+        NexusChip {
+            label: I18n.t("全部 (\{WorkspaceState.profiles.length})", "All (\{WorkspaceState.profiles.length})");
+            active: WorkspaceState.selected-sub-tab == "all";
+            clicked => { WorkspaceState.set-sub-filter("all"); }
+        }
+
+        NexusChip {
+            label: I18n.t("手动配置", "Manual");
+            active: WorkspaceState.selected-sub-tab == "manual";
+            clicked => { WorkspaceState.set-sub-filter("manual"); }
+        }
+
+        for s in WorkspaceState.subscriptions : NexusChip {
+            label: (s.remarks != "" ? s.remarks : s.id) + " (\{s.node-count})";
+            active: WorkspaceState.selected-sub-tab == s.id;
+            clicked => { WorkspaceState.set-sub-filter(s.id); }
+        }
+    }
+
+    // 3. Optional Collapsible Subscription Group Manager Drawer
+    if WorkspaceState.sub-drawer-open : WorkspaceSubscriptionsDrawer {
+        grid-w: root.width;
+    }
+
+    // 4. Diagnostic Banner
+    if root.diagnostic-message != "" : Rectangle {
+        vertical-stretch: 0;
+        height: 34px;
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: root.diagnostic-ok ? Theme.success-border : Theme.error-border;
+        background: root.diagnostic-ok ? Theme.success-bg : Theme.error-bg;
+        HorizontalLayout {
+            padding-left: 12px; padding-right: 12px;
+            Text {
+                text: root.diagnostic-message; font-size: 12px; font-weight: 600;
+                color: root.diagnostic-ok ? Theme.success-fg : Theme.error-fg;
+                vertical-alignment: center; overflow: elide;
+            }
+        }
+    }
+
+    // 5. Structured Server Table Card (Virtualized ListView)
+    if WorkspaceState.filtered-profiles.length == 0 : EmptyStateCard {
+        icon: @image-url("../icons/profiles.svg");
+        title: I18n.t("暂无节点", "No profiles");
+        subtitle: I18n.t("粘贴链接导入，或点击右上角新建", "Paste a link to import, or click New");
+        action-label: I18n.t("新建节点", "New Node");
+        secondary-action-label: I18n.t("订阅管理", "Subscriptions");
+        action-clicked => { WorkspaceState.request-new-profile("node"); root.open-add-outbound(); }
+        secondary-action-clicked => { WorkspaceState.sub-drawer-open = true; }
+    }
+
+    if WorkspaceState.filtered-profiles.length > 0 : Rectangle {
         vertical-stretch: 1;
+        border-radius: Theme.radius-card;
+        border-width: 1px;
+        border-color: Theme.card-border;
+        background: Theme.card-surface;
         clip: true;
 
-        sv := ScrollView {
-            width: 100%; height: 100%;
-            vertical-scrollbar-policy: ScrollBarPolicy.always-off;
-            horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
-            content-width: self.visible-width;
-            content-height: max(self.visible-height, ws-col.preferred-height);
-
-            ws-col := VerticalLayout {
-                x: 0px; y: 0px;
-                width: sv.visible-width;
-                padding-bottom: 10px;
-                alignment: start;
-
-                property <length> grid-w: max(0px, sv.visible-width - 18px);
-
-                if WorkspaceState.active-subtab == 0 : WorkspaceProfilesView {
-                    grid-w: grid-w;
-                    viewport-h: sv.visible-height;
-                    open-add-outbound => { root.open-add-outbound(); }
+        VerticalLayout {
+            // Table Column Header
+            Rectangle {
+                height: 36px;
+                background: Theme.well-bg;
+                HorizontalLayout {
+                    padding-left: 16px;
+                    padding-right: 16px;
+                    spacing: 10px;
+                    Text { width: 82px; text: I18n.t("类型", "Type"); font-size: 11px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1.35; Text { x: 0px; width: parent.width; height: parent.height; text: I18n.t("别名 (Remarks)", "Remarks"); font-size: 11px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; } }
+                    Rectangle { horizontal-stretch: 1.15; Text { x: 0px; width: parent.width; height: parent.height; text: I18n.t("服务器地址", "Address:Port"); font-size: 11px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; } }
+                    Rectangle { horizontal-stretch: 1.0; Text { x: 0px; width: parent.width; height: parent.height; text: I18n.t("传输 / TLS 特性", "Transport / TLS"); font-size: 11px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; } }
+                    if root.show-group-col : Text { width: 88px; text: I18n.t("订阅分组", "Group"); font-size: 11px; font-weight: 700; color: Theme.text-secondary; vertical-alignment: center; }
+                    Text { width: 64px; text: I18n.t("延迟", "RTT"); font-size: 11px; font-weight: 700; color: Theme.text-secondary; horizontal-alignment: right; vertical-alignment: center; }
+                    Text { width: 92px; text: I18n.t("操作", "Actions"); font-size: 11px; font-weight: 700; color: Theme.text-secondary; horizontal-alignment: right; vertical-alignment: center; }
                 }
-                if WorkspaceState.active-subtab == 1 : WorkspaceSubscriptionsView { grid-w: grid-w; }
-                if WorkspaceState.active-subtab == 2 : WorkspaceRoutingDnsView { grid-w: grid-w; }
-                if WorkspaceState.active-subtab == 3 : WorkspaceHostPortableView { grid-w: grid-w; }
+                Rectangle { x: 0px; y: parent.height - 1px; width: 100%; height: 1px; background: Theme.card-border; }
             }
-        }
 
-        NexusVScrollBar {
-            x: parent.width - self.width - 3px;
-            y: 2px;
-            height: max(0px, parent.height - 4px);
-            viewport-size: sv.visible-height;
-            content-size: sv.content-height;
-            scroll-pos <=> sv.content-y;
+            // Virtualized Rows
+            ListView {
+                vertical-stretch: 1;
+                for item[idx] in WorkspaceState.filtered-profiles : Rectangle {
+                    height: 46px;
+                    background: item.active ? Theme.selected-bg : row-ta.has-hover ? Theme.row-hover-bg : (Math.mod(idx, 2) == 1 ? Theme.row-alt-bg : transparent);
+
+                    row-ta := TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { WorkspaceState.activate-profile(item.id); }
+                    }
+
+                    HorizontalLayout {
+                        padding-left: 16px;
+                        padding-right: 14px;
+                        spacing: 10px;
+
+                        // Protocol / Kind Badge (properly sized for MASQUE, VLESS, HY2, WG, GROUP, CHAIN)
+                        Rectangle {
+                            width: 82px;
+                            Rectangle {
+                                x: 0px;
+                                y: (parent.height - self.height) / 2;
+                                width: min(80px, max(44px, badge-lbl.preferred-width + 14px));
+                                height: 22px;
+                                border-radius: Theme.radius-xs;
+                                border-width: 1px;
+                                border-color: item.kind == "policy_group" ? Theme.selected-border
+                                    : item.kind == "proxy_chain" ? Theme.warn-border
+                                    : Theme.well-border;
+                                background: item.kind == "policy_group" ? Theme.accent-soft
+                                    : item.kind == "proxy_chain" ? Theme.warn-bg
+                                    : Theme.inset-bg;
+                                badge-lbl := Text {
+                                    width: 100%;
+                                    height: 100%;
+                                    text: item.proto-badge;
+                                    font-size: 10px;
+                                    font-weight: 800;
+                                    font-family: Theme.mono-font;
+                                    color: item.kind == "policy_group" ? Theme.nav-active-fg
+                                        : item.kind == "proxy_chain" ? Theme.warn-fg
+                                        : Theme.text-primary;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        // Remarks + Active check
+                        Rectangle {
+                            horizontal-stretch: 1.35;
+                            clip: true;
+                            if item.active : Rectangle {
+                                x: 0px; y: (parent.height - self.height) / 2;
+                                width: 7px; height: 7px;
+                                border-radius: 3.5px; background: Theme.live-emerald;
+                            }
+                            Text {
+                                x: item.active ? 13px : 0px;
+                                width: parent.width - (item.active ? 13px : 0px);
+                                height: parent.height;
+                                text: item.remarks != "" ? item.remarks : item.id;
+                                font-size: 13px; font-weight: item.active ? 800 : 600;
+                                color: item.active ? Theme.nav-active-fg : Theme.text-primary;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                        }
+
+                        // Endpoint
+                        Rectangle {
+                            horizontal-stretch: 1.15;
+                            Text {
+                                x: 0px; width: parent.width; height: parent.height;
+                                text: item.endpoint;
+                                font-size: 12px; font-family: Theme.mono-font;
+                                color: Theme.text-secondary;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                        }
+
+                        // Transport / TLS Summary
+                        Rectangle {
+                            horizontal-stretch: 1.0;
+                            Text {
+                                x: 0px; width: parent.width; height: parent.height;
+                                text: item.transport-summary;
+                                font-size: 11px; font-family: Theme.mono-font;
+                                color: Theme.text-muted;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                        }
+
+                        // Subscription Group
+                        if root.show-group-col : Text {
+                            width: 88px;
+                            text: item.sub-name != "" ? item.sub-name : I18n.t("手动", "Manual");
+                            font-size: 12px;
+                            color: Theme.text-secondary;
+                            vertical-alignment: center; overflow: elide;
+                        }
+
+                        // Latency
+                        Text {
+                            width: 64px;
+                            text: item.delay-ms > 0 ? "\{item.delay-ms} ms" : "--";
+                            font-size: 12px; font-weight: 700; font-family: Theme.mono-font;
+                            color: item.delay-ms > 0 ? Theme.latency-fg(item.delay-ms, "healthy") : Theme.text-muted;
+                            horizontal-alignment: right; vertical-alignment: center;
+                        }
+
+                        // Edit / Share / Delete Actions (fixed-slot alignment across active & inactive rows)
+                        HorizontalLayout {
+                            width: 92px;
+                            spacing: 4px;
+                            alignment: end;
+
+                            VerticalLayout {
+                                alignment: center;
+                                IconActionButton {
+                                    size: 26px;
+                                    icon: @image-url("../icons/edit.svg");
+                                    label: I18n.t("编辑配置项", "Edit");
+                                    clicked => {
+                                        WorkspaceState.request-edit-profile(item.id);
+                                        root.open-edit-outbound(item.id);
+                                    }
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                IconActionButton {
+                                    size: 26px;
+                                    icon: @image-url("../icons/copy.svg");
+                                    label: I18n.t("复制 nexus:// 分享链接", "Share");
+                                    enabled: item.kind != "full_custom_kdl";
+                                    clicked => { WorkspaceState.export-profile-share(item.id); }
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                IconActionButton {
+                                    size: 26px;
+                                    icon: @image-url("../icons/trash.svg");
+                                    label: I18n.t("删除配置项", "Delete");
+                                    danger: true;
+                                    enabled: WorkspaceState.profiles.length > 1;
+                                    clicked => { WorkspaceState.delete-profile(item.id); }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle { x: 0px; y: parent.height - 1px; width: 100%; height: 1px; background: Theme.hairline-subtle; }
+                }
+            }
         }
     }
 }

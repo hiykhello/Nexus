@@ -2,6 +2,8 @@ module relay;
 import std;
 import proxy.v4;
 import rules;
+import sniff.tcp;
+import sniff.route_tcp;
 import socks5;
 import memory.budget;
 import grpc.headers;
@@ -79,12 +81,48 @@ namespace relay {
             }
             co_return capy::results<>{};
         }
-        auto dial_rpc(Session& session,corosio::io_context& context,rules::RouteMatcher const& policy,
+        auto sniff_grpc(void* ctx,sniff::TcpSniffer& sniffer,Clock::time_point deadline) -> capy::task<sniff::TcpReadResult> {
+            auto& incoming=*static_cast<Incoming*>(ctx);
+            std::array<std::uint8_t,4096> buffer{};
+            for (;;) {
+                auto state=sniffer.limit();
+                if (state.status!=sniff::TcpStatus::need_more) co_return {sniff::TcpReadStop::classified,state,{}};
+                if (Clock::now()>=deadline) co_return {sniff::TcpReadStop::deadline,state,{}};
+                auto result=co_await incoming.read_sniff(std::span(buffer).first(std::min(buffer.size(),sniffer.remaining())),deadline);
+                if (!result) {
+                    if (result.error()==vless::detail::TlsInboundError::timeout) co_return {sniff::TcpReadStop::deadline,sniffer.current(),{}};
+                    co_return {sniff::TcpReadStop::io_error,sniffer.current(),std::make_error_code(std::errc::io_error)};
+                }
+                if (!*result) co_return {sniff::TcpReadStop::eof,sniffer.finish(),{}};
+                auto fed=sniffer.feed(std::span(buffer).first(*result));
+                if (fed.consumed!=*result) co_return {sniff::TcpReadStop::io_error,fed,std::make_error_code(std::errc::protocol_error)};
+            }
+        }
+        auto dial_rpc(Session& session,corosio::io_context& context,rules::RouteProgram const& policy,
             socks5::Request const& request,Clock::time_point deadline) -> capy::task<capy::results<std::uint8_t>> {
             auto code=co_await dial_destination(session,context,policy,request,deadline);
             co_return capy::results<std::uint8_t>{std::make_error_code(std::errc::operation_canceled),code};
         }
-        auto payload(Session& session,corosio::io_context& context,rules::RouteMatcher const& policy,
+        auto dial_ordered_rpc(Session& session,corosio::io_context& context,socks5::Request const& target,
+            Incoming& incoming,Channel& owner,RpcTransport& channel,Clock::time_point limit) -> capy::task<bool> {
+            OrderedTcpRequest route; if (!route.prepare(session,target)) co_return false;
+            std::array<std::uint8_t,16640> wire{},scratch{};
+            sniff::TcpSniffer sniffer(wire,scratch); rules::ProgramCursor cursor;
+            auto const& ordered=*session.ordered_tcp;
+            auto branch=[&]() -> capy::task<capy::results<OrderedTcpResult>> {
+                auto r=co_await execute_ordered_tcp(session,context,ordered.program,cursor,route.input,sniffer,
+                    route.candidates,route.endpoints,ordered.fallback,
+                    std::min(limit,Clock::now()+ordered.sniff_timeout),limit,ordered.unknown_policy,&incoming,&sniff_grpc);
+                co_return capy::results<OrderedTcpResult>{std::make_error_code(std::errc::operation_canceled),std::move(r)};
+            };
+            auto [signal,result,watched]=co_await capy::when_all(branch(),watch_rpc(session,owner,channel,limit));
+            (void)signal; (void)watched;
+            if (session.closed || result.stop!=sniff::RouteTcpStop::terminal || result.code) co_return false;
+            if (!co_await incoming.complete_dial(true,limit)) co_return false;
+            sniff::TcpReplay replay(result.first_sent ? std::span<std::uint8_t const>{} : sniffer.wire());
+            co_return co_await replay_ordered_tcp(session,replay,limit);
+        }
+        auto payload(Session& session,corosio::io_context& context,rules::RouteProgram const& policy,
             Profile const& profile,Channel& owner,RpcTransport& channel,Clock::time_point limit) -> capy::task<capy::results<>> {
             struct Guard {Session& session;RpcTransport& channel;bool done=false;~Guard() {if (!done) {channel.cancel();session.close();}}} guard{session,channel};
             if (Clock::now()>=limit || session.closed) co_return failure();
@@ -110,9 +148,13 @@ namespace relay {
             target.address_type=request.kind==vless::AddressKind::ipv4 ? 1 : request.kind==vless::AddressKind::ipv6 ? 4 : 3;
             target.address_length=static_cast<std::uint8_t>(request.address.size());std::ranges::copy(request.address,target.address.begin());
             session.begin_traffic(TrafficProtocol::grpc_vless,target.port);
-            auto [signal,dialed,watched]=co_await capy::when_all(dial_rpc(session,context,policy,target,limit),watch_rpc(session,owner,channel,limit));
-            (void)signal;(void)watched;
-            if (dialed || session.closed || !co_await incoming.complete_dial(true,limit)) co_return failure();
+            if (session.ordered_tcp) {
+                if (!co_await dial_ordered_rpc(session,context,target,incoming,owner,channel,limit)) co_return failure();
+            } else {
+                auto [signal,dialed,watched]=co_await capy::when_all(dial_rpc(session,context,policy,target,limit),watch_rpc(session,owner,channel,limit));
+                (void)signal;(void)watched;
+                if (dialed || session.closed || !co_await incoming.complete_dial(true,limit)) co_return failure();
+            }
             session.relaying=true;session.touched=Clock::now();
             auto [error,upload,download]=co_await capy::when_all(
                 stream_relay::direction(session,stream_relay::upload(session,incoming)),
@@ -121,7 +163,7 @@ namespace relay {
             guard.done=true;co_return capy::results<>{};
         }
         struct Slots {bool primary=true;};
-        auto serve_rpc(Session& parent,corosio::io_context& context,rules::RouteMatcher const& policy,
+        auto serve_rpc(Session& parent,corosio::io_context& context,rules::RouteProgram const& policy,
             Profile const& profile,Channel& channel,g::RpcTicket ticket,Slots& slots) -> capy::task<> {
             RpcTransport transport(channel,parent,ticket);
             try{
@@ -146,7 +188,7 @@ namespace relay {
                 transport.rpc.cancel({g::Error::canceled});
             }
         }
-        auto worker(Session& parent,corosio::io_context& context,rules::RouteMatcher const& policy,
+        auto worker(Session& parent,corosio::io_context& context,rules::RouteProgram const& policy,
             Profile const& profile,Channel& channel,Slots& slots) -> capy::task<capy::results<>> {
             while(!parent.closed){
                 if(auto accepted=channel.accept()){co_await serve_rpc(parent,context,policy,profile,channel,*accepted,slots);continue;}
@@ -159,9 +201,8 @@ namespace relay {
             auto result=co_await channel.run();close.normal=channel.finished()&&!channel.failure();
             co_return result;
         }
-        auto serve(Session& session,corosio::io_context& context,rules::RouteMatcher const& policy,Profile const& profile) -> capy::task<> {
+        auto serve(Session& session,corosio::io_context& context,rules::RouteProgram const& policy,Profile const& profile) -> capy::task<> {
             struct Close {Session& session;~Close() {session.close();session.done=true;}} close{session};
-            if(session.ordered_tcp)co_return;
             auto limit=session.started+std::chrono::seconds(10);
             auto ms=[](Clock::time_point value) {return std::chrono::duration_cast<std::chrono::milliseconds>(value.time_since_epoch()).count();};
             auto start=ms(session.started),end=ms(limit);if (start<0 || end<=start) co_return;
@@ -202,7 +243,7 @@ namespace relay {
             profile->set_ech_keys(std::move(*ech));
         }
         auto owned=std::make_unique<v::Profile>(std::move(*profile),std::move(*request),limits,std::vector<std::string>(names.begin(),names.end()));
-        return InboundFactory{[profile=std::move(owned)](Session& session,corosio::io_context& context,rules::RouteMatcher const& policy) {
+        return InboundFactory{[profile=std::move(owned)](Session& session,corosio::io_context& context,rules::RouteProgram const& policy) {
             return v::serve(session,context,policy,*profile);
         }};
     }

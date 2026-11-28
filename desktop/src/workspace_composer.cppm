@@ -1,6 +1,7 @@
 export module desktop.workspace_composer;
 
 import std;
+import desktop.desktop_host_config;
 import desktop.workspace_models;
 
 export namespace desktop {
@@ -51,4 +52,11 @@ export namespace desktop {
         std::filesystem::path const& secrets_dir,
         std::string_view active_profile_id = {},
         std::filesystem::path const& emit_kdl_file = {}) -> WorkspaceComposeResult;
+
+    // Synthesizes or overlays the `inbounds { ... }` block for arbitrary Mixed / HTTP / SOCKS5 combinations + Allow LAN.
+    [[nodiscard]] auto apply_desktop_inbounds_overlay(
+        std::string_view composed_kdl,
+        DesktopHostConfig const& host,
+        std::filesystem::path const& secrets_dir,
+        std::vector<std::string>& secret_files) -> std::expected<std::string, std::string>;
 }

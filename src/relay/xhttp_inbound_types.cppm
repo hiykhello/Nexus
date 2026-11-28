@@ -4,6 +4,8 @@ import http.connect;
 import http.header;
 import memory.budget;
 import rules;
+import sniff.tcp;
+import sniff.route_tcp;
 import socks5;
 import tls.byte_stream;
 import vless;
@@ -130,7 +132,7 @@ namespace relay::vless_xhttp {
     };
 
     template<class Stream>
-    auto payload(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto payload(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
                  InboundProfile const& profile, Stream& stream, Clock::time_point deadline) -> capy::task<capy::results<>> {
         struct Done {
             Session& session;
@@ -166,11 +168,44 @@ namespace relay::vless_xhttp {
         target.address_length = static_cast<std::uint8_t>(request.address.size());
         std::ranges::copy(request.address, target.address.begin());
         session.begin_traffic(TrafficProtocol::vless, target.port);
-        auto dialed = session.datagram_source ?
-            co_await dial_destination(session, context, policy, target, *session.datagram_source, deadline) :
-            co_await dial_destination(session, context, policy, target, deadline);
-        if (dialed || session.closed) co_return capy::results<>{};
-        if (!co_await incoming.complete_dial(true, deadline)) co_return capy::results<>{};
+        if (session.ordered_tcp) {
+            OrderedTcpRequest route;
+            if (!route.prepare(session, target)) co_return capy::results<>{};
+            std::array<std::uint8_t, 16640> wire{}, scratch{};
+            sniff::TcpSniffer sniffer(wire, scratch); rules::ProgramCursor cursor;
+            auto const& ordered = *session.ordered_tcp;
+            using Inc = decltype(incoming);
+            auto sniff_fn = +[](void* ctx, sniff::TcpSniffer& sn, Clock::time_point lim) -> capy::task<sniff::TcpReadResult> {
+                auto& inc = *static_cast<Inc*>(ctx);
+                std::array<std::uint8_t, 4096> buf{};
+                for (;;) {
+                    auto st = sn.limit();
+                    if (st.status != sniff::TcpStatus::need_more) co_return {sniff::TcpReadStop::classified, st, {}};
+                    if (Clock::now() >= lim) co_return {sniff::TcpReadStop::deadline, st, {}};
+                    auto r = co_await inc.read_sniff(std::span(buf).first(std::min(buf.size(), sn.remaining())), lim);
+                    if (!r) {
+                        if (r.error() == vless::detail::TlsInboundError::timeout) co_return {sniff::TcpReadStop::deadline, sn.current(), {}};
+                        co_return {sniff::TcpReadStop::io_error, sn.current(), std::make_error_code(std::errc::io_error)};
+                    }
+                    if (!*r) co_return {sniff::TcpReadStop::eof, sn.finish(), {}};
+                    auto fed = sn.feed(std::span(buf).first(*r));
+                    if (fed.consumed != *r) co_return {sniff::TcpReadStop::io_error, fed, std::make_error_code(std::errc::protocol_error)};
+                }
+            };
+            auto res = co_await execute_ordered_tcp(session, context, ordered.program, cursor, route.input, sniffer,
+                route.candidates, route.endpoints, ordered.fallback,
+                std::min(deadline, Clock::now() + ordered.sniff_timeout), deadline, ordered.unknown_policy, &incoming, sniff_fn);
+            if (session.closed || res.stop != sniff::RouteTcpStop::terminal || res.code) co_return capy::results<>{};
+            if (!co_await incoming.complete_dial(true, deadline)) co_return capy::results<>{};
+            sniff::TcpReplay replay(res.first_sent ? std::span<std::uint8_t const>{} : sniffer.wire());
+            if (!co_await replay_ordered_tcp(session, replay, deadline)) co_return capy::results<>{};
+        } else {
+            auto dialed = session.datagram_source ?
+                co_await dial_destination(session, context, policy, target, *session.datagram_source, deadline) :
+                co_await dial_destination(session, context, policy, target, deadline);
+            if (dialed || session.closed) co_return capy::results<>{};
+            if (!co_await incoming.complete_dial(true, deadline)) co_return capy::results<>{};
+        }
         session.relaying = true;
         auto download = [&]() -> capy::task<capy::results<>> {
             // Downlink completion retires an upload with no wire-level EOF.

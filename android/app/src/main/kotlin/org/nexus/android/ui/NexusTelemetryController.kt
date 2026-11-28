@@ -45,9 +45,6 @@ internal class NexusTelemetryState(
     var metrics by mutableStateOf(initialMetrics)
     var downloadRateBps by mutableLongStateOf(initialDownloadSamples.lastOrNull() ?: 0L)
     var uploadRateBps by mutableLongStateOf(initialUploadSamples.lastOrNull() ?: 0L)
-    var peakRateBps by mutableLongStateOf(
-        maxOf(initialDownloadSamples.maxOrNull() ?: 0L, initialUploadSamples.maxOrNull() ?: 0L),
-    )
     var downloadSamples by mutableStateOf(initialDownloadSamples)
     var uploadSamples by mutableStateOf(initialUploadSamples)
     var onsetMarkers by mutableStateOf(initialOnsetMarkers)
@@ -68,7 +65,6 @@ internal class NexusTelemetryState(
     fun resetOffline() {
         downloadRateBps = 0L
         uploadRateBps = 0L
-        peakRateBps = 0L
         uptimeMs = 0L
         downloadSamples = List(MAX_SPARKLINE_SAMPLES) { 0L }
         uploadSamples = List(MAX_SPARKLINE_SAMPLES) { 0L }
@@ -197,8 +193,6 @@ internal fun rememberNexusTelemetryState(
                     val upRate = ((latest.uploadBytes - prior.uploadBytes).coerceAtLeast(0L) * 1000L) / elapsedMs
                     state.downloadRateBps = downRate
                     state.uploadRateBps = upRate
-                    if (downRate > state.peakRateBps) state.peakRateBps = downRate
-                    if (upRate > state.peakRateBps) state.peakRateBps = upRate
                     state.downloadSamples = state.downloadSamples.drop(1) + downRate
                     state.uploadSamples = state.uploadSamples.drop(1) + upRate
                     state.onsetMarkers = shiftOnsetMarkers(state.onsetMarkers)

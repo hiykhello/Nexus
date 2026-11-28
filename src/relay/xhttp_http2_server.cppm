@@ -206,7 +206,7 @@ namespace relay::vless_xhttp {
     struct RelaySlots { bool primary = true; };
 
     template<class Request, class Stream>
-    auto serve_stream_payload(Session& parent, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto serve_stream_payload(Session& parent, corosio::io_context& context, rules::RouteProgram const& policy,
             InboundProfile const& profile, Request& request, Stream& stream, Clock::time_point until, RelaySlots& slots)
         -> capy::task<> {
         std::optional<SessionQuota::Lease> lease;
@@ -234,7 +234,7 @@ namespace relay::vless_xhttp {
     }
 
     template<class Request>
-    auto handle_request(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto handle_request(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
         InboundProfile& profile, Request& request, RelaySlots& slots) -> capy::task<> {
         auto until = Clock::now() + std::chrono::seconds(10);
         auto view = request.inspect();
@@ -284,7 +284,7 @@ namespace relay::vless_xhttp {
             co_await serve_stream_payload(session, context, policy, profile, request, down, split->sides.deadline, slots);
     }
 
-    inline auto h2_worker(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+    inline auto h2_worker(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
         InboundProfile& profile, H2Driver& driver, RelaySlots& slots) -> capy::task<capy::results<>> {
         while (!session.closed) {
             auto accepted = driver.protocol().accept();

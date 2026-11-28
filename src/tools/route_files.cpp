@@ -334,26 +334,9 @@ namespace cli {
         }
     }
 
-    auto RouteFiles::indexed(config::Config const& config) const -> std::vector<relay::IndexedRouteRule> {
-        std::vector<relay::IndexedRouteRule> result;
-        result.reserve(config.routes.size());
-        for(std::size_t index=0;index<config.routes.size();++index) {
-            auto const& route=config.routes[index];
-            auto idx = indices[index];
-            auto mm = idx < data_mmaps.size() ? data_mmaps[idx] : nullptr;
-            auto fmt = mm ? relay::RuleFormat::nxmm : relay_rule_format(route.file.format);
-            result.push_back({data[idx], fmt, route.outbound,
-                              route.file.ip_cidr_match_source, std::move(mm)});
-        }
-        return result;
-    }
-
     auto project_routes(config::Config const& config,RouteFiles const& files) -> ProjectedRoutes {
         auto distribution=config::outbound_distribution(config);
         auto index_of=[&](std::string_view name) {return *config::distributed_outbound_index(config,name);};
-        auto indexed=files.indexed(config);
-        for (std::size_t index=0;index<indexed.size();++index)
-            indexed[index].outbound=index_of(config.routes[index].outbound_name);
         auto ordered_rules=files.ordered;
         if(config.ordered_tcp) {
             auto const& program=*config.ordered_tcp;
@@ -361,7 +344,7 @@ namespace cli {
                 if (auto const& name=program.rules[index].outbound_name)
                     ordered_rules[index].action.outbound=index_of(*name);
         }
-        return {std::move(indexed),std::move(ordered_rules),std::move(distribution),index_of(config.default_outbound_name)};
+        return {std::move(ordered_rules),std::move(distribution),index_of(config.default_outbound_name)};
     }
 
     auto ProjectedRoutes::program(config::Config const& config) const -> std::optional<relay::OrderedRuleInput> {
@@ -372,7 +355,7 @@ namespace cli {
 
     auto ProjectedRoutes::compile(config::Config const& config,std::string_view inbound)
         const -> std::expected<relay::RouteSnapshot,std::string> {
-        return relay::compile_routes(indexed,default_outbound,2+config.tunnel_count(),inbound,program(config),distribution);
+        return relay::compile_routes({},default_outbound,2+config.tunnel_count(),inbound,program(config),distribution);
     }
 
     auto RuleFileInput::read(std::string const& path) -> std::expected<std::string_view,std::string> {
@@ -397,7 +380,7 @@ namespace cli {
 
     auto load_route_files(config::Config const& config,RuleFileInput& input) -> std::expected<RouteFiles,std::string> {
         RouteFiles result;
-        if(config.routes.empty() && !config.ordered_tcp)return result;
+        if(!config.ordered_tcp)return result;
 
         std::filesystem::path cache_dir = !input.cache_dir().empty() ? input.cache_dir() :
             (config.state && !config.state->cache_directory.empty() ? std::filesystem::path(config.state->cache_directory) : std::filesystem::path{});
@@ -471,12 +454,6 @@ namespace cli {
             return keys.size()-1;
         };
 
-        for(auto const& route:config.routes) {
-            auto index=read(route.file, true);
-            if(!index)return std::unexpected(std::move(index.error()));
-            result.indices.push_back(*index);
-        }
-        // The parser makes the indexed rules and ordered program mutually exclusive.
         if(config.ordered_tcp) {
             auto has_seed=[&](std::string const& url) -> bool { return input.read(url).has_value(); };
             if (auto ok=nxmm_detail::load_ordered_program(config,input.allows_unfetched_remote(),

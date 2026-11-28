@@ -24,16 +24,16 @@ export namespace socks5 {
         std::size_t outbound;
         std::optional<std::size_t> rule{},predicate{};
     };
-    [[nodiscard]] auto udp_select_preflight(rules::RouteMatcher const& policy,UdpDatagram const& packet,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
+    [[nodiscard]] auto udp_select_preflight(rules::RouteProgram const& policy,UdpDatagram const& packet,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
         -> std::expected<std::optional<std::size_t>,UdpRouteError>;
-    [[nodiscard]] auto udp_select(rules::RouteMatcher const& policy,UdpDatagram const& packet,UdpPeer candidate,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
+    [[nodiscard]] auto udp_select(rules::RouteProgram const& policy,UdpDatagram const& packet,UdpPeer candidate,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
         -> std::expected<UdpSelection,UdpRouteError>;
-    [[nodiscard]] auto udp_preflight(rules::RouteMatcher const& policy,UdpDatagram const& packet,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
+    [[nodiscard]] auto udp_preflight(rules::RouteProgram const& policy,UdpDatagram const& packet,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
         -> std::expected<void,UdpRouteError>;
-    [[nodiscard]] auto udp_route(rules::RouteMatcher const& policy,UdpDatagram const& packet,UdpPeer candidate,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
+    [[nodiscard]] auto udp_route(rules::RouteProgram const& policy,UdpDatagram const& packet,UdpPeer candidate,UdpPeer const* source=nullptr,std::optional<std::string_view> auth_user={})
         -> std::expected<UdpPeer,UdpRouteError>;
     struct UdpSend { UdpPeer target; std::uint64_t token; };
     using UdpPrepareError=std::variant<UdpRouteError,Status>;
-    [[nodiscard]] auto udp_prepare_send(UdpAssociation& association,rules::RouteMatcher const& policy,
+    [[nodiscard]] auto udp_prepare_send(UdpAssociation& association,rules::RouteProgram const& policy,
         UdpDatagram const& packet,UdpPeer candidate,std::optional<std::string_view> auth_user={}) -> std::expected<UdpSend,UdpPrepareError>;
 }

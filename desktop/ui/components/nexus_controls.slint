@@ -25,20 +25,21 @@ export component NexusSwitch inherits HorizontalLayout {
     }
 
     Rectangle {
-        width: 38px;
-        height: 22px;
+        width: 40px;
+        height: 20px;
         y: (parent.height - self.height) / 2;
-        border-radius: 11px;
+        border-radius: 10px;
         border-width: fs.has-focus ? 2px : 1px;
         border-color:
             fs.has-focus ? Theme.accent
             : root.checked ? Theme.pill-active-top
-            : (track-ta.has-hover && root.enabled && root.interactive ? Theme.selected-border : Theme.well-border);
+            : (track-ta.has-hover && root.enabled && root.interactive ? Theme.hairline-strong : Theme.input-bottom-rest);
         background: root.checked
-            ? (track-ta.pressed ? Theme.pill-active-bot.darker(0.12) : Theme.pill-active-bot)
-            : Theme.inset-bg;
+            ? (track-ta.pressed ? Theme.pill-active-bot.darker(0.10) : track-ta.has-hover ? Theme.pill-active-bot.brighter(0.05) : Theme.pill-active-bot)
+            : (track-ta.pressed ? Theme.inset-bg : track-ta.has-hover ? Theme.control-fill-hover : Theme.control-fill);
         opacity: root.enabled ? 1.0 : 0.45;
         animate border-color { duration: Motion.fast; }
+        animate background { duration: Motion.fast; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
         fs := FocusScope {
             enabled: root.enabled && root.interactive;
@@ -52,14 +53,25 @@ export component NexusSwitch inherits HorizontalLayout {
             }
         }
 
+        // Fluent 2 tactile pill thumb: 12px resting -> 14px hover -> 17x12px pressed stretch
         Rectangle {
-            x: root.checked ? 18px : 2px;
-            y: 2px;
-            width: 18px;
-            height: 18px;
-            border-radius: 9px;
-            background: Theme.control-knob-bg;
-            animate x { duration: Motion.reduced ? 0ms : 140ms; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+            property <length> thumb-w:
+                (track-ta.pressed && root.enabled && root.interactive) ? 17px
+                : (track-ta.has-hover && root.enabled && root.interactive) ? 14px
+                : 12px;
+            property <length> thumb-h:
+                (track-ta.has-hover && !track-ta.pressed && root.enabled && root.interactive) ? 14px : 12px;
+            x: root.checked
+                ? (parent.width - self.thumb-w - 4px)
+                : 4px;
+            y: (parent.height - self.thumb-h) / 2;
+            width: self.thumb-w;
+            height: self.thumb-h;
+            border-radius: self.thumb-h / 2;
+            background: root.checked ? Theme.control-knob-bg : Theme.text-secondary;
+            animate x { duration: 150ms; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+            animate width { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+            animate height { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
         }
 
         track-ta := TouchArea {
@@ -91,6 +103,108 @@ export component NexusSwitch inherits HorizontalLayout {
                 if (root.auto-toggle) { root.checked = !root.checked; }
                 root.toggled();
             }
+        }
+    }
+}
+
+// Fluent 2 Precision Linear Slider (pointer drag, click-to-seek, keyboard arrow steps)
+export component NexusOpacitySlider inherits Rectangle {
+    in-out property <float> value: 1.0;
+    in property <float> minimum: 0.40;
+    in property <float> maximum: 1.0;
+    in property <bool> enabled: true;
+    callback changed-value(float);
+
+    property <float> span: max(0.01, root.maximum - root.minimum);
+    property <float> ratio: clamp((root.value - root.minimum) / root.span, 0.0, 1.0);
+
+    function apply-ratio(r: float) {
+        let next = Math.round((root.minimum + clamp(r, 0.0, 1.0) * root.span) * 100.0) / 100.0;
+        if (Math.abs(next - root.value) >= 0.005) {
+            root.value = next;
+            root.changed-value(next);
+        }
+    }
+
+    forward-focus: sl-fs;
+    height: 26px;
+    min-width: 120px;
+    opacity: root.enabled ? 1.0 : 0.45;
+
+    accessible-role: slider;
+    accessible-value: "\{Math.round(root.value * 100.0)}%";
+
+    sl-fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(ev) => {
+            if (!root.enabled) { return reject; }
+            if (ev.text == Key.LeftArrow) {
+                root.apply-ratio((root.value - 0.05 - root.minimum) / root.span);
+                return accept;
+            }
+            if (ev.text == Key.RightArrow) {
+                root.apply-ratio((root.value + 0.05 - root.minimum) / root.span);
+                return accept;
+            }
+            reject
+        }
+    }
+
+    sl-ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        pointer-event(ev) => {
+            if (root.enabled && ev.button == PointerEventButton.left && ev.kind == PointerEventKind.down) {
+                root.apply-ratio((self.mouse-x - 9px) / max(1px, root.width - 18px));
+            }
+        }
+        moved => {
+            if (root.enabled && self.pressed) {
+                root.apply-ratio((self.mouse-x - 9px) / max(1px, root.width - 18px));
+            }
+        }
+    }
+
+    // Fluent 2 Track (4px pill rail)
+    Rectangle {
+        x: 9px;
+        y: (parent.height - 4px) / 2;
+        width: max(0px, parent.width - 18px);
+        height: 4px;
+        border-radius: 2px;
+        background: Theme.inset-bg;
+
+        Rectangle {
+            x: 0px;
+            y: 0px;
+            width: parent.width * root.ratio;
+            height: parent.height;
+            border-radius: 2px;
+            background: Theme.pill-active-bot;
+        }
+    }
+
+    // Fluent 2 Circular Thumb with responsive inner accent core
+    Rectangle {
+        x: (max(0px, parent.width - 18px)) * root.ratio;
+        y: (parent.height - 18px) / 2;
+        width: 18px;
+        height: 18px;
+        border-radius: 9px;
+        border-width: sl-fs.has-focus ? 2px : 1px;
+        border-color: sl-fs.has-focus ? Theme.accent : Theme.control-border-hover-brush;
+        background: Theme.control-fill;
+
+        Rectangle {
+            property <length> core-sz: sl-ta.pressed ? 8px : sl-ta.has-hover ? 12px : 10px;
+            x: (parent.width - self.core-sz) / 2;
+            y: (parent.height - self.core-sz) / 2;
+            width: self.core-sz;
+            height: self.core-sz;
+            border-radius: self.core-sz / 2;
+            background: Theme.accent;
+            animate width { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+            animate height { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
         }
     }
 }

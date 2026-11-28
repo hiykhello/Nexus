@@ -20,7 +20,7 @@ export namespace uot {
             },failure);
         }
     public:
-        explicit Direct(::rules::RouteMatcher const& policy) noexcept : direct_(policy) {}
+        explicit Direct(::rules::RouteProgram const& policy) noexcept : direct_(policy) {}
         Direct(Direct const&)=delete;
         auto operator=(Direct const&) -> Direct& = delete;
         [[nodiscard]] auto send(net::UdpTarget target,net::UdpEndpoint candidate,std::span<std::uint8_t const> payload,

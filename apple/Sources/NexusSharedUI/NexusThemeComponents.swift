@@ -110,7 +110,7 @@ public enum NexusPalette {
         case "error", "fatal": return .red
         case "warn", "warning": return .orange
         case "info": return .blue
-        case "debug": return .purple
+        case "debug": return .mint
         default: return .secondary
         }
     }
@@ -124,7 +124,7 @@ public struct BentoCardModifier: ViewModifier {
     @Environment(\.colorSchemeContrast) private var contrast
     @Environment(\.nexusTheme) private var theme
 
-    public init(padding: CGFloat = 12, cornerRadius: CGFloat = 14) {
+    public init(padding: CGFloat = 12, cornerRadius: CGFloat = 12) {
         self.padding = padding
         self.cornerRadius = cornerRadius
     }
@@ -145,7 +145,7 @@ public struct BentoCardModifier: ViewModifier {
 }
 
 public extension View {
-    func bentoCard(padding: CGFloat = 12, cornerRadius: CGFloat = 14) -> some View {
+    func bentoCard(padding: CGFloat = 12, cornerRadius: CGFloat = 12) -> some View {
         modifier(BentoCardModifier(padding: padding, cornerRadius: cornerRadius))
     }
 

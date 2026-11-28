@@ -160,7 +160,6 @@ export namespace cli::run_detail {
             if (!protections) return std::unexpected(std::move(protections.error()));
             auto files = cli::load_route_files(*config, rule_input);
             if (!files) return std::unexpected(std::move(files.error()));
-            auto indexed = files->indexed(*config);
             TcpGeneration candidate;
             cli::CertReloaderHub candidate_cert_reloaders;
             auto candidate_replay = snell_replay;
@@ -214,7 +213,7 @@ export namespace cli::run_detail {
                 auto remember = [&](std::span<std::uint8_t const> key, std::span<relay::ShadowsocksUserKey const> users) {
                     candidate_udp->remember(index, key, users);
                 };
-                if (auto result = configure_listener(**server, *config, entry, *protections, *files, indexed,
+                if (auto result = configure_listener(**server, *config, entry, *protections, *files,
                         candidate_replay, remember, principals, acme_credential, &candidate_cert_reloaders, &log); !result)
                     return std::unexpected("invalid TCP listener " + entry.name + ": " + result.error());
                 if (tor_service) {

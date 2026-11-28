@@ -23,24 +23,23 @@ export component IconActionButton inherits Rectangle {
     border-color:
         fs.has-focus ? Theme.accent
         : root.success ? Theme.success-border
-        : root.primary ? Theme.pill-active-top
+        : root.primary ? Theme.accent-control-border
         : root.danger && root.enabled && ta.has-hover ? Theme.error-border
         : root.active ? Theme.selected-border
-        : ta.has-hover && root.enabled ? Theme.selected-border
-        : Theme.card-border;
+        : ta.has-hover && root.enabled ? Theme.control-border-hover-brush
+        : Theme.control-border-brush;
     background:
         root.success ? Theme.success-bg
         : root.primary ? (ta.pressed ? Theme.pill-active-bot.darker(0.12) : ta.has-hover ? Theme.pill-active-bot.brighter(0.06) : Theme.pill-active-bot)
         : root.danger && root.enabled && (ta.has-hover || ta.pressed) ? Theme.error-bg
         : root.active ? Theme.selected-bg
-        : !root.enabled ? Theme.surface-bg
-        : ta.pressed ? Theme.nav-active-bg
-        : ta.has-hover ? Theme.row-hover-bg
-        : Theme.row-bg;
-    opacity: root.enabled ? 1.0 : 0.45;
+        : !root.enabled ? transparent
+        : ta.pressed ? Theme.control-fill-pressed
+        : ta.has-hover ? Theme.control-fill-hover
+        : Theme.control-fill;
+    opacity: root.enabled ? 1.0 : 0.40;
     transform-scale: ta.pressed && root.enabled ? 0.97 : 1.0;
     animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
     animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
     accessible-role: button;
@@ -103,11 +102,12 @@ export component IconActionButton inherits Rectangle {
         height: self.width;
         source: root.icon;
         colorize:
-            root.success ? Theme.success-fg
+            !root.enabled ? Theme.text-muted
+            : root.success ? Theme.success-fg
             : root.primary ? Theme.pill-active-fg
             : root.danger ? Theme.error-fg
             : root.active ? Theme.nav-active-fg
-            : ta.has-hover && root.enabled ? Theme.text-primary
+            : ta.has-hover ? Theme.text-primary
             : Theme.text-secondary;
     }
 }

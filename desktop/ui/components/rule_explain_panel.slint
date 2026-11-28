@@ -1,11 +1,11 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { NexusInput } from "glass_primitives.slint";
+import { NexusInput } from "nexus_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusSelect } from "nexus_select.slint";
 
 export component RuleExplainPanel inherits VerticalLayout {
-    in-out property <string> inbound-name: "local-mixed";
+    in-out property <string> inbound-name: "mixed-in";
     in-out property <string> network-kind: "tcp";
     in-out property <string> target-authority: "example.com:443";
     in-out property <string> extra-options: "dns-qtype=A resolved-ip=93.184.216.34";

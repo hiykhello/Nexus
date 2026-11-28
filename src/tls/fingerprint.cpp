@@ -5,6 +5,7 @@ import tls.hybrid;
 import tls.signature;
 import tls.certificate_compression;
 import crypto.ecdh;
+import tls.browser_profiles;
 import tls.browser_extensions;
 
 namespace tls {
@@ -17,59 +18,6 @@ namespace tls {
             auto size=extension.data.size()-header;
             if (vector8) extension.data[0]=static_cast<std::uint8_t>(size);
             else { extension.data[0]=static_cast<std::uint8_t>(size>>8); extension.data[1]=static_cast<std::uint8_t>(size); }
-        }
-        struct PresetSpec {
-            bool valid=false;
-            bool grease=false;
-            bool permute=false;
-            bool psk_kex_modes=false;
-            bool compat_sid=false;
-            std::uint16_t tcp_min_pad=0;
-            std::optional<std::uint16_t> default_rsl{};
-            std::array<std::uint16_t,3> ciphers{0x1301,0x1302,0x1303};
-            std::uint8_t cipher_count=3;
-            std::array<std::uint16_t,7> signatures{0x0804,0x0403,0x0807,0x0805,0x0806,0x0503,0x0603};
-            std::uint8_t sig_count=3;
-            std::array<std::uint16_t,20> ext_order{};
-            std::uint8_t ext_count=0;
-        };
-        auto preset_spec(Fingerprint profile) noexcept -> PresetSpec {
-            switch (profile) {
-            case Fingerprint::native:
-                return {true,false,false,false,false,0,{}};
-            case Fingerprint::tls13_grease:
-                return {true,true,false,false,true,0,{}};
-            case Fingerprint::tls13_randomized:
-                return {true,true,true,false,true,0,{}};
-            case Fingerprint::chrome:
-                return {true,true,true,true,true,517,{},{0x1301,0x1302,0x1303},3,
-                    {0x0403,0x0804,0x0503,0x0805,0x0806,0x0807},6};
-            case Fingerprint::edge:
-                return {true,true,true,true,true,517,{},{0x1301,0x1302,0x1303},3,
-                    {0x0403,0x0804,0x0503,0x0805,0x0806},5};
-            case Fingerprint::firefox:
-                return {true,false,false,true,true,0,16385,{0x1301,0x1303,0x1302},3,
-                    {0x0403,0x0503,0x0603,0x0804,0x0805,0x0806,0x0807},7,
-                    {0,23,0xff01,10,11,35,16,5,34,51,43,13,45,28,18,0x39,0xfe0d},17};
-            case Fingerprint::safari:
-                return {true,true,false,true,true,517,{},{0x1301,0x1302,0x1303},3,
-                    {0x0403,0x0804,0x0805,0x0503,0x0806,0x0603},6,
-                    {0,10,51,16,13,45,43,0x39},8};
-            case Fingerprint::ios:
-                return {true,true,false,true,true,517,{},{0x1302,0x1303,0x1301},3,
-                    {0x0403,0x0804,0x0503,0x0805,0x0603,0x0806},6,
-                    {0,51,10,13,16,45,43,0x39},8};
-            case Fingerprint::android:
-                return {true,false,false,true,true,0,{},{0x1301,0x1302,0x1303},3,
-                    {0x0403,0x0503,0x0804,0x0805,0x0806},5,
-                    {0,10,51,13,16,45,43,0x39},8};
-            default:
-                return {};
-            }
-        }
-        auto is_browser_preset(Fingerprint profile) noexcept -> bool {
-            return profile==Fingerprint::chrome || profile==Fingerprint::firefox || profile==Fingerprint::safari ||
-                profile==Fingerprint::ios || profile==Fingerprint::android || profile==Fingerprint::edge;
         }
         auto order_extensions(std::vector<Extension>& extensions,std::span<std::uint16_t const> order) -> void {
             std::vector<Extension> reordered;
@@ -106,19 +54,18 @@ namespace tls {
             if (!picked) return std::unexpected(E::random_error);
             config.profile=pool[*picked];
         }
-        auto spec=preset_spec(config.profile);
+        auto spec=browser_preset_spec(config.profile);
         if (!spec.valid) return std::unexpected(E::invalid_policy);
         if ((config.shares!=FingerprintShares::x25519 && config.shares!=FingerprintShares::hybrid && config.shares!=FingerprintShares::dual && config.shares!=FingerprintShares::retry) ||
             (transport!=HandshakeTransport::tcp && transport!=HandshakeTransport::quic) ||
             (transport==HandshakeTransport::tcp && parameters) || (transport==HandshakeTransport::quic && (!parameters || alpn.empty())) ||
             (parameters && parameters->size()>12000) || config.pad_to>16000) return std::unexpected(E::invalid_policy);
         if (config.record_size_limit && (transport!=HandshakeTransport::tcp || *config.record_size_limit<64 || *config.record_size_limit>16385)) return std::unexpected(E::invalid_policy);
-        auto browser=is_browser_preset(config.profile);
-        if (browser) {
+        if (spec.browser) {
             if (config.cipher_count==3 && config.cipher_order==std::array<std::uint16_t,3>{0x1301,0x1302,0x1303}) {
                 config.cipher_order=spec.ciphers; config.cipher_count=spec.cipher_count;
             }
-            if (config.signature_count==3 && config.signature_order==std::array<std::uint16_t,7>{0x0804,0x0403,0x0807,0x0805,0x0806,0x0503,0x0603}) {
+            if (config.signature_count==3 && config.signature_order==std::array<std::uint16_t,10>{0x0804,0x0403,0x0807,0x0805,0x0806,0x0503,0x0603}) {
                 config.signature_order=spec.signatures; config.signature_count=spec.sig_count;
             }
             if (!config.record_size_limit && transport==HandshakeTransport::tcp && spec.default_rsl)
@@ -151,22 +98,24 @@ namespace tls {
         auto& h=result.hello;
         if (spec.psk_kex_modes) h.extensions.push_back({45,{1,1}});
         if constexpr (certificate_compression_enabled()) {
-            // Auto profile offers from the fixed uTLS reference.
-            if (config.profile==Fingerprint::chrome || config.profile==Fingerprint::edge)
-                h.extensions.push_back({certificate_compression_extension,{2,0,static_cast<std::uint8_t>(CertificateCompression::brotli)}});
-            if (config.profile==Fingerprint::safari)
-                h.extensions.push_back({certificate_compression_extension,{2,0,static_cast<std::uint8_t>(CertificateCompression::zlib)}});
-            if (config.profile==Fingerprint::tls13_randomized)
-                h.extensions.push_back({certificate_compression_extension,{6,0,1,0,2,0,3}});
+            if (spec.cert_comp_count>0) {
+                std::vector<std::uint8_t> comp{static_cast<std::uint8_t>(2*spec.cert_comp_count)};
+                for (std::uint8_t i=0;i<spec.cert_comp_count;++i) {
+                    auto id=static_cast<std::uint16_t>(spec.cert_comp[i]);
+                    comp.push_back(static_cast<std::uint8_t>(id>>8));
+                    comp.push_back(static_cast<std::uint8_t>(id&0xff));
+                }
+                h.extensions.push_back({certificate_compression_extension,std::move(comp)});
+            }
         }
         if (config.record_size_limit) {
             auto value=*config.record_size_limit;
             h.extensions.push_back({28,{static_cast<std::uint8_t>(value>>8),static_cast<std::uint8_t>(value)}});
         }
         h.cipher_suites.assign(suites.begin(),suites.end());
-        if (browser && !add_browser_extensions(h,config.profile,alpn,transport,real_ech,
-                config.legacy_alps,config.allow_tls12,random)) return std::unexpected(E::random_error);
-        auto legacy_signatures=browser && transport==HandshakeTransport::tcp && config.allow_tls12;
+        if (spec.browser && !add_browser_extensions(h,spec,alpn,transport,real_ech,
+                config.allow_tls12,random)) return std::unexpected(E::random_error);
+        auto legacy_signatures=spec.browser && transport==HandshakeTransport::tcp && config.allow_tls12;
         for (auto& extension:h.extensions) if (extension.type==13) {
             extension.data={0,static_cast<std::uint8_t>(2*signatures.size()+(legacy_signatures ? 6 : 0))};
             for (auto signature:signatures) {
@@ -206,8 +155,8 @@ namespace tls {
             h.cipher_suites.insert(h.cipher_suites.begin(),grease[0]);
             for (auto& extension:h.extensions) {
                 if (extension.type==10) prepend(extension,grease[1]);
-                if (extension.type==43 && (transport==HandshakeTransport::tcp || browser)) prepend(extension,grease[2],true);
-                if (extension.type==13 && !browser) prepend(extension,grease[3]);
+                if (extension.type==43 && (transport==HandshakeTransport::tcp || spec.browser)) prepend(extension,grease[2],true);
+                if (extension.type==13 && spec.grease_sigalgs) prepend(extension,grease[3]);
             }
             shares.push_back({grease[1],{0}});
             h.extensions.insert(h.extensions.begin(),{grease[4],{}});
@@ -224,7 +173,7 @@ namespace tls {
                 std::swap(h.extensions[index],h.extensions[1+*sample]);
             }
         }
-        if (config.pad_to && (transport==HandshakeTransport::tcp || !browser)) {
+        if (config.pad_to && (transport==HandshakeTransport::tcp || !spec.browser)) {
             auto overhead=4+(transport==HandshakeTransport::tcp ? 5 : 0);
             if (config.pad_to<=overhead || !repad_client_hello(h,config.pad_to-overhead,16000)) return std::unexpected(E::invalid_policy);
         } else if (spec.tcp_min_pad && transport==HandshakeTransport::tcp) {

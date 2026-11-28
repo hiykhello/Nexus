@@ -39,12 +39,12 @@ export namespace socks5 {
     // If the association was closed first, the next send/poll also closes the socket.
     class UdpDirect {
         UdpAssociation& association_;
-        rules::RouteMatcher const& policy_;
+        rules::RouteProgram const& policy_;
         std::optional<std::string_view> auth_user_;
         UdpSocket socket_;
         bool closed_ = false;
     public:
-        UdpDirect(UdpAssociation& association, rules::RouteMatcher const& policy,std::optional<std::string_view> auth_user={},platform::SocketBinding const* binding=nullptr) noexcept
+        UdpDirect(UdpAssociation& association, rules::RouteProgram const& policy,std::optional<std::string_view> auth_user={},platform::SocketBinding const* binding=nullptr) noexcept
             : association_(association), policy_(policy), auth_user_(auth_user),socket_(binding) {}
         ~UdpDirect();
         UdpDirect(UdpDirect const&)=delete;

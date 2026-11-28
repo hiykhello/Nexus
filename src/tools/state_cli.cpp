@@ -29,7 +29,7 @@ namespace {
                 tier,name,info.version,info.entries,info.bytes,info.health);
         };
         row(1,"selectors",::state::inspect_selectors(config.selector_state_directory));
-        row(2,"fakeip",::state::inspect_fakeip(fake ? fake->state_directory : std::string{},fake && fake->unified));
+        row(2,"fakeip",::state::inspect_fakeip(fake ? fake->state_directory : std::string{}));
         row(3,"dns",::state::inspect_dns(root));
         row(3,"rulesets",::state::inspect_rules(root));
     }
@@ -82,8 +82,8 @@ auto nexus_state(int argc,char** argv) -> int {
     if (command=="inspect") {inventory(*config);return 0;}
     if (command=="clear-cache") return clear(*config,dns || !rules,rules || !dns);
 
-    if (target=="fakeip" && (!config->dns || !config->dns->fakeip || !config->dns->fakeip->unified || !config->state)) {
-        std::cerr << "state reset fakeip requires a configured unified FakeIP store\n";
+    if (target=="fakeip" && (!config->dns || !config->dns->fakeip || !config->state)) {
+        std::cerr << "state reset fakeip requires a configured FakeIP store\n";
         return 1;
     }
     if (target=="selectors" && config->selector_state_directory.empty()) {

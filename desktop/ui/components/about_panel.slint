@@ -3,7 +3,7 @@ import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
-import { NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
+import { NexusVScrollBar, SlidingSegmentBar } from "nexus_primitives.slint";
 import { ThemeStudioCard } from "theme_studio_card.slint";
 import { TraySettingsCard } from "tray_settings_card.slint";
 import { ShortcutsCard } from "shortcuts_card.slint";
@@ -197,9 +197,8 @@ export component AboutPanel inherits VerticalLayout {
             settings-col := VerticalLayout {
                 x: 0px;
                 y: 0px;
-                width: min(780px, sv.visible-width);
-                padding-right: 18px;
-                padding-bottom: 6px;
+                width: max(0px, sv.visible-width - 14px);
+                padding-bottom: 14px;
                 spacing: Theme.space-md;
                 alignment: start;
 

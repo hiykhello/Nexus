@@ -12,8 +12,20 @@ export namespace hysteria2 {
         std::span<std::uint8_t const> password,std::span<std::uint8_t const,8> salt) noexcept -> void {
         std::array<std::uint8_t,32> mask{};
         crypto::blake2b_256_parts(mask,password,salt);
-        for (std::size_t i=0;i<payload.size();++i) payload[i]^=mask[i%mask.size()];
+        std::array<std::uint64_t,4> words{};
+        std::memcpy(words.data(),mask.data(),mask.size());
+        auto* p=payload.data();
+        std::size_t const n=payload.size();
+        std::size_t i=0;
+        for (; i+32<=n; i+=32) {
+            std::array<std::uint64_t,4> blk{};
+            std::memcpy(blk.data(),p+i,32);
+            blk[0]^=words[0]; blk[1]^=words[1]; blk[2]^=words[2]; blk[3]^=words[3];
+            std::memcpy(p+i,blk.data(),32);
+        }
+        for (std::size_t j=0; i+j<n; ++j) p[i+j]^=mask[j];
         crypto::cleanse(mask);
+        crypto::cleanse(std::span<std::uint8_t>(reinterpret_cast<std::uint8_t*>(words.data()),sizeof(words)));
     }
 
     // The port retains ownership and send tokens. This adapter only transforms

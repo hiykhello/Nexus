@@ -190,7 +190,7 @@ namespace {
     }
 
     auto test_172c() -> void {
-        std::vector<rules::RouteRule> route_rules;
+        std::vector<rules::ProgramRule> route_rules;
         std::vector<rules::ProgramRule> prog_rules;
         rules::RuleSet dom_set{.version = 2}, suf_set{.version = 2}, ip_set{.version = 2}, unidx_set{.version = 2};
         for (int i = 0; i < 2000; ++i) {
@@ -206,12 +206,12 @@ namespace {
             ip_set.rules.push_back({.type = "ip-cidr", .value = cidr});
         }
         unidx_set.rules.push_back({.type = "port", .value = "8443"});
-        route_rules.push_back({dom_set, 1});
-        route_rules.push_back({suf_set, 2});
-        route_rules.push_back({ip_set, 3});
-        route_rules.push_back({unidx_set, 4});
-        auto rm = rules::RouteMatcher::compile(route_rules, 0, 5);
-        require(rm.has_value(), "RouteMatcher compile 5201 rules");
+        route_rules.push_back({dom_set, {rules::ProgramActionKind::route, 1}});
+        route_rules.push_back({suf_set, {rules::ProgramActionKind::route, 2}});
+        route_rules.push_back({ip_set, {rules::ProgramActionKind::route, 3}});
+        route_rules.push_back({unidx_set, {rules::ProgramActionKind::route, 4}});
+        auto rm = rules::RouteProgram::compile_policy(route_rules, 0, 5);
+        require(rm.has_value(), "RouteProgram compile_policy 5201 rules");
         auto pf_dom = rm->preflight("host-1999.example.test");
         auto pf_suf = rm->preflight("sub.suf1500.org");
         auto pf_miss = rm->preflight("unknown.invalid");
@@ -294,7 +294,7 @@ namespace {
 
         cli::tun_enabled::TunUdpOwnerCache ucache;
         rules::Matcher m_uid;
-        auto r_uid = rules::RouteMatcher::compile(std::array{rules::RouteRule{{.version = 2, .rules = {{.type = "source-uid", .value = std::to_string(::getuid())}}}, 0}},
+        auto r_uid = rules::RouteProgram::compile_policy(std::array{rules::ProgramRule{{.version = 2, .rules = {{.type = "source-uid", .value = std::to_string(::getuid())}}}, {rules::ProgramActionKind::route, 0}}},
             0, 1, rules::SourceMetadata::provided);
         require(r_uid.has_value(), "compile source-uid rule");
         struct DummyOrd { rules::RouteProgram const& program; };

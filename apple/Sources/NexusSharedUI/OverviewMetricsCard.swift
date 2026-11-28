@@ -159,7 +159,7 @@ private struct BentoKpiTile: View {
                 .minimumScaleFactor(0.85)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .bentoCard(padding: 12, cornerRadius: 14)
+        .bentoCard(padding: 12)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(title)：\(value)，\(subtitle)")
     }
@@ -190,7 +190,7 @@ private struct ThroughputCard: View {
             }
             ThroughputSparklineView(rxSamples: rxHistory, txSamples: txHistory, onsetMarkers: onsetMarkers)
         }
-        .bentoCard(padding: 12, cornerRadius: 14)
+        .bentoCard(padding: 12)
     }
 
     private var rateSlots: some View {
@@ -245,7 +245,7 @@ private struct NetworkDiagnosticsStrip: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .bentoCard(padding: 10, cornerRadius: 14)
+        .bentoCard(padding: 10)
         .accessibilityElement(children: .combine)
     }
 }

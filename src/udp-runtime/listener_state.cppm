@@ -54,13 +54,13 @@ export namespace shadowsocks::detail {
                 if (state->method_ == method && crypto::constant_time_equal(key, state->key_)) return state.get();
             return nullptr;
         }
-        template<class Policy> requires (std::same_as<Policy, rules::Matcher> || std::same_as<Policy, rules::RouteMatcher>)
+        template<class Policy> requires (std::same_as<Policy, rules::Matcher> || std::same_as<Policy, rules::RouteProgram>)
         [[nodiscard]] auto reconfigure(UdpListenerState& state, Policy policy) noexcept -> bool {
             if (std::ranges::none_of(states_, [&](auto const& candidate) { return candidate.get() == &state; }) || state.attached_)
                 return false;
             return state.dispatcher_.replace_policy(std::move(policy));
         }
-        template<class Policy> requires (std::same_as<Policy, rules::Matcher> || std::same_as<Policy, rules::RouteMatcher>)
+        template<class Policy> requires (std::same_as<Policy, rules::Matcher> || std::same_as<Policy, rules::RouteProgram>)
         [[nodiscard]] auto add(std::span<std::uint8_t const> key, Policy policy,
                                std::size_t sessions = 64, std::size_t targets = 64, std::size_t pending = 64,
                                platform::SocketBinding const* binding = nullptr, UdpListenerReplay replay = {})

@@ -99,10 +99,11 @@ export namespace rules::any_detail {
         return it != sorted_ids.end() && entries[*it].text == key;
     }
 
-    inline auto match_any_domain(auto const& entries, auto const& idx, std::string_view raw) noexcept -> bool {
+    inline auto match_any_domain(auto const& entries, auto const& idx, std::string_view raw,
+        bool already_lower = false) noexcept -> bool {
         std::array<char, 253> lowered{};
         auto name = raw;
-        if (std::ranges::any_of(name, [](char c) { return c >= 'A' && c <= 'Z'; })) {
+        if (!already_lower && std::ranges::any_of(name, [](char c) { return c >= 'A' && c <= 'Z'; })) {
             if (name.size() > lowered.size()) return false;
             for (std::size_t i = 0; i < name.size(); ++i) {
                 char c = name[i];
@@ -135,13 +136,12 @@ export namespace rules::any_detail {
         return false;
     }
 
-    inline auto compile_any_index(auto const& entries, auto const& children,
-        std::uint32_t first, std::uint32_t count, auto ip_kind, auto domain_kind, auto suffix_kind,
-        auto& any_indexes) -> std::uint32_t {
-        using Idx = typename std::remove_reference_t<decltype(any_indexes)>::value_type;
+    template<class Idx>
+    auto build_any_index(auto const& entries, std::size_t count, auto&& next_cid,
+        auto ip_kind, auto domain_kind, auto suffix_kind) -> std::optional<Idx> {
         Idx compiled{};
-        for (std::uint32_t i = 0; i < count; ++i) {
-            auto cid = children[first + i];
+        for (std::size_t i = 0; i < count; ++i) {
+            auto cid = static_cast<std::uint32_t>(next_cid(i));
             auto const& ce = entries[cid];
             if (ce.kind == ip_kind) {
                 compiled.has_ip = true;
@@ -162,14 +162,24 @@ export namespace rules::any_detail {
                 compiled.remainder.push_back(cid);
             }
         }
-        if (!compiled.has_ip && !compiled.has_domain) return std::numeric_limits<std::uint32_t>::max();
+        if (!compiled.has_ip && !compiled.has_domain) return std::nullopt;
         merge_v4(compiled.ipv4);
         merge_v6(compiled.ipv6);
         auto cmp = [&](std::uint32_t a, std::uint32_t b) { return entries[a].text < entries[b].text; };
         std::ranges::sort(compiled.domains, cmp);
         std::ranges::sort(compiled.suffixes, cmp);
+        return compiled;
+    }
+
+    inline auto compile_any_index(auto const& entries, auto const& children,
+        std::uint32_t first, std::uint32_t count, auto ip_kind, auto domain_kind, auto suffix_kind,
+        auto& any_indexes) -> std::uint32_t {
+        using Idx = typename std::remove_reference_t<decltype(any_indexes)>::value_type;
+        auto built = build_any_index<Idx>(entries, count,
+            [&](std::size_t i) { return children[first + i]; }, ip_kind, domain_kind, suffix_kind);
+        if (!built) return std::numeric_limits<std::uint32_t>::max();
         auto id = static_cast<std::uint32_t>(any_indexes.size());
-        any_indexes.push_back(std::move(compiled));
+        any_indexes.push_back(std::move(*built));
         return id;
     }
 }

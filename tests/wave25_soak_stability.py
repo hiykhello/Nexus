@@ -215,7 +215,7 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {{
     rulesets {{ "dyn" path="{rules}" format="kdl"; }}
-    rules {{ - kind="rule-set" value="dyn" outbound="reject"; }}
+    rules {{ - rule-set="dyn" to="reject"; }}
     final "direct"
 }}
 ''', encoding="utf-8")

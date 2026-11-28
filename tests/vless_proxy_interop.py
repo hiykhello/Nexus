@@ -19,8 +19,8 @@ def vless_proxy(directory, upstream_port, rule_action=None):
         default = "direct" if rule_action == "edge" else "edge"
         routing = (f'rulesets {{ unmatched path="unmatched-rules.kdl" format="kdl"; '
                    f'selected path="route-rules.kdl" format="kdl"; }}; '
-                   f'rules {{ - kind="rule-set" value="unmatched" outbound="{default}"; '
-                   f'- kind="rule-set" value="selected" outbound="{rule_action}"; }}; final "{default}";')
+                   f'rules {{ - rule-set="unmatched" to="{default}"; '
+                   f'- rule-set="selected" to="{rule_action}"; }}; final "{default}";')
     config.write_text(f'''schema-version 1
 role "client"
 workers {PROXY_WORKERS}

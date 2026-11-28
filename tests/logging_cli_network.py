@@ -201,15 +201,15 @@ def dns_diagnostics(binary, folder):
     cache.mkdir(mode=0o700)
     destination = folder / "dns-diagnostics.jsonl"
     stderr, config = folder / "stderr", folder / "dns.kdl"
-    # A directory at the snapshot pathname makes both restore and atomic publish fail.
-    (cache / "messages.cache").mkdir()
+    # A regular file at the unified dns cache subdirectory makes both restore and checkpoint fail.
+    (cache / "dns").write_bytes(b"not-a-directory")
     port, dns_port, upstream_port = free_port(), free_port(), free_port()
     config.write_text(source(port, f'''log {{ format "jsonl"; sink "file" path="{destination}"; }}
+state {{ cache-directory "{cache}"; }}
 dns {{
     listen host="127.0.0.1" port={dns_port}
     server "numeric" type="udp" host="127.0.0.1" port={upstream_port}
     final "numeric"
-    message-cache-directory "{cache}"
 }}'''))
     with launch(binary, config, port, stderr):
         pass

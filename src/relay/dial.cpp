@@ -43,11 +43,11 @@ namespace relay {
 
         namespace {
             struct SocketRoutingSource {
-                auto snapshot(Session& session,rules::RouteMatcher const& policy) const -> std::optional<net::UdpEndpoint> {return source_endpoint(session,policy);}
+                auto snapshot(Session& session,rules::RouteProgram const& policy) const -> std::optional<net::UdpEndpoint> {return source_endpoint(session,policy);}
             };
             struct DatagramRoutingSource {
                 net::UdpEndpoint const& peer;
-                auto snapshot(Session& session,rules::RouteMatcher const& policy) const -> std::optional<net::UdpEndpoint> {
+                auto snapshot(Session& session,rules::RouteProgram const& policy) const -> std::optional<net::UdpEndpoint> {
                     return policy.needs_source() || session.dns_requirements().source ? std::optional(peer) : std::nullopt;
                 }
             };
@@ -307,7 +307,7 @@ namespace relay {
         // already authenticated by their physical QUIC connection.
         template<class Source>
         auto dial_selected_destination(Session& session, io::io_context& context,
-                  rules::RouteMatcher const& policy, socks5::Request const& original,Clock::time_point limit,Source source_policy,
+                  rules::RouteProgram const& policy, socks5::Request const& original,Clock::time_point limit,Source source_policy,
                   std::span<std::uint8_t const> first={},bool* first_sent=nullptr) -> capy::task<std::uint8_t> {
             if (session.closed) co_return 1;
             if (Clock::now()>=limit) co_return 6;
@@ -419,11 +419,11 @@ namespace relay {
 
         // These ordinary functions return the selected operation directly;
         // no forwarding coroutine, extra heap owner, or Session field.
-        auto dial_destination(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
+        auto dial_destination(Session& session,io::io_context& context,rules::RouteProgram const& policy,
             socks5::Request const& request,Clock::time_point limit) -> capy::task<std::uint8_t> {
             return dial_selected_destination(session,context,policy,request,limit,SocketRoutingSource{});
         }
-        auto dial_destination(Session& session,io::io_context& context,rules::RouteMatcher const& policy,
+        auto dial_destination(Session& session,io::io_context& context,rules::RouteProgram const& policy,
             socks5::Request const& request,net::UdpEndpoint const& source,Clock::time_point limit) -> capy::task<std::uint8_t> {
             return dial_selected_destination(session,context,policy,request,limit,DatagramRoutingSource{source});
         }
@@ -446,7 +446,7 @@ namespace relay {
         }
     namespace {
         auto dial_branch(Session& session, io::io_context& context,
-                         rules::RouteMatcher const& policy, socks5::Request const& request,Clock::time_point limit,
+                         rules::RouteProgram const& policy, socks5::Request const& request,Clock::time_point limit,
                          std::span<std::uint8_t const> first,bool* first_sent)
             -> capy::task<capy::results<std::uint8_t>> {
             auto code=co_await dial_selected_destination(session,context,policy,request,limit,SocketRoutingSource{},first,first_sent);
@@ -457,7 +457,7 @@ namespace relay {
     }
 
     auto dial(Session& session, io::io_context& context,
-              rules::RouteMatcher const& policy, socks5::Request const& request,Clock::time_point limit,
+              rules::RouteProgram const& policy, socks5::Request const& request,Clock::time_point limit,
               std::span<std::uint8_t const> first,bool* first_sent) -> capy::task<std::uint8_t> {
 #if !defined(NEXUS_TEST_FAKEIP)
         // Fast direct single-IP connect: skips when_all(watch_client_error), range-connect coro, and redundant timer.

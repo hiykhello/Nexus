@@ -205,7 +205,7 @@ TCP 被动握手接受 SYN 上 ECE/CWR 的各种组合，包括请求 ECN 的双
 
 网络切换、设备关闭和 MTU 更新都应有独立事件处理。设备被关闭后应唤醒挂起读写，等待在途操作退出后释放包内存。
 
-验证计划见[网络栈验证](../planning/network-validation.md)。内存实验没有创建 TUN 或修改系统路由。
+验证计划见 [验证体系与实机基线](../planning/validation.md#1-网络协议栈tls-与-http-验证)。内存实验没有创建 TUN 或修改系统路由。
 
 批处理、空闲回收、包视图及紧凑复制设计详见 [性能与资源设计](performance.md) 与 [性能与数据面原则](../design-principles/performance-and-datapath.md)。
 

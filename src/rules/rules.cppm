@@ -67,6 +67,7 @@ export namespace rules {
             unsigned source_family = 0;
             bool match_mapped_ipv4 = false;
             bool domain_absent = false;
+            bool domain_normalized = false;
             std::optional<std::span<ProgramAddress const>> candidates;
         };
         struct IndexedDomain { std::string_view text; std::size_t rule; };
@@ -105,14 +106,15 @@ export namespace rules {
         [[nodiscard]] static auto parse_net_if_cidr(std::string_view value) noexcept -> NetworkInterfaceIp;
         [[nodiscard]] static auto prepare(MatchInput) -> std::expected<Prepared, Error>;
         [[nodiscard]] auto evaluate(std::size_t, Prepared const&) const noexcept -> Truth;
+        [[nodiscard]] auto eval_any_index(AnyIndex const&, Prepared const&) const noexcept -> Truth;
         [[nodiscard]] static auto eval_mmap(MmapMatcher const&, Matcher const*, Prepared const&, bool) noexcept -> Truth;
-        [[nodiscard]] auto first_indexed_match(Prepared const&, std::size_t, std::size_t) const noexcept -> std::size_t;
+        [[nodiscard]] auto first_indexed_match(Prepared const&, std::size_t, std::size_t,
+            std::uint8_t idx_mask = 0x0fu) const noexcept -> std::size_t;
         [[nodiscard]] auto has_ip_root(std::size_t, std::size_t) const noexcept -> bool;
         [[nodiscard]] auto has_domain_root(std::size_t, std::size_t) const noexcept -> bool;
         [[nodiscard]] auto first_match(Prepared const&) const noexcept -> std::optional<std::size_t>;
         [[nodiscard]] auto first_match(Prepared const&, std::size_t, std::size_t) const noexcept -> std::optional<std::size_t>;
         auto rebind_text_views() noexcept -> void;
-        friend class RouteMatcher;
         friend class RouteProgram;
 
     public:
@@ -135,15 +137,6 @@ export namespace rules {
             std::optional<std::span<ProgramAddress const>> candidates = {}) const -> std::expected<Truth, Error>;
     };
 
-    // Ordered rule sets choose an opaque outbound index; all predicates in one
-    // set share its action. The caller owns and validates the outbound table.
-    struct RouteRule {
-        RuleSet predicates;
-        std::size_t outbound;
-        std::optional<std::size_t> source_index{};
-        std::shared_ptr<MmapMatcher const> mmap{};
-        bool mmap_match_source = false;
-    };
     // Callers may enable source predicates only after their routing paths
     // supply the actual source or deliberately leave it unknown.
     enum class SourceMetadata { unavailable, provided };
@@ -176,25 +169,42 @@ export namespace rules {
         std::optional<std::size_t> rule;
         std::optional<std::size_t> predicate;
     };
-    class RouteMatcher {
-        struct Action {
-            std::size_t outbound, rule, predicate;
+
+    class RouteProgram {
+        static constexpr std::uint32_t no_index = std::numeric_limits<std::uint32_t>::max();
+        static constexpr std::uint8_t flag_domain_idx = 1u << 0;
+        static constexpr std::uint8_t flag_suffix_idx = 1u << 1;
+        static constexpr std::uint8_t flag_ipv4_idx = 1u << 2;
+        static constexpr std::uint8_t flag_ipv6_idx = 1u << 3;
+        static constexpr std::uint8_t flag_unindexed = 1u << 4;
+        static constexpr std::uint8_t flag_ip_root = 1u << 5;
+        static constexpr std::uint8_t flag_domain_root = 1u << 6;
+        struct Instruction {
+            std::size_t first, last;
+            ProgramAction action;
+            DomainSource domain_source;
+            std::shared_ptr<MmapMatcher const> mmap{};
+            std::shared_ptr<Matcher const> mmap_tail{};
+            bool mmap_match_source = false;
+            std::uint32_t unindexed_begin = 0, unindexed_end = 0;
+            std::uint32_t local_any_index = no_index;
+            std::uint32_t run_index = no_index;
+            std::uint8_t flags = 0;
+            std::size_t source_index = 0;
         };
-        struct Stage {
-            bool is_mmap = false;
-            std::size_t outbound = 0, rule = 0;
-            std::shared_ptr<MmapMatcher const> mmap;
-            std::optional<Matcher> tail;
-            bool match_source = false;
-            std::size_t first = 0, last = 0;
-        };
-        struct UnknownRun {
-            std::size_t first, last, outbound;
+        struct IndexedRun {
+            std::size_t start_instr = 0, end_instr = 0;
+            std::size_t root_first = 0, root_last = 0;
+            std::size_t first_ip_instr = 0, first_domain_instr = 0;
+            DomainSource domain_source = DomainSource::explicit_target;
+            std::uint8_t flags = 0;
         };
         Matcher matcher_;
-        std::vector<Action> actions_;
-        std::vector<Stage> stages_;
-        std::vector<UnknownRun> ip_runs_, domain_runs_;
+        std::vector<Instruction> instructions_;
+        std::vector<Matcher::AnyIndex> local_any_indexes_;
+        std::vector<IndexedRun> runs_;
+        std::vector<std::uint32_t> root_to_instr_;
+        bool has_dns_hijack_ = false;
         std::size_t default_outbound_ = 0;
         std::shared_ptr<OutboundDistribution const> distribution_;
         std::shared_ptr<RuntimeRouteMode const> mode_state_;
@@ -202,10 +212,29 @@ export namespace rules {
         bool needs_auth_user_ = false;
         std::optional<std::string> inbound_;
     public:
-        [[nodiscard]] static auto compile(std::span<RouteRule const> rules, std::size_t default_outbound,
-                                          std::size_t outbound_count, SourceMetadata source = SourceMetadata::unavailable,
-                                          std::optional<std::string_view> inbound = {}, AuthMetadata auth = AuthMetadata::unavailable)
-            -> std::expected<RouteMatcher, Error>;
+        [[nodiscard]] static auto compile(std::span<ProgramRule const>, std::size_t outbound_count)
+            -> std::expected<RouteProgram, Error>;
+        [[nodiscard]] static auto compile_policy(std::span<ProgramRule const>, std::size_t default_outbound,
+            std::size_t outbound_count, SourceMetadata source = SourceMetadata::unavailable,
+            std::optional<std::string_view> inbound = {}, AuthMetadata auth = AuthMetadata::unavailable)
+            -> std::expected<RouteProgram, Error>;
+        // Returns one action, or no result after the last instruction. Even
+        // unconditional and exhausted programs validate supplied input.
+        [[nodiscard]] auto next(ProgramInput, std::size_t start = 0) const
+            -> std::expected<std::optional<ProgramStep>, Error>;
+        // Unlike next(), stop on the first instruction whose predicates are
+        // unknown, so the caller can supply missing context before proceeding.
+        [[nodiscard]] auto preflight(ProgramInput, std::size_t start = 0) const -> std::expected<ProgramPreflight, Error>;
+        // Stateless outbound resolution on top of the unified ordered engine.
+        [[nodiscard]] auto preflight(std::string_view domain) const
+            -> std::expected<std::optional<std::size_t>, Error>;
+        [[nodiscard]] auto preflight(MatchInput input) const
+            -> std::expected<std::optional<std::size_t>, Error>;
+        [[nodiscard]] auto match(MatchInput input) const -> std::expected<std::size_t, Error> {
+            return match_with_rule(input).transform([](MatchedRoute const& route) { return route.outbound; });
+        }
+        [[nodiscard]] auto match_with_rule(MatchInput input) const -> std::expected<MatchedRoute, Error>;
+
         auto set_distribution(std::shared_ptr<OutboundDistribution const> value) noexcept -> void {
             distribution_ = std::move(value);
         }
@@ -225,12 +254,9 @@ export namespace rules {
         [[nodiscard]] auto choose_outbound(std::size_t outbound, std::string_view host) const noexcept -> std::size_t {
             return distribution_ ? distribution_->choose(outbound, host) : outbound;
         }
-        [[nodiscard]] auto empty_rules() const noexcept -> bool {
-            return stages_.empty() && matcher_.empty();
-        }
-        [[nodiscard]] auto has_distribution() const noexcept -> bool {
-            return static_cast<bool>(distribution_);
-        }
+        [[nodiscard]] auto default_outbound() const noexcept -> std::size_t { return default_outbound_; }
+        [[nodiscard]] auto empty_rules() const noexcept -> bool { return instructions_.empty(); }
+        [[nodiscard]] auto has_distribution() const noexcept -> bool { return static_cast<bool>(distribution_); }
         [[nodiscard]] auto distribution() const noexcept -> std::shared_ptr<OutboundDistribution const> const& {
             return distribution_;
         }
@@ -251,44 +277,6 @@ export namespace rules {
             if (inbound_) return *inbound_;
             return {};
         }
-        // A missing result means an earlier IP predicate requires resolution.
-        // A result determines the action only, not the endpoint to dial.
-        [[nodiscard]] auto preflight(std::string_view domain) const
-            -> std::expected<std::optional<std::size_t>, Error>;
-        [[nodiscard]] auto preflight(MatchInput input) const
-            -> std::expected<std::optional<std::size_t>, Error>;
-        // A mapped IPv6 target is evaluated as both families. The earliest
-        // matching predicate wins across domain, IPv6 and mapped IPv4.
-        [[nodiscard]] auto match(MatchInput input) const -> std::expected<std::size_t, Error> {
-            return match_with_rule(input).transform([](MatchedRoute const& route) { return route.outbound; });
-        }
-        [[nodiscard]] auto match_with_rule(MatchInput input) const -> std::expected<MatchedRoute, Error>;
-    };
-
-    class RouteProgram {
-        struct Instruction {
-            std::size_t first, last;
-            ProgramAction action;
-            DomainSource domain_source;
-            std::shared_ptr<MmapMatcher const> mmap{};
-            std::shared_ptr<Matcher const> mmap_tail{};
-            bool mmap_match_source = false;
-        };
-        Matcher matcher_;
-        std::vector<Instruction> instructions_;
-        bool has_dns_hijack_ = false;
-    public:
-        [[nodiscard]] static auto compile(std::span<ProgramRule const>, std::size_t outbound_count)
-            -> std::expected<RouteProgram, Error>;
-        // Returns one action, or no result after the last instruction. Even
-        // unconditional and exhausted programs validate supplied input.
-        [[nodiscard]] auto next(ProgramInput, std::size_t start = 0) const
-            -> std::expected<std::optional<ProgramStep>, Error>;
-        // Unlike next(), stop on the first instruction whose predicates are
-        // unknown, so the caller can supply missing context before proceeding.
-        [[nodiscard]] auto preflight(ProgramInput, std::size_t start = 0) const -> std::expected<ProgramPreflight, Error>;
-        [[nodiscard]] auto uses_source_uid() const noexcept -> bool { return matcher_.uses_source_uid_; }
-        [[nodiscard]] auto uses_process() const noexcept -> bool { return matcher_.uses_process_; }
         [[nodiscard]] auto size() const noexcept -> std::size_t { return instructions_.size(); }
         [[nodiscard]] auto has_dns_hijack() const noexcept -> bool { return has_dns_hijack_; }
     };

@@ -45,16 +45,13 @@ export class NexusLogsPage extends LitElement {
         grid-template-columns: 62px 68px 64px 72px 1fr;
         gap: 8px;
         align-items: baseline;
-        padding: 4px 6px 4px 8px;
-        border-left: 2px solid var(--nx-border);
-        border-radius: 4px;
+        padding: 4px 8px;
+        border-radius: 6px;
         line-height: 1.45;
       }
       .log-line.lvl-error,
-      .log-line.lvl-fatal { border-left-color: var(--nx-err-fg); }
-      .log-line.lvl-warn { border-left-color: var(--nx-warn-fg); }
-      .log-line.lvl-info { border-left-color: var(--nx-accent-text); }
-      .log-line.lvl-debug { border-left-color: var(--nx-ok-fg); }
+      .log-line.lvl-fatal { background: var(--nx-err-bg); }
+      .log-line.lvl-warn { background: var(--nx-warn-bg); }
       .sev-bar {
         display: flex;
         flex-wrap: wrap;

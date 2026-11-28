@@ -1,6 +1,6 @@
 # Nexus Windows 与 macOS 架构设计蓝图
 
-更新：2026-11-21。本文承接 [跨平台前序解耦与移植路线](cross-platform-prep.md) 与 [Android 免 Root 系统交互指南](android/non-root-integration-guide.md)，给出 **Windows** 与 **macOS** 桌面端从工具链、I/O 引擎、TUN/防回环、DNS 接管、进程归属、崩溃恢复到原生 GUI 外壳的完整分层设计。
+更新：2026-11-21。本文承接 [跨平台 OS 边界矩阵](cross-platform-os-boundaries.md) 与 [Android 免 Root 系统交互指南](android/non-root-integration-guide.md)，给出 **Windows** 与 **macOS** 桌面端从工具链、I/O 引擎、TUN/防回环、DNS 接管、进程归属、崩溃恢复到原生 GUI 外壳的完整分层设计。
 
 ---
 

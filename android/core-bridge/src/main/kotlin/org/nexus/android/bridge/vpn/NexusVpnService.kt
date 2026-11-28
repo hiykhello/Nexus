@@ -285,8 +285,8 @@ class NexusVpnService : VpnService() {
                     builder.addDnsServer(TUN_DNS_V6)
                 }
                 if (host.allowBypass) builder.allowBypass()
-                if (host.enableLocalProxy && host.appendHttpProxy && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    AndroidHostConfig.parseHostPort(host.localListen)?.let { (h, p) ->
+                if (host.appendHttpProxy && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    AndroidHostConfig.selectHttpProxyEndpoint(host)?.let { (h, p) ->
                         runCatching { builder.setHttpProxy(ProxyInfo.buildDirectProxy(h, p)) }
                     }
                 }

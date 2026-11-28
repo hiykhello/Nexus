@@ -304,7 +304,6 @@ class NexusClientDatabase internal constructor(
 
         const val KV_ANDROID_HOST_CONFIG = "android_host_config"
         const val KV_TELEMETRY_STATE = "telemetry_state"
-        const val KV_DASHBOARD_LAYOUT = "dashboard_layout"
 
         private val processInstances = ConcurrentHashMap<String, NexusClientDatabase>()
 

@@ -3,4 +3,4 @@ name = "utility"
 version = "0.1.0"
 
 [build]
-sources = ["utility.cppm"]
+sources = ["utility.cppm", "tls_fingerprint.cppm"]

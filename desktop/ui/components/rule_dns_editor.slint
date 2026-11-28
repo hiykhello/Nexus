@@ -1,8 +1,9 @@
 import { ScrollView } from "std-widgets.slint";
 import { ControlInspectState } from "../control_inspect_state.slint";
-import { NexusVScrollBar, SlidingSegmentBar } from "glass_primitives.slint";
+import { NexusVScrollBar, SlidingSegmentBar } from "nexus_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { DnsRuleDraft, RouteRuleDraft } from "../types.slint";
 import { RuleDnsTab } from "rule_dns_tab.slint";
@@ -43,7 +44,7 @@ export component RuleModalDialog inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         border-radius: Theme.radius-card;
-        border-width: 1px;
+        border-width: 1.5px;
         border-color: Theme.modal-border;
         background: Theme.overlay-bg;
         clip: true;

@@ -44,7 +44,7 @@ inbounds {{
  shadowsocks "b" {{ listen host="127.0.0.1" port={ports[1]}; method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
 }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ rulesets {{ "deny" path="deny.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; final "direct"; }}
+routing {{ rulesets {{ "deny" path="deny.kdl" format="kdl"; }}; rules {{ - rule-set="deny" to="reject"; }}; final "direct"; }}
 ''')
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as occupied:
                 occupied.bind(("127.0.0.1", ports[1]))

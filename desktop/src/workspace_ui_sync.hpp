@@ -1,4 +1,4 @@
-// Workspace UI state synchronization, Core composer commit (with TUN elevation/rollback), and Core start hook.
+// Workspace UI state synchronization, server table filtering, Core composer commit, and Core start hook.
 #pragma once
 
 #include "workspace_ui_helpers.hpp"
@@ -28,7 +28,36 @@ namespace desktop_ui_helpers {
         std::string running_selector_tag = "proxy";
         std::vector<std::string> running_selector_members;
         std::vector<std::string> last_secret_files;
+        desktop::SystemProxyController* sys_proxy = nullptr;
     };
+
+    inline auto has_any_enabled_inbound(desktop::DesktopHostConfig const& h) noexcept -> bool {
+        bool const linux_strict = (h.platform == "desktop-linux") && h.enable_tun && h.tun_strict_route;
+        if (h.enable_tun) return true;
+        if (linux_strict) return false;
+        return (h.enable_mixed && !h.mixed_listen.empty())
+            || (h.enable_http && !h.http_listen.empty())
+            || (h.enable_socks && !h.socks_listen.empty())
+            || !h.second_local_listen.empty()
+            || !h.lan_listen.empty();
+    }
+
+    inline auto select_active_inbound_tag(desktop::DesktopHostConfig const& h, std::string_view preferred = {}) -> std::string {
+        if (!preferred.empty() && preferred != "local-mixed") {
+            if (preferred == "mixed-in" && h.enable_mixed) return "mixed-in";
+            if (preferred == "http-in" && h.enable_http) return "http-in";
+            if (preferred == "socks-in" && (h.enable_socks || !h.second_local_listen.empty())) return "socks-in";
+            if (preferred == "tun-in" && h.enable_tun) return "tun-in";
+            if (preferred != "mixed-in" && preferred != "http-in" && preferred != "socks-in" && preferred != "tun-in")
+                return std::string(preferred);
+        }
+        if (h.enable_mixed) return "mixed-in";
+        if (h.enable_http) return "http-in";
+        if (h.enable_socks || !h.second_local_listen.empty()) return "socks-in";
+        if (!h.lan_listen.empty()) return "lan-in";
+        if (h.enable_tun) return "tun-in";
+        return "mixed-in";
+    }
 
     inline auto persist_workspace_db(WorkspaceUiContext& ctx) -> bool {
         if (ctx.db) return ctx.db->save_workspace(ctx.doc).has_value();
@@ -113,10 +142,13 @@ namespace desktop_ui_helpers {
     }
 
     inline auto make_temp_compose_host(std::filesystem::path const& cfg_dir, desktop::DesktopHostConfig const& host) -> ScopedTempJson {
-        // Strip WebDAV/E2EE secrets before writing transient Core composer host JSON.
         desktop::DesktopHostConfig core_host = host;
         core_host.webdav_password.clear();
         core_host.sync_passphrase.clear();
+        if (!core_host.enable_mixed && !core_host.enable_tun && (core_host.enable_http || core_host.enable_socks)) {
+            core_host.enable_mixed = true;
+            if (core_host.mixed_listen.empty()) core_host.mixed_listen = "127.0.0.1:7890";
+        }
         ScopedTempJson f{};
         f.path = next_temp_compose_path(cfg_dir, "compose-host");
         f.ok = desktop::save_desktop_host_config(f.path, core_host);
@@ -129,6 +161,61 @@ namespace desktop_ui_helpers {
                format_bytes_human(static_cast<std::uint64_t>(total));
     }
 
+    inline auto upper_proto_badge(desktop::WorkspaceProfileItem const& p) -> std::string {
+        if (p.kind == "policy_group") return "GROUP";
+        if (p.kind == "proxy_chain") return "CHAIN";
+        if (p.kind == "custom_outbound") return "OUT";
+        if (p.kind == "full_custom_kdl") return "RAW";
+        auto pr = p.node.protocol;
+        if (pr == "hysteria2") return "HY2";
+        if (pr == "shadowsocks") return "SS";
+        if (pr == "wireguard") return "WG";
+        for (char& c : pr) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        return pr.empty() ? "NODE" : pr;
+    }
+
+    inline auto build_transport_summary(desktop::WorkspaceProfileItem const& p) -> std::string {
+        if (p.kind == "policy_group") {
+            std::string s = p.policy_group.strategy;
+            if (!p.policy_group.dynamic_sub_id.empty()) s += " · regex";
+            if (p.policy_group.interrupt_exist_connections) s += " · cut";
+            return s;
+        }
+        if (p.kind == "proxy_chain") return join_csv(p.proxy_chain.hop_ids);
+        if (p.kind != "node") return "custom";
+        auto const& n = p.node;
+        if (n.protocol == "wireguard") return std::format("wg · mtu {}", n.extra.wg_mtu > 0 ? n.extra.wg_mtu : 1420);
+        if (n.protocol == "masque") return "h3 · " + (n.extra.masque_mode.empty() ? "connect-udp" : n.extra.masque_mode);
+        if (n.protocol == "hysteria2") {
+            std::string s = "quic+tls";
+            if (!n.extra.hy2_ports.empty()) s += " · hop:" + n.extra.hy2_ports;
+            if (!n.extra.hy2_salamander_password.empty()) s += " · obfs";
+            return s;
+        }
+        if (n.protocol == "tuic") {
+            return "quic+tls · " + (n.extra.tuic_congestion_control.empty() ? "bbr" : n.extra.tuic_congestion_control);
+        }
+        if (n.protocol == "ssh") return "ssh";
+        if (n.protocol == "naive") return (n.extra.naive_protocol.empty() ? "h2" : n.extra.naive_protocol) + std::string("+tls");
+        if (n.protocol == "shadowsocks") {
+            std::string s = n.method.empty() ? "aead" : n.method;
+            if (n.multiplex.enabled) s += "+mux";
+            return s;
+        }
+        if (n.protocol == "snell") {
+            std::string s = std::format("v{}", n.extra.snell_version > 0 ? n.extra.snell_version : 4);
+            if (!n.extra.snell_obfs.empty() && n.extra.snell_obfs != "none") s += "+" + n.extra.snell_obfs;
+            return s;
+        }
+        std::string s = n.transport.type.empty() ? "tcp" : n.transport.type;
+        if (!n.tls.reality_public_key.empty()) s += "+reality";
+        else if (n.tls.enabled) s += "+tls";
+        if (!n.flow.empty()) s += "+vision";
+        if (n.multiplex.enabled) s += "+mux";
+        if (n.tls.fragment || n.tls.record_fragment) s += "+frag";
+        return s;
+    }
+
     inline auto sync_workspace_to_ui(WorkspaceUiContext& ctx) -> void {
         auto const& ws = ctx.ui.global<nexus_ui::WorkspaceState>();
         std::unordered_map<std::string, std::string> sub_names;
@@ -138,37 +225,63 @@ namespace desktop_ui_helpers {
         std::unordered_map<std::string, int> delays;
         for (auto const& e : ctx.telemetry.entries) delays[e.profile_id] = static_cast<int>(e.delay_ms);
 
+        std::string const sub_filter(ws.get_selected_sub_tab());
+        std::string const search_q = lower_ascii(std::string_view(ws.get_profile_search()));
+        std::string const sort_mode(ws.get_profile_sort());
+
         std::vector<nexus_ui::WorkspaceProfileRow> p_rows;
+        std::vector<nexus_ui::WorkspaceProfileRow> f_rows;
         p_rows.reserve(ctx.doc.profiles.size());
         for (auto const& p : ctx.doc.profiles) {
-            ++sub_counts[p.subscription_id];
+            std::string eff_sub = p.subscription_id.empty() ? "manual" : p.subscription_id;
+            ++sub_counts[eff_sub];
             bool const active = (p.id == ctx.telemetry.active_profile_id);
-            std::string subtitle;
-            if (p.kind == "node") {
-                subtitle = p.node.protocol.empty() ? p.node.server : std::format("{} · {}:{}", p.node.protocol, p.node.server, p.node.port);
-            } else if (p.kind == "policy_group") {
-                subtitle = std::format("{} · {} members", p.policy_group.strategy, p.policy_group.member_ids.size());
-            } else if (p.kind == "proxy_chain") {
-                subtitle = std::format("{} hops", p.proxy_chain.hop_ids.size());
-            } else if (p.kind == "custom_outbound") {
-                subtitle = "custom outbound";
-            } else {
-                subtitle = "custom config";
-            }
-            auto sub_it = sub_names.find(p.subscription_id);
+            std::string badge = upper_proto_badge(p);
+            std::string endpoint = p.kind == "node"
+                ? std::format("{}:{}", p.node.server, p.node.port)
+                : (p.kind == "policy_group" ? std::format("{} members", p.policy_group.member_ids.size())
+                : (p.kind == "proxy_chain" ? std::format("{} hops", p.proxy_chain.hop_ids.size()) : "custom"));
+            std::string trans = build_transport_summary(p);
+            std::string subtitle = endpoint + " · " + trans;
+            auto sub_it = sub_names.find(eff_sub);
+            std::string sub_label = sub_it != sub_names.end() ? sub_it->second : (eff_sub == "manual" ? "" : eff_sub);
             auto d_it = delays.find(p.id);
-            p_rows.push_back({
+            nexus_ui::WorkspaceProfileRow row{
                 slint::SharedString(p.id),
                 slint::SharedString(p.remarks.empty() ? p.id : p.remarks),
                 slint::SharedString(p.kind),
+                slint::SharedString(badge),
+                slint::SharedString(endpoint),
+                slint::SharedString(trans),
                 slint::SharedString(subtitle),
-                slint::SharedString(sub_it != sub_names.end() ? sub_it->second : p.subscription_id),
+                slint::SharedString(eff_sub),
+                slint::SharedString(sub_label),
                 d_it != delays.end() ? d_it->second : -1,
                 active,
+            };
+            bool sub_ok = (sub_filter.empty() || sub_filter == "all")
+                || (sub_filter == "manual" && (eff_sub == "manual" || !sub_names.contains(eff_sub)))
+                || (eff_sub == sub_filter);
+            bool q_ok = search_q.empty() || lower_ascii(p.remarks + " " + p.id + " " + badge + " " + endpoint + " " + trans).contains(search_q);
+            if (sub_ok && q_ok) f_rows.push_back(row);
+            p_rows.push_back(std::move(row));
+        }
+
+        if (sort_mode == "latency") {
+            std::ranges::stable_sort(f_rows, [](auto const& a, auto const& b) {
+                int da = a.delay_ms > 0 ? a.delay_ms : 999999;
+                int db = b.delay_ms > 0 ? b.delay_ms : 999999;
+                return da < db;
+            });
+        } else if (sort_mode == "name") {
+            std::ranges::stable_sort(f_rows, [](auto const& a, auto const& b) {
+                return std::string_view(a.remarks) < std::string_view(b.remarks);
             });
         }
+
         ws.set_active_profile_id(slint::SharedString(ctx.telemetry.active_profile_id));
         ws.set_profiles(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceProfileRow>>(std::move(p_rows)));
+        ws.set_filtered_profiles(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceProfileRow>>(std::move(f_rows)));
 
         std::vector<nexus_ui::WorkspaceSubRow> s_rows;
         s_rows.reserve(ctx.doc.subscriptions.size());
@@ -177,36 +290,42 @@ namespace desktop_ui_helpers {
             float ratio = (s.usage.total_bytes > 0)
                 ? static_cast<float>(std::clamp(static_cast<double>(used) / static_cast<double>(s.usage.total_bytes), 0.0, 1.0))
                 : 0.0f;
-            std::string exp = s.usage.expire_unix_sec > 0 ? std::format("exp:{}", s.usage.expire_unix_sec) : std::string{};
+            std::string exp;
+            if (s.usage.expire_unix_sec > 0) {
+                auto tp = std::chrono::sys_seconds{std::chrono::seconds{s.usage.expire_unix_sec}};
+                auto ymd = std::chrono::year_month_day{std::chrono::floor<std::chrono::days>(tp)};
+                if (ymd.ok()) {
+                    exp = std::format("{:04d}-{:02d}-{:02d}", static_cast<int>(ymd.year()),
+                                      static_cast<unsigned>(ymd.month()), static_cast<unsigned>(ymd.day()));
+                }
+            }
             s_rows.push_back({
-                slint::SharedString(s.id),
-                slint::SharedString(s.remarks.empty() ? s.id : s.remarks),
-                slint::SharedString(s.url),
-                sub_counts[s.id],
-                slint::SharedString(format_quota_human(used, s.usage.total_bytes)),
-                ratio,
-                slint::SharedString(exp),
-                slint::SharedString(s.prev_profile_id),
-                slint::SharedString(s.next_profile_id),
-                s.enabled,
+                slint::SharedString(s.id), slint::SharedString(s.remarks.empty() ? s.id : s.remarks),
+                slint::SharedString(s.url), sub_counts[s.id],
+                slint::SharedString(format_quota_human(used, s.usage.total_bytes)), ratio, slint::SharedString(exp),
+                slint::SharedString(s.prev_profile_id), slint::SharedString(s.next_profile_id),
+                static_cast<int>(s.auto_update_minutes), slint::SharedString(s.include_regex),
+                slint::SharedString(s.exclude_regex), slint::SharedString(s.user_agent), s.enabled,
             });
         }
         ws.set_subscriptions(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceSubRow>>(std::move(s_rows)));
 
         std::vector<nexus_ui::WorkspaceRoutingRow> r_rows;
         std::vector<nexus_ui::WorkspaceRuleRow> rule_rows;
-        bool active_auto_detect = false;
-        bool active_find_process = false;
-        std::string active_routing_name;
+        bool active_auto_detect = false, active_find_process = false;
+        std::string active_routing_name, active_dom_strat = "as-is", active_def_out = "proxy";
         int active_rule_count = 0;
         for (auto const& rp : ctx.doc.routing_profiles) {
             r_rows.push_back({
                 slint::SharedString(rp.id), slint::SharedString(rp.name),
-                slint::SharedString(rp.default_outbound), static_cast<int>(rp.rules.size()), rp.is_active,
+                slint::SharedString(rp.default_outbound), slint::SharedString(rp.domain_strategy),
+                static_cast<int>(rp.rules.size()), rp.is_active,
             });
             if (rp.is_active) {
                 active_auto_detect = rp.auto_detect_interface;
                 active_find_process = rp.find_process;
+                active_dom_strat = rp.domain_strategy.empty() ? "as-is" : rp.domain_strategy;
+                active_def_out = rp.default_outbound.empty() ? "proxy" : rp.default_outbound;
                 active_routing_name = rp.name.empty() ? rp.id : rp.name;
                 active_rule_count = static_cast<int>(rp.rules.size());
                 for (auto const& r : rp.rules) {
@@ -214,41 +333,86 @@ namespace desktop_ui_helpers {
                         ? ("@" + r.target_profile_id) : r.target_type;
                     std::string match = !r.domains.empty() ? join_csv(r.domains)
                         : !r.ips.empty() ? join_csv(r.ips)
-                        : !r.rule_sets.empty() ? join_csv(r.rule_sets)
-                        : !r.ports.empty() ? join_csv(r.ports)
+                        : !r.rule_sets.empty() ? ("@" + join_csv(r.rule_sets))
+                        : !r.ports.empty() ? ("port:" + join_csv(r.ports))
                         : !r.protocols.empty() ? join_csv(r.protocols) : join_csv(r.networks);
                     rule_rows.push_back({
                         slint::SharedString(r.id), slint::SharedString(r.scope), slint::SharedString(tgt),
                         slint::SharedString(match), slint::SharedString(join_csv(r.desktop_process)),
-                        r.tls_fragment, r.enabled,
+                        r.tls_fragment, r.locked, r.enabled,
                     });
                 }
             }
         }
         ctx.ui.set_active_rule_count(active_rule_count);
         ctx.ui.set_active_routing_name(slint::SharedString(active_routing_name));
+        ws.set_routing_domain_strategy(slint::SharedString(active_dom_strat));
+        ws.set_routing_default_outbound(slint::SharedString(active_def_out));
         ws.set_routing_auto_detect_interface(active_auto_detect);
         ws.set_routing_find_process(active_find_process);
         ws.set_routing_profiles(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceRoutingRow>>(std::move(r_rows)));
         ws.set_routing_rules(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceRuleRow>>(std::move(rule_rows)));
 
+        std::vector<nexus_ui::WorkspaceRuleSetRow> rs_rows;
+        rs_rows.reserve(ctx.doc.rule_set_assets.size());
+        for (auto const& rs : ctx.doc.rule_set_assets) {
+            rs_rows.push_back({
+                slint::SharedString(rs.tag), slint::SharedString(rs.source_type), slint::SharedString(rs.format),
+                slint::SharedString(rs.source_type == "remote" ? rs.url : rs.path),
+                static_cast<int>(rs.update_interval_ms / 60000),
+            });
+        }
+        ws.set_rule_sets(std::make_shared<slint::VectorModel<nexus_ui::WorkspaceRuleSetRow>>(std::move(rs_rows)));
+
         ws.set_dns_mode(slint::SharedString(ctx.doc.dns.mode));
+        ws.set_dns_bootstrap(slint::SharedString(ctx.doc.dns.simple.bootstrap_dns));
         ws.set_dns_direct(slint::SharedString(join_csv(ctx.doc.dns.simple.direct_dns)));
         ws.set_dns_remote(slint::SharedString(join_csv(ctx.doc.dns.simple.remote_dns)));
+        ws.set_dns_strategy(slint::SharedString(ctx.doc.dns.simple.strategy));
+        ws.set_dns_parallel(ctx.doc.dns.simple.parallel_query);
         ws.set_dns_fakeip(ctx.doc.dns.simple.fake_ip_enabled);
+        ws.set_dns_fakeip_v4(slint::SharedString(ctx.doc.dns.simple.fake_ip_v4_pool));
+        ws.set_dns_fakeip_v6(slint::SharedString(ctx.doc.dns.simple.fake_ip_v6_pool));
+        ws.set_dns_fakeip_global(ctx.doc.dns.simple.fake_ip_global);
+        ws.set_dns_block_aaaa(ctx.doc.dns.simple.block_aaaa);
+        ws.set_dns_block_svcb(ctx.doc.dns.simple.block_svcb_https);
+        ws.set_dns_use_system_hosts(ctx.doc.dns.simple.use_system_hosts);
+        ws.set_dns_hosts_text(slint::SharedString(format_hosts_csv(ctx.doc.dns.simple.hosts)));
         ws.set_dns_raw_kdl(slint::SharedString(ctx.doc.dns.raw_kdl));
+
+        ws.set_tpl_enabled(ctx.doc.full_template.enabled);
+        ws.set_tpl_append_only(ctx.doc.full_template.append_proxies_only);
+        ws.set_tpl_proxy_detour(slint::SharedString(ctx.doc.full_template.proxy_detour));
+        ws.set_tpl_kdl(slint::SharedString(ctx.doc.full_template.template_kdl));
 
         ws.set_host_is_linux(ctx.host.platform == "desktop-linux");
         ws.set_host_enable_mixed(ctx.host.enable_mixed);
         ws.set_host_mixed_listen(slint::SharedString(ctx.host.mixed_listen));
+        ws.set_host_enable_socks(ctx.host.enable_socks);
+        ws.set_host_socks_listen(slint::SharedString(ctx.host.socks_listen.empty() ? ctx.host.second_local_listen : ctx.host.socks_listen));
+        ws.set_host_enable_http(ctx.host.enable_http);
+        ws.set_host_http_listen(slint::SharedString(ctx.host.http_listen));
+        ws.set_host_allow_lan(ctx.host.allow_lan);
+        ws.set_host_lan_listen(slint::SharedString(ctx.host.lan_listen));
+        ws.set_host_lan_user(slint::SharedString(ctx.host.lan_username));
+        ws.set_host_lan_pass(slint::SharedString(ctx.host.lan_password));
         ws.set_host_enable_tun(ctx.host.enable_tun);
+        ws.set_host_tun_name(slint::SharedString(ctx.host.tun_interface_name));
         ws.set_host_tun_mtu(slint::SharedString(std::to_string(ctx.host.tun_mtu)));
+        ws.set_host_tun_inet4(slint::SharedString(ctx.host.tun_inet4));
+        ws.set_host_tun_inet6(slint::SharedString(ctx.host.tun_inet6));
+        ws.set_host_tun_auto_route(ctx.host.tun_auto_route);
         ws.set_host_tun_strict_route(ctx.host.tun_strict_route);
+        ws.set_host_tun_exclude_private(ctx.host.tun_route_exclude_private);
+        ws.set_host_tun_exclude_cidr(slint::SharedString(join_csv(ctx.host.tun_route_exclude)));
+        ws.set_host_bind_iface(slint::SharedString(ctx.host.bind_interface));
+        ws.set_host_bind_inet4(slint::SharedString(ctx.host.inet4_bind_address));
+        ws.set_host_bind_inet6(slint::SharedString(ctx.host.inet6_bind_address));
+        ws.set_host_include_siblings(ctx.host.include_sibling_nodes_in_selector);
         ws.set_host_workers(slint::SharedString(std::to_string(ctx.host.workers)));
         ws.set_host_workers_spec(slint::SharedString(ctx.host.workers_spec));
         ws.set_host_workers_max(slint::SharedString(std::to_string(ctx.host.workers_max)));
 
-        // Sync overview quick-profiles deck + Quick-Settings tile bar directly from unified workspace/host state.
         sync_profiles_to_ui(ctx.ui, ctx.doc, ctx.telemetry.active_profile_id);
         std::string active_label;
         for (auto const& p : ctx.doc.profiles) {
@@ -258,239 +422,31 @@ namespace desktop_ui_helpers {
         ctx.ui.set_tun_enabled(ctx.host.enable_tun);
         ctx.ui.set_mixed_proxy_enabled(ctx.host.enable_mixed);
         if (auto hp = parse_host_port_literal(ctx.host.mixed_listen); hp) {
-            ctx.ui.set_mixed_proxy_host(slint::SharedString(hp->first));
+            ctx.ui.set_mixed_proxy_host(slint::SharedString(ctx.host.allow_lan && hp->first == "127.0.0.1" ? "0.0.0.0" : hp->first));
             ctx.ui.set_mixed_proxy_port(slint::SharedString(std::to_string(hp->second)));
         }
-        ctx.ui.set_socks_proxy_enabled(!ctx.host.second_local_listen.empty());
-        if (auto shp = parse_host_port_literal(ctx.host.second_local_listen); shp) {
-            ctx.ui.set_socks_proxy_host(slint::SharedString(shp->first));
+        bool const eff_socks = ctx.host.enable_socks || !ctx.host.second_local_listen.empty();
+        ctx.ui.set_socks_proxy_enabled(eff_socks);
+        auto const& socks_src = !ctx.host.socks_listen.empty() ? ctx.host.socks_listen : ctx.host.second_local_listen;
+        if (auto shp = parse_host_port_literal(socks_src); shp) {
+            ctx.ui.set_socks_proxy_host(slint::SharedString(ctx.host.allow_lan && shp->first == "127.0.0.1" ? "0.0.0.0" : shp->first));
             ctx.ui.set_socks_proxy_port(slint::SharedString(std::to_string(shp->second)));
         }
-        ctx.ui.set_http_proxy_enabled(!ctx.host.lan_listen.empty());
-        ctx.ui.set_lan_share_enabled(!ctx.host.lan_listen.empty());
-        if (auto lhp = parse_host_port_literal(ctx.host.lan_listen); lhp) {
-            ctx.ui.set_http_proxy_host(slint::SharedString(lhp->first));
-            ctx.ui.set_http_proxy_port(slint::SharedString(std::to_string(lhp->second)));
+        ctx.ui.set_http_proxy_enabled(ctx.host.enable_http);
+        if (auto hhp = parse_host_port_literal(ctx.host.http_listen); hhp) {
+            ctx.ui.set_http_proxy_host(slint::SharedString(ctx.host.allow_lan && hhp->first == "127.0.0.1" ? "0.0.0.0" : hhp->first));
+            ctx.ui.set_http_proxy_port(slint::SharedString(std::to_string(hhp->second)));
+        }
+        bool const lan_on = ctx.host.allow_lan || !ctx.host.lan_listen.empty();
+        ctx.ui.set_lan_share_enabled(lan_on);
+        if (ctx.host.allow_lan) {
+            ctx.ui.set_lan_share_subtitle(slint::SharedString("0.0.0.0"));
+        } else if (auto lhp = parse_host_port_literal(ctx.host.lan_listen); lhp) {
             ctx.ui.set_lan_share_subtitle(slint::SharedString(":" + std::to_string(lhp->second)));
         } else {
             ctx.ui.set_lan_share_subtitle(slint::SharedString(ctx.host.lan_listen));
         }
     }
-
-    inline auto resolve_effective_active_profile_id(WorkspaceUiContext const& ctx) -> std::string {
-        if (!ctx.telemetry.active_profile_id.empty()) {
-            for (auto const& p : ctx.doc.profiles) if (p.id == ctx.telemetry.active_profile_id) return p.id;
-        }
-        return ctx.doc.profiles.empty() ? std::string{} : ctx.doc.profiles.front().id;
-    }
-
-    inline auto persist_workspace_and_host(WorkspaceUiContext& ctx, bool en) -> std::vector<std::string> {
-        auto notices = desktop::normalize_desktop_host_config(ctx.host, en);
-        (void)persist_workspace_db(ctx);
-        (void)persist_host_db(ctx);
-        return notices;
-    }
-
-    // Single-source-of-truth Core composer commit flow: validates before writing runtime config,
-    // handles TUN elevation transitions when Core is running, and reloads via pure HTTP control plane.
-    inline auto recompose_active_workspace(WorkspaceUiContext& ctx, std::string target_profile_id = {}) -> void {
-        if (ctx.doc.profiles.empty()) return;
-        bool const en = is_en_ui(ctx.ui);
-        bool const prefer_persistent = ctx.ui.get_tun_elevate_persistent();
-        if (target_profile_id.empty()) target_profile_id = resolve_effective_active_profile_id(ctx);
-        if (target_profile_id.empty()) return;
-        (void)persist_workspace_and_host(ctx, en);
-        auto doc_snap = ctx.doc;
-        auto host_snap = ctx.host;
-        ctx.ui.set_diagnostic_message(slint::SharedString(tr(en, "正在应用工作区配置...", "Applying workspace configuration...")));
-
-        ctx.worker.post([&ctx, doc_snap = std::move(doc_snap), host_snap = std::move(host_snap), id = std::move(target_profile_id), prefer_persistent, en]() mutable {
-            auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
-            auto host_tmp = make_temp_compose_host(ctx.cfg_dir, host_snap);
-            auto fail_compose = [&](std::string err) {
-                on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {
-                    s->set_diagnostic_ok(false);
-                    s->set_diagnostic_message(slint::SharedString(err));
-                    push_toast(*s, err, "error");
-                    if (ctx.sync_tray) ctx.sync_tray();
-                });
-            };
-            if (!ws_tmp.ok || !host_tmp.ok) {
-                ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
-                fail_compose(tr(en, "准备运行配置失败", "Failed to prepare runtime inputs"));
-                return;
-            }
-            auto composed = desktop::compose_workspace_via_core(
-                ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ctx.secrets_dir, id, {});
-            ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
-            if (!composed.ok || composed.kdl.empty()) {
-                fail_compose(composed.errors.empty() ? tr(en, "生成运行配置失败", "Failed to build runtime configuration") : composed.errors.front());
-                return;
-            }
-            auto val = validate_draft_config(ctx.cfg_dir, ctx.supervisor, composed.kdl, en);
-            if (!val.ok) {
-                fail_compose(tr(en, "配置校验未通过: ", "Configuration invalid: ") + val.message);
-                return;
-            }
-
-            bool const was_running = ctx.supervisor.running();
-            auto const prev_cfg = read_file_text(ctx.config_path);
-            bool const prev_tun = config_has_tun_inbound(prev_cfg);
-            bool const next_tun = config_has_tun_inbound(composed.kdl);
-
-            if (was_running && prev_tun != next_tun) {
-                if (ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) {
-                    auto msg = tr(en, "核心正在切换状态，请稍后重试", "Core is busy; try again shortly");
-                    on_ui_thread(ctx.weak_ui, [msg = std::move(msg)](auto& s) {
-                        s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(msg));
-                        push_toast(*s, msg, "warn");
-                    });
-                    return;
-                }
-                desktop::CoreStartOptions opts{};
-                desktop::TunPrivilegeProbe probe{};
-                if (next_tun) {
-                    auto elev = resolve_tun_elevation_for_start(
-                        ctx.supervisor.binary_path(), ctx.config_path, ctx.cfg_dir, prefer_persistent, en, opts, probe);
-                    if (!elev.ok) {
-                        ctx.lifecycle_busy.store(false, std::memory_order_release);
-                        on_ui_thread(ctx.weak_ui, [probe, msg = std::move(elev.message), tone = elev.cancelled ? "warn" : "error"](auto& s) {
-                            apply_tun_probe_to_ui(*s, probe);
-                            s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(msg));
-                            push_toast(*s, msg, tone);
-                        });
-                        return;
-                    }
-                }
-                bool wrote = write_file_atomic(ctx.config_path, composed.kdl);
-                ctx.supervisor.stop();
-                bool started = wrote && ctx.supervisor.start(ctx.config_path, opts);
-                if (!started) {
-                    if (!prev_cfg.empty()) (void)write_file_atomic(ctx.config_path, prev_cfg);
-                    bool recovered = ctx.supervisor.start(ctx.config_path, {});
-                    ctx.lifecycle_busy.store(false, std::memory_order_release);
-                    auto err = tr(en, "应用配置并重启核心失败，已回滚: ", "Failed to restart Core; rolled back: ") + ctx.supervisor.last_error();
-                    on_ui_thread(ctx.weak_ui, [&ctx, recovered, err = std::move(err)](auto& s) {
-                        s->set_core_running(recovered);
-                        if (!recovered) ctx.running_selector_members.clear();
-                        s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(err));
-                        push_toast(*s, err, "error");
-                        if (ctx.sync_tray) ctx.sync_tray();
-                    });
-                    return;
-                }
-                auto next_ctl = parse_control_config(composed.kdl, ctx.cfg_dir);
-                ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
-                ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
-                ctx.lifecycle_busy.store(false, std::memory_order_release);
-                auto ok_msg = next_tun ? tr(en, "配置已生效并启用 TUN", "Applied with TUN enabled")
-                                       : tr(en, "配置已生效并关闭 TUN", "Applied with TUN disabled");
-                on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed), ok_msg = std::move(ok_msg), next_tun](auto& s) mutable {
-                    ctx.running_selector_tag = composed.selector_tag;
-                    ctx.running_selector_members = std::move(composed.selector_members);
-                    ctx.last_secret_files = std::move(composed.secret_files);
-                    s->set_tun_enabled(next_tun);
-                    s->set_core_running(true);
-                    ctx.core_started_at = std::chrono::steady_clock::now();
-                    ctx.rate_tracker.reset();
-                    s->set_diagnostic_ok(true);
-                    s->set_diagnostic_message(slint::SharedString(ok_msg));
-                    push_toast(*s, ok_msg, "success");
-                    if (ctx.sync_tray) ctx.sync_tray();
-                });
-                return;
-            }
-
-            bool saved = write_file_atomic(ctx.config_path, composed.kdl);
-            bool reload_ok = saved;
-            std::string reload_err;
-            if (saved) {
-                if (was_running) {
-                    auto hr = ctx.http_ctrl.reload();
-                    reload_ok = hr.ok;
-                    if (!hr.ok) reload_err = hr.body;
-                }
-                if (!was_running || reload_ok) {
-                    auto next_ctl = parse_control_config(composed.kdl, ctx.cfg_dir);
-                    ctx.http_ctrl.set_endpoint(next_ctl.http_host, next_ctl.http_port);
-                    ctx.http_ctrl.set_bearer_token(next_ctl.bearer_token);
-                }
-            }
-            auto msg = !saved ? tr(en, "写入运行配置失败", "Failed to write runtime configuration")
-                : (reload_ok
-                    ? (was_running ? tr(en, "配置已保存并热重载", "Saved & reloaded")
-                                   : tr(en, "配置已保存，启动核心时生效", "Saved; activates on start"))
-                    : (tr(en, "已保存，但热重载失败: ", "Saved; reload failed: ") + reload_err));
-            on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed), ok = saved && reload_ok, msg = std::move(msg), next_tun](auto& s) mutable {
-                ctx.running_selector_tag = composed.selector_tag;
-                ctx.running_selector_members = std::move(composed.selector_members);
-                ctx.last_secret_files = std::move(composed.secret_files);
-                s->set_tun_enabled(next_tun);
-                s->set_diagnostic_ok(ok);
-                s->set_diagnostic_message(slint::SharedString(msg));
-                push_toast(*s, msg, ok ? "success" : "error");
-                if (ctx.sync_tray) ctx.sync_tray();
-            });
-        });
-    }
-
-    template <typename ToggleFn>
-    inline auto toggle_core_with_workspace(WorkspaceUiContext& ctx, ToggleFn&& run_toggle) -> void {
-        if (ctx.lifecycle_busy.exchange(true, std::memory_order_acq_rel)) return;
-        bool const en = is_en_ui(ctx.ui);
-        bool const prefer_persistent = ctx.ui.get_tun_elevate_persistent();
-        ctx.ui.set_core_toggling(true);
-        if (ctx.supervisor.running()) {
-            ctx.running_selector_members.clear();
-            run_toggle(std::string{}, prefer_persistent, en);
-            return;
-        }
-        if (ensure_default_workspace_profile(ctx.doc, ctx.telemetry)) {
-            (void)persist_workspace_db(ctx);
-            (void)persist_telemetry_db(ctx);
-            sync_workspace_to_ui(ctx);
-        }
-        auto active_id = resolve_effective_active_profile_id(ctx);
-        (void)persist_workspace_and_host(ctx, en);
-        auto doc_snap = ctx.doc;
-        auto host_snap = ctx.host;
-        bool posted = ctx.worker.post([&ctx, run_toggle = std::forward<ToggleFn>(run_toggle),
-                                       doc_snap = std::move(doc_snap), host_snap = std::move(host_snap),
-                                       active_id = std::move(active_id), prefer_persistent, en]() mutable {
-            auto ws_tmp = make_temp_compose_workspace(ctx.cfg_dir, doc_snap);
-            auto host_tmp = make_temp_compose_host(ctx.cfg_dir, host_snap);
-            auto fail_toggle = [&](std::string err) {
-                on_ui_thread(ctx.weak_ui, [&ctx, err = std::move(err)](auto& s) {
-                    s->set_core_toggling(false);
-                    s->set_diagnostic_ok(false); s->set_diagnostic_message(slint::SharedString(err));
-                    push_toast(*s, err, "error");
-                    if (ctx.sync_tray) ctx.sync_tray();
-                    ctx.lifecycle_busy.store(false, std::memory_order_release);
-                });
-            };
-            if (!ws_tmp.ok || !host_tmp.ok) {
-                ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
-                fail_toggle(tr(en, "准备运行配置失败", "Failed to prepare runtime inputs"));
-                return;
-            }
-            auto composed = desktop::compose_workspace_via_core(
-                ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ctx.secrets_dir, active_id, {});
-            ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
-            if (!composed.ok || composed.kdl.empty()) {
-                fail_toggle(composed.errors.empty() ? tr(en, "生成运行配置失败", "Failed to build runtime configuration") : composed.errors.front());
-                return;
-            }
-            std::string cfg_text = composed.kdl;
-            on_ui_thread(ctx.weak_ui, [&ctx, composed = std::move(composed)](auto&) mutable {
-                ctx.running_selector_tag = composed.selector_tag;
-                ctx.running_selector_members = std::move(composed.selector_members);
-                ctx.last_secret_files = std::move(composed.secret_files);
-            });
-            run_toggle(std::move(cfg_text), prefer_persistent, en);
-        });
-        if (!posted) {
-            ctx.ui.set_core_toggling(false);
-            ctx.lifecycle_busy.store(false, std::memory_order_release);
-        }
-    }
 }
+
+#include "workspace_recompose_flow.hpp"

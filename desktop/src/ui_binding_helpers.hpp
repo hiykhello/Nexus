@@ -49,7 +49,7 @@ namespace desktop_ui_helpers {
             : p.accent_preset == "rose" ? nexus_ui::AccentPreset::Rose
             : nexus_ui::AccentPreset::Ocean);
         theme.set_blur_enabled(p.blur_enabled);
-        ui.global<nexus_ui::Motion>().set_reduced(p.reduced_motion);
+        theme.set_window_opacity(std::clamp(p.window_opacity, 0.40f, 1.0f));
 
         ui.set_outbound_mode(slint::SharedString(p.outbound_mode));
         ui.set_sidebar_width(p.sidebar_width);
@@ -76,7 +76,7 @@ namespace desktop_ui_helpers {
         p.accent_preset = accent == nexus_ui::AccentPreset::Emerald ? "emerald" : accent == nexus_ui::AccentPreset::Violet ? "violet"
             : accent == nexus_ui::AccentPreset::Amber ? "amber" : accent == nexus_ui::AccentPreset::Rose ? "rose" : "ocean";
         p.blur_enabled = theme.get_blur_enabled();
-        p.reduced_motion = ui.global<nexus_ui::Motion>().get_reduced();
+        p.window_opacity = std::clamp(theme.get_window_opacity(), 0.40f, 1.0f);
         p.outbound_mode = std::string(ui.get_outbound_mode());
         p.sidebar_width = ui.get_sidebar_width();
         p.sidebar_collapsed = ui.get_sidebar_collapsed();
@@ -140,7 +140,9 @@ namespace desktop_ui_helpers {
                 auto sz = desktop::compute_logical_blur_size(phys.width, phys.height, (**strong).window().scale_factor());
                 auto const& theme = (**strong).global<nexus_ui::Theme>();
                 bool const blur_on = theme.get_blur_enabled();
-                bool const en = desktop::should_enable_native_blur(blur_on, blur_on ? 0.88f : 1.0f);
+                float const win_op = std::clamp(theme.get_window_opacity(), 0.40f, 1.0f);
+                float const eff_op = (blur_on && win_op > 0.96f) ? 0.88f : win_op;
+                bool const en = desktop::should_enable_native_blur(blur_on, eff_op);
                 blur->sync(en, sz.width, sz.height, theme.get_dark());
             } else if (state == slint::RenderingState::RenderingTeardown) {
                 *attempted = false;
@@ -209,9 +211,6 @@ namespace desktop_ui_helpers {
 
     inline auto clear_telemetry_ui(nexus_ui::AppWindow& ui) -> void {
         ui.set_core_uptime(slint::SharedString(""));
-        ui.set_core_pid_text(slint::SharedString(""));
-        ui.set_core_cpu_text(slint::SharedString("--"));
-        ui.set_core_cpu_ratio(0.0f);
         ui.set_core_memory_text(slint::SharedString("--"));
         ui.set_active_sessions(0);
         ui.set_upload_rate(slint::SharedString("0.0 KB/s")); ui.set_download_rate(slint::SharedString("0.0 KB/s"));

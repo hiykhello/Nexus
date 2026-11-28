@@ -1,6 +1,6 @@
 # Nexus 文档导航
 
-本目录保存 Nexus 的项目定位、工程设计原则、核心架构规范、跨平台方案、配置参考、技术决策与演进规划。
+本目录保存 Nexus 的项目定位、工程设计原则、核心架构规范、跨平台方案、配置参考、技术决策与验证基线。
 
 ---
 
@@ -9,7 +9,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [项目定位](project/overview.md) | 平台目标、client/server 角色定义与技术约束 |
-| [Linux 代理内核支持矩阵](planning/proxy-kernel-support-matrix.md) | 已接入协议、入口、特性开关与适用边界 |
+| [代理内核支持矩阵](planning/proxy-kernel-support-matrix.md) | 已接入协议、入口、特性开关与适用边界 |
 | [依赖与选型](technology/dependencies.md) | 核心依赖职责、BoringSSL `libcrypto` 底座与边界约束 |
 
 ---
@@ -32,14 +32,13 @@
 
 | 分类 | 文档 | 内容 |
 | --- | --- | --- |
-| 总体 | [总体架构](architecture/overview.md) | 分层、数据路径与生命周期 |
-| 总体 | [组件模型](architecture/component-model.md) | 注册、路由上下文、生命周期与装配 |
+| 总体 | [总体架构](architecture/overview.md) · [组件模型](architecture/component-model.md) | 分层、数据路径、注册、生命周期与装配 |
 | 总体 | [C++ Modules](architecture/modules.md) · [源码目录规划](architecture/source-tree.md) | 模块组织、依赖方向与工作区布局 |
 | 总体 | [并发与多线程](architecture/concurrency.md) · [性能与资源设计](architecture/performance.md) | worker 所有权、批处理、加速通道与资源预算 |
 | 协议 | [入站、出站与协议解耦](architecture/protocols.md) | 协议家族、承载组合、数据面契约与编译裁剪 |
 | 协议 | [SOCKS5 / Mixed](architecture/protocols/socks5-mixed.md) · [VLESS / Trojan / SS-2022](architecture/protocols/vless-trojan-ss.md) · [REALITY](architecture/protocols/reality.md) | 经典与现代代理协议边界、流控与抗重放 |
 | 协议 | [SS-2022 重放状态](architecture/protocols/ss2022-replay-state.md) · [WireGuard / WARP](architecture/protocols/wireguard.md) · [Hysteria 2 / QUIC](architecture/protocols/hysteria2.md) | 数据报隧道、抗重放与 QUIC 承载 |
-| TLS/HTTP | [自研 TLS](architecture/tls.md) · [uTLS 指纹引擎](architecture/utls-engine.md) · [TLS/QUIC 恢复](architecture/tls-resumption.md) · [QUIC 1-RTT](architecture/quic-resumption.md) | 握手引擎、现代浏览器指纹、PSK 与 ECH |
+| TLS/HTTP | [自研 TLS](architecture/tls.md) · [uTLS 指纹引擎](architecture/utls-engine.md) · [TLS/QUIC 恢复](architecture/tls-resumption.md) · [QUIC 1-RTT](architecture/quic-resumption.md) | 握手引擎、单真源浏览器指纹与离线审计、PSK 与 ECH |
 | TLS/HTTP | [BoringSSL libcrypto](architecture/boringssl-libcrypto.md) · [Linux kTLS](architecture/ktls.md) | 密码原语底座与内核 TLS 零拷贝卸载 |
 | TLS/HTTP | [HTTP/HTTPS/H2](architecture/http.md) · [具名 HTTP 客户端](architecture/http-clients.md) · [HTTP 代理线规](architecture/http-proxy-spec.md) | 自研 HTTP/1.1、`nghttp2`/`nghttp3` 与 MASQUE |
 | 网络栈 | [自研 TUN 栈](architecture/tun.md) | 设备接入、用户态 TCP/IP/UDP 与资源配额 |
@@ -56,7 +55,6 @@
 | 文档 | 内容 |
 | --- | --- |
 | [跨平台 OS 边界矩阵](platform/cross-platform-os-boundaries.md) | Linux / Android / Windows / Apple OS 原语与移植对照 |
-| [跨平台前序解耦路线](platform/cross-platform-prep.md) | POSIX 头文件清理与跨端演进步骤 |
 | [平台抽象与宿主集成](platform/abstraction.md) · [跨平台 TUN 防环回](platform/tun-routing-and-loopback.md) | 窄平台能力、句柄所有权与路由防环策略 |
 | [Linux 网络集成](platform/linux/networking.md) · [Linux 服务运维](operations/linux-service.md) · [发行打包与补全](../packaging/README.md) | nftables、策略路由、systemd 单元、OpenWrt `procd` 与 Shell 补全 |
 | [Android 免 Root 指南](platform/android/non-root-integration-guide.md) · [ARM64 ABI 核查清单](platform/android/kernel-aarch64-checklist.md) | `VpnService`、`DnsResolver`、UDS `SCM_RIGHTS` 与 `aarch64-linux-musl` 适配 |
@@ -90,11 +88,9 @@
 
 ---
 
-## 7. 路线图与验证计划
+## 7. 路线图与验证基线
 
 | 文档 | 内容 |
 | --- | --- |
-| [实施路线](planning/roadmap.md) · [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) · [功能完整度清单](planning/feature-completion.md) · [拨号字段覆盖](planning/dial-field-coverage.md) | 总体演进路径、协议矩阵补齐顺序、内核增强与能力覆盖清单 |
-| [网络栈验证](planning/network-validation.md) · [性能验证](planning/performance-validation.md) · [Linux 集成验证](planning/linux-validation.md) · [Linux 内核验收](planning/proxy-kernel-linux-validation.md) · [DNS 与状态验证](planning/dns-state-validation.md) | 各子系统测试策略与实机验收基线 |
-| [内核审计缺陷跟踪（R1–R4）](planning/kernel-audit-findings.md) · [（R5–R8）](planning/kernel-audit-findings-r5-r7.md) | 八轮内核专项审计发现（`23 P1 + 39 P2 + 1 P3`，共 63 项）根因、异步化红线、修复设计与回归验收清单 |
-| [内核硬上限解除与高性能重构](planning/core-hard-limits-removal.md) | 四条并行轨道解除出站/规则/UDP 流表/DNS 与队列人为上限的高性能数据结构方案与协议安全非目标边界 |
+| [协议与内核演进蓝图](planning/protocol-and-kernel-roadmap.md) | 协议矩阵演进、十二项内核增强能力与跨端融合路线 |
+| [验证体系与实机基线](planning/validation.md) | 网络/TLS、DNS/状态、Linux 集成验收准则与双后端实机性能基准 |

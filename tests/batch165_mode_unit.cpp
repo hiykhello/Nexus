@@ -405,12 +405,12 @@ int main() {
     r2.rules.push_back(Rule{"route-mode", "rule", {}});
     r2.rules.push_back(Rule{"domain", "example.com", {}});
 
-    std::vector<rules::RouteRule> routes{
-        rules::RouteRule{r1, 1, 0},
-        rules::RouteRule{r2, 2, 1},
+    std::vector<rules::ProgramRule> routes{
+        rules::ProgramRule{.predicates = r1, .action = {ProgramActionKind::route, 1}, .source_index = 0},
+        rules::ProgramRule{.predicates = r2, .action = {ProgramActionKind::route, 2}, .source_index = 1},
     };
-    auto compiled = RouteMatcher::compile(routes, 0, 4);
-    expect(compiled.has_value(), "compile RouteMatcher");
+    auto compiled = RouteProgram::compile_policy(routes, 0, 4);
+    expect(compiled.has_value(), "compile RouteProgram");
     auto matcher = std::move(*compiled);
 
     auto dist = std::make_shared<OutboundDistribution>(4, std::vector<std::vector<std::size_t>>{{2, 3}});

@@ -1,39 +1,81 @@
-# ClientHello 指纹编排设计
+# uTLS 指纹引擎与浏览器基线演进架构
 
-状态：**第 94C 批的浏览器 TCP/QUIC 形状、同连接版本协商和 TCP 1-RTT 恢复已通过双后端定向验收**。自研 TLS 将 ClientHello 的协议内容与可选 profile 分开。profile 控制扩展、顺序、GREASE 和填充，证书验证独立执行。真实浏览器的指纹随版本、平台与网络条件变化。
+自研 TLS 将 ClientHello 的协议语义与可选浏览器 profile 分离。profile 负责扩展集、顺序、GREASE、套件/签名排序与 padding，证书验证与密钥调度独立执行；TCP、QUIC 与 REALITY 共享同一编排器与密钥交换实现，**不链接任何第三方 uTLS 运行时库**，且严格遵循「**只通告真实实现的 TLS 能力，绝不构造无法完成握手的伪扩展**」原则。
 
-## 当前实现与证据
+---
 
-`tls.hello_config` 单一提供原有 `make_client_hello`，旧模块继续重导出原API；`tls.fingerprint` 提供同步 `FingerprintConfig` 与 `make_fingerprint_hello`。Nexus 提供 `native`、`tls13-grease`、`tls13-randomized` 及具名浏览器 TLS 1.3 形状，具体配置见 [KDL 规范](../configuration/spec.md)。实现允许已支持套件顺序、CSPRNG GREASE、拒绝采样的扩展排列、TCP session ID 和有界padding；ALPN由实际协议调用方提供。普通TLS ClientProfile通过显式handshake overload使用策略，默认profile不新增存储字段。
+## 1. 单一真源分层设计
 
-TCP、QUIC和Reality共用同一编排与密钥交换算法。单/双真实X25519与MLKEM share保存在原两个key owner中，按服务端选择取用；HRR保留随机/顺序并按新share重新计算padding。QUIC保持空session ID，替换真实local transport parameters后重新计算最终wire大小；QUIC 包保护支持 AES-128-GCM、AES-256-GCM 和 ChaCha20-Poly1305。生产 Hy2 出站使用 Firefox 形状，分别在 OpenSSL 4.1 强制这三种套件时完成认证握手。epoll 与 io_uring 均覆盖 IPv4 和 IPv6，记录在 `target/batch73/quic-suites`。Reality的新groups span overload与旧scalar factory共享同一首Hello认证，不改变证书/Finished校验；固定参考端的强制cover HRR仍为明确拒绝边界。
+Nexus 将指纹命名、浏览器线特征数据与握手编排彻底解耦为三层，使浏览器大版本跟进从“全仓四处手改”收敛为“单表数据更新 + 自动化审计验证”：
 
-独立验证覆盖 108 个 OpenSSL 认证/错名/错CA 场景（逐次观察实际 1600B ClientHello）、48 个真实 Go UDP QUIC 场景、2738 次分配失败与恢复、24 密钥调度、64 随机 shape 与共享 Reality 双向互通。正式支持范围见 [支持矩阵](../planning/proxy-kernel-support-matrix.md)。
+| 层次 | 源码模块 | 职责 |
+| --- | --- | --- |
+| **身份与别名真源** | `utility.tls_fingerprint`（[tls_fingerprint.cppm](../../src/utility/tls_fingerprint.cppm)） | 定义唯一枚举 `TlsFingerprintId`（`config::TlsFingerprint` 与 `tls::Fingerprint` 均为其类型别名，编译期杜绝漂移）、版本基线元数据、KDL 严格别名表及外部订阅归一化器 `normalize_external_tls_fingerprint()`（兼容 `chrome_120`/`chrome_auto`/`firefox_148`/`safari_26_3`/`randomized` 等外部写法，被 [kdl_emit.cpp](../../src/provider/kdl_emit.cpp) 与 [workspace_emit.cpp](../../src/provider/workspace_emit.cpp) 共用）。 |
+| **声明式规格表** | `tls.browser_profiles`（[browser_profiles.cppm](../../src/tls/browser_profiles.cppm)） | 以 `constexpr BrowserPresetSpec` 声明各浏览器的基线版本、GREASE 位置（含 `signature_algorithms` 首部 GREASE）、扩展乱序/固定顺序表、TLS 1.3/1.2 套件顺序、签名列表、证书压缩算法、是否含 `P-521`、`record_size_limit`、ALPS、GREASE ECH 与 TCP 最小 padding。 |
+| **编排与扩展构造** | `tls.fingerprint`（[fingerprint.cpp](../../src/tls/fingerprint.cpp)、[fingerprint_profiles.cpp](../../src/tls/fingerprint_profiles.cpp)）与 `tls.browser_extensions`（[browser_extensions.cppm](../../src/tls/browser_extensions.cppm)） | 纯数据驱动生成 TCP/QUIC ClientHello，结合 `tls.hello_config`、真实 `X25519` / `X25519MLKEM768` 密钥对、动态 `required_signature`（如 REALITY 所需 `0x0807`）与拒绝采样 Fisher-Yates 扩展乱序，不新增协程、虚派发或额外堆对象所有权。 |
 
-同编译参数下原/新对象尺寸均为Hello136、Exchange8232、Driver8432、Session9856、ClientProfile88、QUIC TlsClient9064字节。新增编排不含任务或协程、虚派发、额外heap owner或隐藏实现存储；算法产生的配置/编码/密钥分配是必要协议工作，不能据此声称指令等价、网络握手零分配或nativecrypto OOM全覆盖。具名浏览器原始样本、更广 TLS 版本和 PSK/0-RTT 验证仍在推进。
+---
 
-`tls-certificate-compression` 构建特性为 TLS 1.3 客户端添加 zlib、Brotli 和 Zstandard 解压。Chrome 和 Edge 通告 Brotli，Safari 通告 zlib，`tls13-randomized` 通告三种算法。压缩消息的编码仍进入 transcript，解压后的证书链走既有信任、主机名和 CertificateVerify 校验。解压结果必须精确等于声明长度，并受各承载的证书限制。epoll 和 io_uring 分别对 OpenSSL 4.1 验证了 TCP 与 QUIC 的三种压缩认证握手，TCP 同时覆盖无压缩回落和错名拒绝。关闭特性的 epoll 组合产物无需 Brotli 或 Zstandard，SRS 仍使用 zlib。日志见 `target/batch73`。[RFC 8879](https://www.rfc-editor.org/rfc/rfc8879.html)
+## 2. 当前浏览器基线矩阵
 
-Trojan 和 AnyTLS TCP 出站的显式 `tls12` 形状使用完全握手、扩展主密钥和 AES-GCM。epoll 与 io_uring 对 OpenSSL 4.1 及 TLS 1.2-only AnyTLS 对端验证了 X25519、RSA-PSS、RSA PKCS#1、P-256/P-384/P-521 ECDHE/ECDSA、跨记录转发和逻辑 FIN。日志见 `target/batch73/tls12-*`。[RFC 8422](https://www.rfc-editor.org/rfc/rfc8422.html)
+配置中推荐使用家族短名（自动跟踪最新已验证基线），同时向后兼容带版本号别名：
 
-第 94C 批提供 `chrome-133`、`firefox-135` 和 `safari-18`，沿用家族短名。普通浏览器 TCP 握手由同一 ClientHello 的 ServerHello 选择 TLS 1.3 或 TLS 1.2。1.2 路径使用四个 ECDHE AES-GCM 和两个 ECDHE ChaCha20-Poly1305 套件。QUIC 浏览器形状只协商 TLS 1.3，使用实际 transport parameters。Chrome、Edge 和 Firefox 的 GREASE ECH 在显式 ECH 握手中让位。Chrome 和 Edge 的 TCP h2 ALPS 以 EncryptedExtensions 进入 Finished transcript。Firefox 委托凭据当前覆盖 ClientHello 声明，服务器选用委托凭据时仍缺验证实现。OCSP 与 SCT 的 TLS 报文解析沿用现有 PKI 认证策略。
+| 家族短名 | 当前基线 | 兼容别名 | 核心线特征（全部由真实 TLS 状态机支撑） |
+| --- | --- | --- | --- |
+| `chrome` | `chrome-158` | `chrome-133`, `chrome-155`, `chrome-158` | 对照 Chromium `main`（`ssl_client_socket_impl.cc` 与 `root_store.textproto`）核验：套件/组/版本/KeyShare/扩展首尾/`signature_algorithms` GREASE、后量子签名 `ML-DSA-44/65/87`、28 项 `trust_anchors (0xca34)`、Brotli 证书压缩、ALPS `0x44cd`（TCP h2）、GREASE ECH、扩展内部随机乱序、TCP 最小 517B padding |
+| `edge` | `edge-158` | `edge-133`, `edge-155`, `edge-158` | 对齐 Chromium 158 BoringSSL 栈（与 `chrome-158` 一致） |
+| `firefox` | `firefox-161` | `firefox-135`, `firefox-148`, `firefox-161` | 对照实机 Mozilla Firefox 161.0 核验：无 GREASE、3 槽初始 KeyShare（`X25519MLKEM768 + X25519 + P256`）、`X25519MLKEM768 / X25519 / P256 / P384 / P521`（已不含 FFDHE）、`zlib/brotli/zstd` 三算法证书压缩、ChaCha 优先套件序、`record_size_limit=16385`、`delegated_credentials`、GREASE ECH 与 17 项固定扩展序 |
+| `safari` | `safari-26.3` | `safari-18`, `safari-26`, `safari-26.3` | AES-256-GCM 优先 TLS 1.3/1.2 套件序、GREASE、`X25519MLKEM768 + P-521`、zlib 证书压缩、5 项 TLS 1.3 签名与 Apple 15 项固定扩展序 |
+| `ios` | `ios-26.3` | `ios-14`, `ios-18`, `ios-26`, `ios-26.3` | 对齐 iOS 26 WebKit / `Network.framework`（与 Safari 26.3 TLS 栈一致） |
+| `android` | `android-16` | `android-11`, `android-16` | 现代 Conscrypt TLS 1.3 + AEAD TLS 1.2 套件序、PQ 混合曲线支持与固定扩展序 |
 
-普通物理 TCP 出站的 TLS 1.3 恢复缓存容量为 32 张票据，按实际目的端点、验证身份、信任锚及 ALPN 隔离，取出即消费，按期清理。普通 VLESS 按配置目的绑定恢复。通用 Fast Open 和 layered 拨号未启用该共享缓存，Vision 与 REALITY 保留专用握手路径。TCP 应用数据在 Finished 后发送。恢复边界详见 [TLS 会话恢复](tls-resumption.md)。
+另有非浏览器策略：`native`、`tls13-grease`、`tls13-randomized`、`random`（从各浏览器与随机形态池中按 CSPRNG 抽样）以及显式 `tls12`（仅限支持的 TCP 出站）。
 
-## Profile 与握手语义
+---
 
-先定义稳定的握手描述：版本与 cipher、SNI、ALPN、supported groups、key shares、签名算法、session tickets、扩展及其顺序。profile 从该能力集中选择与排列，TLS 状态机负责实际的握手和认证；用户要求尚未实现或不安全的组合时拒绝，不生成无法完成握手的伪报文。TLS 1.3 要求某些扩展遵循特定顺序和语义，PSK binder、重试和 transcript 等不能只靠重排字节处理。
+## 3. 离线自动审计与版本跟进流程
 
-只通告真正支持的 ALPN：例如 HTTP/2 未实现时不可为了拟真宣称 `h2`。SNI、验证名、信任根独立配置；profile 不等于服务器身份验证。对 HTTP/2、TCP 指纹、时间、证书与上层请求的观察也会影响识别，JA3/JA4 摘要不是浏览器完整行为的证明。
+仓库内置零外部依赖的离线审计链路，由 C++ 线字节导出器 [utls_dump.cpp](../../tests/utls_dump.cpp)（target `utls-dump`）与 Python 审计工具 [audit-utls.py](../../scripts/audit-utls.py) / [utls_wire.py](../../scripts/utls_wire.py) 组成。
 
-## GREASE 与混合密钥交换
+### 3.1 差异自动分流模型
 
-按 [RFC 8701](https://www.rfc-editor.org/rfc/rfc8701) 选择保留的 GREASE 值以检验扩展性；不同字段的选择、出现位置与随机策略按目标 profile 和标准约束定义，不能假设所有版本使用同一个固定布局。一个扩展块中不得重复同一扩展类型；不应通过静默重试移除 GREASE 来掩盖互操作失败。
+审计脚本对 Nexus 实际编码出的 ClientHello 字节与参考样本做逐字段比对（含 JA4），并将所有差异明确归为两类：
 
-如实现 `X25519MLKEM768`，按 [RFC 10024](https://www.rfc-editor.org/rfc/rfc10024.html) 的目标版本验证编码：客户端 key share 为 ML-KEM-768 公钥 1184 字节在前、X25519 公钥 32 字节在后；服务端为 ML-KEM 密文 1088 字节在前、X25519 公钥 32 字节在后。名称顺序不等于字节顺序。组合 secret、无效公钥、握手重试与算法协商均须遵守规范并用向量测试；BoringSSL 固定提交是否提供所需 API、具体浏览器 profile 是否采用该组都需验证，不能只填充随机字节冒充真实密钥交换。
+- **`[DATA DRIFT]`（数据漂移）**：参考浏览器调整了 Nexus **已支持**的能力（如套件/签名排序、扩展顺序、证书压缩算法列表、`P-521` 开关、`signature_algorithms` GREASE、RSL 数值、ALPS codepoint）。此类差异只需修改 [browser_profiles.cppm](../../src/tls/browser_profiles.cppm) 与 [tls_fingerprint.cppm](../../src/utility/tls_fingerprint.cppm) 即可零风险同步。
+- **`[CAPABILITY GAP]`（能力缺口）**：参考浏览器通告了 Nexus TLS 状态机**尚未实现**或有意不提供的协议项（如历史 CBC/3DES/RSA-kex 套件或 SHA-1 签名）。此类差异会被明确汇报但不触发数据漂移告警，严禁通过拼假字节掩盖。
 
-Padding 仅在 profile 和协议允许时应用，计算包含各层长度字段的完整编码；不得假设 1024–1536 字节是普适的真实浏览器分布。缓冲必须有界，超过容量返回可诊断错误；`std::inplace_vector` 只影响一个容器的分配，不保证密码、证书或整个握手零堆分配。
+### 3.2 标准升级步骤（Runbook）
 
-## 验收
+1. **构建导出器**：
+   ```bash
+   mcpp run --features profile-linux-uring,test-bins batch94c-utls-unit
+   ```
+2. **运行上游对照或实机浏览器抓包审计**：
+   ```bash
+   # 对照上游 refraction-networking/utls 最新 master（或省略 --fetch-upstream 使用本机 Go 缓存）
+   python3 scripts/audit-utls.py --fetch-upstream --fail-on-data-drift
 
-为每个声明支持的 profile 固定参考浏览器版本、平台、配置与原始样本，解析后比较扩展内容、顺序分布、GREASE、key share、padding、分片及完整握手；同时测证书错误、非法输入、ALPN 不支持和协商失败。标准向量与真实服务器互操作分别验证安全性和兼容性，profile 匹配度和性能仅报告实测结果；任何未覆盖的组合明确列出。
+   # 对照本机真实浏览器发出的 ClientHello 抓包（示例：Firefox）
+   TMPPROF=$(mktemp -d)
+   python3 scripts/audit-utls.py --capture-profile firefox \
+     --capture-cmd "firefox --headless --no-remote --profile $TMPPROF https://127.0.0.1:{port}/" \
+     --fail-on-data-drift
+   rm -rf "$TMPPROF"
+   ```
+3. **收敛同步**：
+   - 若仅出现 `DATA DRIFT`：更新 [browser_profiles.cppm](../../src/tls/browser_profiles.cppm) 的对应规格项，并在 [tls_fingerprint.cppm](../../src/utility/tls_fingerprint.cppm) 推进基线标签同时保留旧版本别名；
+   - 若评估需要补齐某项 `CAPABILITY GAP`：先在 `src/tls/` 实现完整状态机与握手校验，再在 `audit-utls.py` 能力集合与 `browser_profiles.cppm` 中开启。
+4. **回归验证**：运行 `batch94c-utls-unit`、`tls-fingerprint`、`config-protocols-ext-test` 与 `audit-utls.py --fail-on-data-drift`，确认全部通过且 0 数据漂移。
+
+---
+
+## 4. 关键协议语义与实现边界
+
+- **混合后量子与多槽 KeyShare**：`X25519MLKEM768`（`0x11ec`）按 [RFC 10024](https://www.rfc-editor.org/rfc/rfc10024.html) 编码（客户端 ML-KEM-768 公钥 1184B 在前、X25519 32B 在后；服务端密文 1088B 在前、X25519 32B 在后）。`ClientHelloExchange` 支持最多 3 个初始真实 KeyShare（覆盖 Firefox 161 的 `X25519MLKEM768 + X25519 + P-256`），HRR 保持随机数与扩展顺序并按新 share 重算 padding。
+- **后量子签名（ML-DSA-44/65/87）**：基于 BoringSSL `libcrypto` 内置的 `EVP_PKEY_ML_DSA_{44,65,87}` 完整支持 TLS 1.3 `0x0904`/`0x0905`/`0x0906` 的 `CertificateVerify` 签发与验签。
+- **TrustAnchors（`0xca34`）**：按 `draft-ietf-tls-trust-anchor-ids` 在 Chrome/Edge ClientHello 通告 Chrome Root Store ID 列表，并在 `EncryptedExtensions` 校验解析服务端回传列表（拒绝畸形或未通告的扩展），证书链校验仍严格以本地配置信任锚为准。
+- **GREASE（[RFC 8701](https://www.rfc-editor.org/rfc/rfc8701)）**：由 CSPRNG 采样，保证首尾扩展 GREASE 互异且不与其他扩展冲突；不通过静默移除 GREASE 重试来掩盖互操作失败。
+- **证书压缩（[RFC 8879](https://www.rfc-editor.org/rfc/rfc8879.html)）**：启用 `tls-certificate-compression` 特性时支持 zlib、Brotli 与 Zstandard 解压；压缩消息原文进入 transcript，解压后长度须与声明严格一致并走完整 PKI 校验。关闭特性时各 profile 自动省略扩展 `27`。
+- **ALPS、GREASE ECH 与委托凭据**：Chrome/Edge 的 TCP `h2` ALPS 以 EncryptedExtensions 进入 Finished transcript；显式启用真实 ECH 时自动抑制 GREASE ECH；Firefox 委托凭据当前覆盖 ClientHello 声明，服务端选用委托凭据时的验签仍属独立待实现项。
+- **同连接 TLS 1.3/1.2 与 1-RTT 恢复**：浏览器 TCP 形状由同一 ClientHello 协商 TLS 1.3 或 TLS 1.2（四个 ECDHE AES-GCM + 两个 ECDHE ChaCha20-Poly1305）；QUIC 形状仅协商 TLS 1.3 并写入真实 transport parameters。普通物理 TCP 出站维护 32 张按目的端点、验证身份、信任锚与 ALPN 隔离的恢复票据，详见 [TLS 会话恢复](tls-resumption.md)。
+- **不可仅凭 JA3/JA4 断言拟真**：ALPN 仅通告真实支持的协议（未实现 HTTP/2 时不可宣称 `h2`），SNI、主机名校验与信任根完全独立于 fingerprint 配置。

@@ -69,4 +69,4 @@
 
 后续构建生成正式二进制后，再创建与真实参数匹配的 unit 和安装清单，使用 `systemd-analyze verify` 检查并在测试环境启动验证。发布 unit 的默认设置、支持的 systemd 版本及权限说明一起维护。
 
-验收见[Linux 验证计划](../planning/linux-validation.md)。本轮没有安装、启动、重载或停止任何系统服务。
+验收见 [验证体系与实机基线](../planning/validation.md#3-linux-系统集成验证)。

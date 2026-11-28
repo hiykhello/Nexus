@@ -6,6 +6,8 @@ export component NexusButton inherits Rectangle {
     in property <string> label;
     in property <image> icon;
     in property <bool> has-icon: false;
+    in property <image> trailing-icon;
+    in property <bool> has-trailing-icon: false;
     in property <bool> primary: false;
     in property <bool> danger: false;
     in property <bool> active: false;
@@ -21,26 +23,25 @@ export component NexusButton inherits Rectangle {
     border-width: fs.has-focus ? 2px : 1px;
     border-color:
         fs.has-focus ? Theme.accent
-        : !root.enabled ? Theme.well-border
+        : !root.enabled ? Theme.card-border
         : root.danger ? Theme.error-border
         : root.warn ? Theme.warn-border
-        : root.primary ? Theme.pill-active-top
+        : root.primary ? Theme.accent-control-border
         : root.active ? Theme.selected-border
-        : ta.has-hover ? Theme.hairline-strong
-        : Theme.card-border;
+        : ta.has-hover ? Theme.control-border-hover-brush
+        : Theme.control-border-brush;
     background:
-        !root.enabled ? Theme.well-bg
-        : root.danger ? (ta.pressed ? Theme.error-fg.with-alpha(0.28) : ta.has-hover ? Theme.error-fg.with-alpha(0.20) : Theme.error-bg)
+        !root.enabled ? transparent
+        : root.danger ? (ta.pressed ? Theme.error-fg.with-alpha(0.24) : ta.has-hover ? Theme.error-fg.with-alpha(0.16) : Theme.error-bg)
         : root.warn ? Theme.warn-bg
         : root.primary ? (ta.pressed ? Theme.pill-active-bot.darker(0.12) : ta.has-hover ? Theme.pill-active-bot.brighter(0.06) : Theme.pill-active-bot)
         : root.active ? Theme.selected-bg
-        : ta.pressed ? Theme.nav-active-bg
-        : ta.has-hover ? Theme.row-hover-bg
-        : Theme.well-bg;
+        : ta.pressed ? Theme.control-fill-pressed
+        : ta.has-hover ? Theme.control-fill-hover
+        : Theme.control-fill;
     opacity: root.enabled ? 1.0 : 0.48;
-    transform-scale: (ta.pressed && root.enabled) ? 0.97 : 1.0;
+    transform-scale: (ta.pressed && root.enabled) ? 0.98 : 1.0;
     animate background { duration: Motion.fast; }
-    animate border-color { duration: Motion.fast; }
     animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
     accessible-role: button;
@@ -97,7 +98,19 @@ export component NexusButton inherits Rectangle {
                 : root.active ? Theme.nav-active-fg
                 : Theme.text-primary;
             vertical-alignment: center;
-            overflow: elide;
+        }
+
+        if root.has-trailing-icon : Image {
+            width: 13px;
+            height: 13px;
+            y: (parent.height - self.height) / 2;
+            source: root.trailing-icon;
+            colorize:
+                !root.enabled ? Theme.text-muted
+                : root.primary ? Theme.pill-active-fg
+                : root.active ? Theme.nav-active-fg
+                : ta.has-hover ? Theme.text-primary
+                : Theme.text-secondary;
         }
     }
 }
@@ -114,17 +127,17 @@ export component NexusChip inherits Rectangle {
     forward-focus: fs;
     horizontal-stretch: 0;
     height: root.chip-height;
-    border-radius: root.chip-height <= 26px ? Theme.radius-sm : Theme.radius-md;
+    border-radius: Theme.radius-sm;
     border-width: fs.has-focus ? 2px : 1px;
     border-color:
         fs.has-focus ? Theme.accent
-        : root.active ? (root.warn-accent ? Theme.warn-fg : Theme.selected-border)
+        : root.active ? (root.warn-accent ? Theme.warn-fg : Theme.pill-active-bot)
         : (ta.has-hover && root.enabled) ? Theme.hairline-strong
-        : Theme.well-border;
+        : Theme.card-border;
     background:
-        root.active ? (root.warn-accent ? Theme.warn-bg : Theme.selected-bg)
+        root.active ? (root.warn-accent ? Theme.warn-bg : Theme.pill-active-bot)
         : (ta.has-hover && root.enabled) ? Theme.row-hover-bg
-        : Theme.well-bg;
+        : transparent;
     opacity: root.enabled ? 1.0 : 0.45;
     transform-scale: (ta.pressed && root.enabled) ? 0.97 : 1.0;
     animate background { duration: Motion.fast; }
@@ -160,12 +173,11 @@ export component NexusChip inherits Rectangle {
             font-size: 12px;
             font-weight: root.active ? 700 : 500;
             color:
-                root.active ? (root.warn-accent ? Theme.warn-fg : Theme.nav-active-fg)
+                root.active ? (root.warn-accent ? Theme.warn-fg : Theme.pill-active-fg)
                 : ta.has-hover && root.enabled ? Theme.text-primary
                 : Theme.text-secondary;
             horizontal-alignment: center;
             vertical-alignment: center;
-            overflow: elide;
         }
     }
 }

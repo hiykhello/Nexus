@@ -102,9 +102,6 @@ auto main(int argc, char** argv) -> int {
     std::mutex logs_mu;
     std::atomic<std::uint64_t> last_log_seq{0};
     desktop_ui_helpers::RateTracker rate_tracker;
-    desktop_ui_helpers::CpuUsageTracker app_cpu_tracker;
-    desktop_ui_helpers::CpuUsageTracker core_cpu_tracker;
-    std::uint64_t last_core_pid = 0;
     std::optional<std::chrono::steady_clock::time_point> core_started_at;
     std::atomic<bool> metrics_in_flight{false};
     std::atomic<bool> conns_in_flight{false};
@@ -143,7 +140,7 @@ auto main(int argc, char** argv) -> int {
 
     desktop_ui_helpers::WorkspaceUiContext ws_ctx{
         *ui, weak_ui, worker, supervisor, http_ctrl, rate_tracker, core_started_at, lifecycle_busy,
-        cfg_dir, config_path, sync_tray, client_db.get(), {}, {}, {}, {}, {}, {}, "proxy", {}, {}
+        cfg_dir, config_path, sync_tray, client_db.get(), {}, {}, {}, {}, {}, {}, "proxy", {}, {}, &sys_proxy
     };
 
     desktop::TrayController tray(desktop_ui_helpers::make_tray_callbacks(
@@ -155,31 +152,13 @@ auto main(int argc, char** argv) -> int {
     ui->set_tray_native_active(tray.native_backend_active());
 
     auto sync_perf_ui = [&] {
-        auto app_pid = desktop::current_process_id();
         auto app_priv = desktop::current_process_memory_bytes();
-        auto app_cpu = app_cpu_tracker.record(desktop::current_process_cpu_time_ns());
-        ui->set_app_pid_text(slint::SharedString(app_pid > 0 ? std::format("PID {}", app_pid) : "--"));
-        ui->set_app_cpu_text(slint::SharedString(app_cpu.text));
-        ui->set_app_cpu_ratio(app_cpu.ratio);
         ui->set_app_memory_text(slint::SharedString(app_priv > 0 ? desktop_ui_helpers::format_bytes_human(app_priv) : "--"));
 
-        bool const core_up = supervisor.running();
-        auto core_pid = core_up ? supervisor.process_id() : 0ULL;
-        if (!core_up || core_pid != last_core_pid) {
-            core_cpu_tracker.reset();
-            last_core_pid = core_pid;
-        }
-        if (core_up) {
+        if (supervisor.running()) {
             auto core_priv = supervisor.memory_bytes();
-            auto core_cpu = core_cpu_tracker.record(supervisor.cpu_time_ns());
-            ui->set_core_pid_text(slint::SharedString(core_pid > 0 ? std::format("PID {}", core_pid) : ""));
-            ui->set_core_cpu_text(slint::SharedString(core_cpu.text));
-            ui->set_core_cpu_ratio(core_cpu.ratio);
             ui->set_core_memory_text(slint::SharedString(core_priv > 0 ? desktop_ui_helpers::format_bytes_human(core_priv) : "--"));
         } else {
-            ui->set_core_pid_text(slint::SharedString(""));
-            ui->set_core_cpu_text(slint::SharedString("--"));
-            ui->set_core_cpu_ratio(0.0f);
             ui->set_core_memory_text(slint::SharedString("--"));
         }
     };
@@ -215,8 +194,8 @@ auto main(int argc, char** argv) -> int {
         sync_perf_ui();
         if (supervisor.running()) {
             poll_telemetry(std::string_view(ui->get_active_node()).empty());
-            if (ui->get_active_tab() == 2 && !ui->get_connections_paused()) ui->invoke_refresh_connections();
-            if (ui->get_active_tab() == 4) ui->invoke_refresh_logs();
+            if (ui->get_active_tab() == 5 && !ui->get_connections_paused()) ui->invoke_refresh_connections();
+            if (ui->get_active_tab() == 6) ui->invoke_refresh_logs();
             inspect_ctrl.sync_log_stream(true);
         }
     };
@@ -252,10 +231,14 @@ auto main(int argc, char** argv) -> int {
     ui->on_toggle_core([&] {
         inspect_ctrl.reset_ws_fallback();
         if (!supervisor.running()) last_log_seq.store(0, std::memory_order_release);
-        desktop_ui_helpers::toggle_core_with_workspace(ws_ctx, [&](std::string cfg_text, bool prefer_persistent, bool en) {
+        auto sys_proxy_rebind = (!supervisor.running() && ui->get_system_proxy_enabled())
+            ? desktop::select_system_proxy_endpoint(desktop_ui_helpers::read_inbounds_from_ui(*ui))
+            : std::nullopt;
+        desktop_ui_helpers::toggle_core_with_workspace(ws_ctx, [&, sys_proxy_rebind = std::move(sys_proxy_rebind)](std::string cfg_text, bool prefer_persistent, bool en) mutable {
             desktop_ui_helpers::toggle_core_async(
                 weak_ui, worker, supervisor, sys_proxy, http_ctrl, sync_tray, cached_groups, pinned_members, member_models, rate_tracker,
-                core_started_at, metrics_in_flight, lifecycle_busy, cfg_dir, config_path, std::move(cfg_text), prefer_persistent, en);
+                core_started_at, metrics_in_flight, lifecycle_busy, cfg_dir, config_path, std::move(cfg_text), prefer_persistent, en,
+                std::move(sys_proxy_rebind));
         });
     });
 
@@ -408,7 +391,7 @@ auto main(int argc, char** argv) -> int {
             if (!ws_up) {
                 poll_telemetry(std::string_view(ui->get_active_node()).empty());
             }
-            if (!ws_up && ui->get_active_tab() == 2 && !ui->get_connections_paused() && (++conn_poll_tick % 2 == 0) &&
+            if (!ws_up && ui->get_active_tab() == 5 && !ui->get_connections_paused() && (++conn_poll_tick % 2 == 0) &&
                 !conns_in_flight.exchange(true, std::memory_order_acq_rel)) {
                 bool posted = worker.post([&, weak_ui] {
                     auto reply = http_ctrl.connections();

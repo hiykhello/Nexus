@@ -1,5 +1,6 @@
 module rules;
 import std;
+import rules.any_index;
 
 namespace rules {
     auto valid_domain(std::string_view) -> bool;
@@ -54,13 +55,35 @@ namespace rules {
                 .source_user = input.source_user,
                 .package_name = input.package_name,
                 .client = input.client,
+                .ip_bytes = input.ip_bytes,
                 .process_paths = input.process_paths,
             };
         }
 
-        auto strip_root(ProgramInput& input) noexcept -> void {
-            for (auto* field : {&input.explicit_domain, &input.fakeip_domain, &input.reverse_domain, &input.sniffed_domain})
-                if (*field && (*field)->ends_with('.')) (*field)->remove_suffix(1);
+        struct NormalizedDomains {
+            std::array<std::array<char, 253>, 4> storage;
+            std::array<std::optional<std::string_view>, 4> views{};
+        };
+
+        auto normalize_domains(ProgramInput const& input, NormalizedDomains& out) -> bool {
+            std::array<std::optional<std::string_view>, 4> raw{
+                input.explicit_domain, input.fakeip_domain, input.reverse_domain, input.sniffed_domain};
+            for (std::size_t idx = 0; idx < 4; ++idx) {
+                if (!raw[idx]) continue;
+                auto d = *raw[idx];
+                if (d.ends_with('.')) d.remove_suffix(1);
+                if (!valid_domain(d)) return false;
+                if (std::ranges::any_of(d, [](char c) { return c >= 'A' && c <= 'Z'; })) {
+                    for (std::size_t j = 0; j < d.size(); ++j) {
+                        char c = d[j];
+                        out.storage[idx][j] = (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c;
+                    }
+                    out.views[idx] = std::string_view(out.storage[idx].data(), d.size());
+                } else {
+                    out.views[idx] = d;
+                }
+            }
+            return true;
         }
 
         auto skip_action(ProgramInput const& input, ProgramAction const& action, bool constrained) noexcept -> bool {
@@ -184,8 +207,9 @@ namespace rules {
                     tail = std::make_shared<Matcher const>(std::move(*cm));
                 }
                 auto off = flattened.rules.size();
+                auto src_idx = rule.source_index.value_or(program.instructions_.size());
                 program.instructions_.push_back({off, off, act, rule.domain_source, rule.mmap, std::move(tail),
-                    rule.mmap_match_source || rule.mmap->ip_cidr_match_source()});
+                    rule.mmap_match_source || rule.mmap->ip_cidr_match_source(), 0, 0, no_index, no_index, 0, src_idx});
                 continue;
             }
             for (auto const& predicate : rule.predicates.rules)
@@ -195,13 +219,71 @@ namespace rules {
             auto first = flattened.rules.size();
             flattened.version = std::max(flattened.version, normalized->version);
             for (auto& predicate : normalized->rules) flattened.rules.push_back(std::move(predicate));
-            program.instructions_.push_back({first, flattened.rules.size(), act, rule.domain_source});
+            auto src_idx = rule.source_index.value_or(program.instructions_.size());
+            program.instructions_.push_back({first, flattened.rules.size(), act, rule.domain_source, {}, {}, false,
+                0, 0, no_index, no_index, 0, src_idx});
         }
         auto compiled = Matcher::compile(flattened);
         if (!compiled) return std::unexpected(std::move(compiled.error()));
         compiled->uses_process_ |= tail_proc;
         compiled->uses_source_uid_ |= tail_uid;
         program.matcher_ = std::move(*compiled);
+        auto const& m = program.matcher_;
+        std::size_t unidx_pos = 0;
+        for (std::size_t idx = 0; idx < program.instructions_.size(); ++idx) {
+            auto& inst = program.instructions_[idx];
+            if (inst.mmap || inst.first == inst.last) continue;
+            while (unidx_pos < m.unindexed_.size() && m.unindexed_[unidx_pos] < inst.first) ++unidx_pos;
+            inst.unindexed_begin = static_cast<std::uint32_t>(unidx_pos);
+            while (unidx_pos < m.unindexed_.size() && m.unindexed_[unidx_pos] < inst.last) ++unidx_pos;
+            inst.unindexed_end = static_cast<std::uint32_t>(unidx_pos);
+            if (inst.unindexed_begin < inst.unindexed_end) inst.flags |= flag_unindexed;
+            for (std::size_t r = inst.first; r < inst.last; ++r) {
+                auto const& e = m.entries_[m.roots_[r]];
+                if (e.kind == Matcher::Kind::domain) inst.flags |= flag_domain_idx | flag_domain_root;
+                else if (e.kind == Matcher::Kind::suffix) inst.flags |= flag_suffix_idx | flag_domain_root;
+                else if (e.kind == Matcher::Kind::ip) {
+                    inst.flags |= flag_ip_root | (e.ip.family == 4 ? flag_ipv4_idx : flag_ipv6_idx);
+                }
+            }
+            if (inst.last - inst.first >= 8) {
+                if (auto built = any_detail::build_any_index<Matcher::AnyIndex>(
+                        m.entries_, inst.last - inst.first,
+                        [&](std::size_t k) { return m.roots_[inst.first + k]; },
+                        Matcher::Kind::ip, Matcher::Kind::domain, Matcher::Kind::suffix)) {
+                    inst.local_any_index = static_cast<std::uint32_t>(program.local_any_indexes_.size());
+                    program.local_any_indexes_.push_back(std::move(*built));
+                }
+            }
+        }
+        auto run_eligible = [](Instruction const& inst) noexcept {
+            return !inst.mmap && inst.first < inst.last && inst.local_any_index == no_index &&
+                !(inst.flags & flag_unindexed) &&
+                (inst.action.kind == ProgramActionKind::route || inst.action.kind == ProgramActionKind::reject);
+        };
+        for (std::size_t i = 0; i < program.instructions_.size();) {
+            if (!run_eligible(program.instructions_[i])) { ++i; continue; }
+            std::size_t j = i + 1;
+            auto src = program.instructions_[i].domain_source;
+            while (j < program.instructions_.size() && run_eligible(program.instructions_[j]) &&
+                   program.instructions_[j].domain_source == src) ++j;
+            if (j - i >= 2) {
+                IndexedRun run{i, j, program.instructions_[i].first, program.instructions_[j - 1].last, j, j, src, 0};
+                auto run_id = static_cast<std::uint32_t>(program.runs_.size());
+                if (program.root_to_instr_.empty()) program.root_to_instr_.resize(m.roots_.size(), no_index);
+                for (std::size_t k = i; k < j; ++k) {
+                    auto& inst = program.instructions_[k];
+                    inst.run_index = run_id;
+                    run.flags |= inst.flags;
+                    if (run.first_ip_instr == j && (inst.flags & flag_ip_root)) run.first_ip_instr = k;
+                    if (run.first_domain_instr == j && (inst.flags & flag_domain_root)) run.first_domain_instr = k;
+                    for (std::size_t r = inst.first; r < inst.last; ++r)
+                        program.root_to_instr_[r] = static_cast<std::uint32_t>(k);
+                }
+                program.runs_.push_back(run);
+            }
+            i = j;
+        }
         return program;
     }
 
@@ -211,31 +293,62 @@ namespace rules {
             return std::unexpected(Error{ErrorCode::invalid_query, "invalid program cursor"});
         auto prepared = Matcher::prepare(to_match_input(input));
         if (!prepared) return std::unexpected(std::move(prepared.error()));
-        strip_root(input);
-        for (auto domain : {input.explicit_domain, input.fakeip_domain, input.reverse_domain, input.sniffed_domain})
-            if (domain && !valid_domain(*domain))
-                return std::unexpected(Error{ErrorCode::invalid_query, "invalid ASCII domain"});
+        NormalizedDomains norm;
+        if (!normalize_domains(input, norm))
+            return std::unexpected(Error{ErrorCode::invalid_query, "invalid ASCII domain"});
         prepared->match_mapped_ipv4 = true;
+        prepared->domain_normalized = true;
         prepared->candidates = input.candidates;
+        bool const has_ip_value = prepared->input.ip.has_value() ||
+            (prepared->candidates && !prepared->candidates->empty());
         for (auto i = start; i < instructions_.size(); ++i) {
             auto const& instruction = instructions_[i];
-            if (skip_action(input, instruction.action, instruction.first != instruction.last || instruction.mmap != nullptr)) continue;
-            switch (instruction.domain_source) {
-            case DomainSource::explicit_target: prepared->input.domain = input.explicit_domain; break;
-            case DomainSource::fakeip: prepared->input.domain = input.fakeip_domain; break;
-            case DomainSource::reverse_dns: prepared->input.domain = input.reverse_domain; break;
-            case DomainSource::sniffed: prepared->input.domain = input.sniffed_domain; break;
+            if (instruction.run_index != no_index) {
+                auto const& run = runs_[instruction.run_index];
+                auto src = static_cast<std::size_t>(run.domain_source);
+                prepared->input.domain = norm.views[src];
+                prepared->domain_absent = input.domain_absent[src];
+                std::uint8_t mask = static_cast<std::uint8_t>(run.flags & 0x0fu);
+                if (!prepared->input.domain) mask = static_cast<std::uint8_t>(mask & ~0x03u);
+                if (!has_ip_value) mask = static_cast<std::uint8_t>(mask & ~0x0cu);
+                if (mask) {
+                    auto hit = matcher_.first_indexed_match(*prepared, instruction.first, run.root_last, mask);
+                    if (hit < run.root_last) {
+                        auto win = static_cast<std::size_t>(root_to_instr_[hit]);
+                        return std::optional<ProgramStep>(ProgramStep{win, win + 1, instructions_[win].action});
+                    }
+                }
+                i = run.end_instr - 1;
+                continue;
             }
-            prepared->domain_absent = input.domain_absent[static_cast<std::size_t>(instruction.domain_source)];
+            if (skip_action(input, instruction.action, instruction.first != instruction.last || instruction.mmap != nullptr)) continue;
+            auto src = static_cast<std::size_t>(instruction.domain_source);
+            prepared->input.domain = norm.views[src];
+            prepared->domain_absent = input.domain_absent[src];
             bool matches = false;
             if (instruction.mmap) {
                 matches = Matcher::eval_mmap(*instruction.mmap, instruction.mmap_tail.get(), *prepared, instruction.mmap_match_source) == Matcher::Truth::yes;
+            } else if (instruction.first == instruction.last) {
+                matches = true;
+            } else if (instruction.local_any_index != no_index) {
+                matches = matcher_.eval_any_index(local_any_indexes_[instruction.local_any_index], *prepared) == Matcher::Truth::yes;
+            } else if (instruction.last - instruction.first <= 4) {
+                for (auto index = instruction.first; index < instruction.last && !matches; ++index)
+                    matches = matcher_.evaluate(matcher_.roots_[index], *prepared) == Matcher::Truth::yes;
             } else {
-                matches = instruction.first == instruction.last;
-                if (input.candidates) {
-                    for (auto index = instruction.first; index < instruction.last && !matches; ++index)
-                        matches = matcher_.evaluate(matcher_.roots_[index], *prepared) == Matcher::Truth::yes;
-                } else matches |= matcher_.first_match(*prepared, instruction.first, instruction.last).has_value();
+                std::uint8_t mask = static_cast<std::uint8_t>(instruction.flags & 0x0fu);
+                if (!prepared->input.domain) mask = static_cast<std::uint8_t>(mask & ~0x03u);
+                if (!has_ip_value) mask = static_cast<std::uint8_t>(mask & ~0x0cu);
+                auto best = mask ? matcher_.first_indexed_match(*prepared, instruction.first, instruction.last, mask) : instruction.last;
+                if (best < instruction.last) matches = true;
+                else if (instruction.flags & flag_unindexed) {
+                    for (auto u = instruction.unindexed_begin; u < instruction.unindexed_end; ++u) {
+                        if (matcher_.evaluate(matcher_.roots_[matcher_.unindexed_[u]], *prepared) == Matcher::Truth::yes) {
+                            matches = true;
+                            break;
+                        }
+                    }
+                }
             }
             if (matches)
                 return std::optional<ProgramStep>(ProgramStep{i, i + 1, instruction.action});
@@ -248,45 +361,88 @@ namespace rules {
             return std::unexpected(Error{ErrorCode::invalid_query, "invalid program cursor or candidates"});
         auto prepared = Matcher::prepare(to_match_input(input));
         if (!prepared) return std::unexpected(std::move(prepared.error()));
-        strip_root(input);
-        for (auto domain : {input.explicit_domain, input.fakeip_domain, input.reverse_domain, input.sniffed_domain})
-            if (domain && !valid_domain(*domain)) return std::unexpected(Error{ErrorCode::invalid_query, "invalid ASCII domain"});
+        NormalizedDomains norm;
+        if (!normalize_domains(input, norm))
+            return std::unexpected(Error{ErrorCode::invalid_query, "invalid ASCII domain"});
         prepared->match_mapped_ipv4 = true;
+        prepared->domain_normalized = true;
         prepared->candidates = input.candidates;
+        bool const has_ip_value = prepared->input.ip.has_value() ||
+            (prepared->candidates && !prepared->candidates->empty());
+        bool const ip_unknown = !prepared->input.ip && !prepared->candidates;
         for (auto i = start; i < instructions_.size(); ++i) {
             auto const& instruction = instructions_[i];
-            if (skip_action(input, instruction.action, instruction.first != instruction.last || instruction.mmap != nullptr)) continue;
-            switch (instruction.domain_source) {
-            case DomainSource::explicit_target: prepared->input.domain = input.explicit_domain; break;
-            case DomainSource::fakeip: prepared->input.domain = input.fakeip_domain; break;
-            case DomainSource::reverse_dns: prepared->input.domain = input.reverse_domain; break;
-            case DomainSource::sniffed: prepared->input.domain = input.sniffed_domain; break;
+            if (instruction.run_index != no_index) {
+                auto const& run = runs_[instruction.run_index];
+                auto src = static_cast<std::size_t>(run.domain_source);
+                prepared->input.domain = norm.views[src];
+                prepared->domain_absent = input.domain_absent[src];
+                std::size_t earliest_unk = run.end_instr;
+                if (ip_unknown && run.first_ip_instr < run.end_instr) {
+                    if (i <= run.first_ip_instr) earliest_unk = std::min(earliest_unk, run.first_ip_instr);
+                    else {
+                        auto it = std::lower_bound(matcher_.ip_roots_.begin(), matcher_.ip_roots_.end(), instruction.first);
+                        if (it != matcher_.ip_roots_.end() && *it < run.root_last)
+                            earliest_unk = std::min(earliest_unk, static_cast<std::size_t>(root_to_instr_[*it]));
+                    }
+                }
+                if (!prepared->input.domain && !prepared->domain_absent && run.first_domain_instr < run.end_instr) {
+                    if (i <= run.first_domain_instr) earliest_unk = std::min(earliest_unk, run.first_domain_instr);
+                    else {
+                        auto it = std::lower_bound(matcher_.domain_roots_.begin(), matcher_.domain_roots_.end(), instruction.first);
+                        if (it != matcher_.domain_roots_.end() && *it < run.root_last)
+                            earliest_unk = std::min(earliest_unk, static_cast<std::size_t>(root_to_instr_[*it]));
+                    }
+                }
+                std::uint8_t mask = static_cast<std::uint8_t>(run.flags & 0x0fu);
+                if (!prepared->input.domain) mask = static_cast<std::uint8_t>(mask & ~0x03u);
+                if (!has_ip_value) mask = static_cast<std::uint8_t>(mask & ~0x0cu);
+                auto search_last = earliest_unk < run.end_instr ? instructions_[earliest_unk].last : run.root_last;
+                if (mask) {
+                    auto hit = matcher_.first_indexed_match(*prepared, instruction.first, search_last, mask);
+                    if (hit < search_last) {
+                        auto win = static_cast<std::size_t>(root_to_instr_[hit]);
+                        return ProgramPreflight{ProgramPreflightKind::step, win, ProgramStep{win, win + 1, instructions_[win].action}};
+                    }
+                }
+                if (earliest_unk < run.end_instr)
+                    return ProgramPreflight{ProgramPreflightKind::uncertain, earliest_unk, {}};
+                i = run.end_instr - 1;
+                continue;
             }
-            prepared->domain_absent = input.domain_absent[static_cast<std::size_t>(instruction.domain_source)];
+            if (skip_action(input, instruction.action, instruction.first != instruction.last || instruction.mmap != nullptr)) continue;
+            auto src = static_cast<std::size_t>(instruction.domain_source);
+            prepared->input.domain = norm.views[src];
+            prepared->domain_absent = input.domain_absent[src];
             bool yes = false, unknown = false;
             if (instruction.mmap) {
                 auto value = Matcher::eval_mmap(*instruction.mmap, instruction.mmap_tail.get(), *prepared, instruction.mmap_match_source);
                 yes = value == Matcher::Truth::yes; unknown = value == Matcher::Truth::unknown;
             } else if (instruction.first == instruction.last) {
                 yes = true;
-            } else if (input.candidates || instruction.last - instruction.first <= 4) {
+            } else if (instruction.local_any_index != no_index) {
+                auto value = matcher_.eval_any_index(local_any_indexes_[instruction.local_any_index], *prepared);
+                yes = value == Matcher::Truth::yes; unknown = value == Matcher::Truth::unknown;
+            } else if (instruction.last - instruction.first <= 4) {
                 for (auto index = instruction.first; index < instruction.last && !yes; ++index) {
                     auto value = matcher_.evaluate(matcher_.roots_[index], *prepared);
                     yes = value == Matcher::Truth::yes; unknown |= value == Matcher::Truth::unknown;
                 }
             } else {
-                auto best_yes = matcher_.first_indexed_match(*prepared, instruction.first, instruction.last);
+                std::uint8_t mask = static_cast<std::uint8_t>(instruction.flags & 0x0fu);
+                if (!prepared->input.domain) mask = static_cast<std::uint8_t>(mask & ~0x03u);
+                if (!has_ip_value) mask = static_cast<std::uint8_t>(mask & ~0x0cu);
+                auto best_yes = mask ? matcher_.first_indexed_match(*prepared, instruction.first, instruction.last, mask) : instruction.last;
                 if (best_yes < instruction.last) yes = true;
                 else {
-                    for (auto it = std::lower_bound(matcher_.unindexed_.begin(), matcher_.unindexed_.end(), instruction.first);
-                         it != matcher_.unindexed_.end() && *it < instruction.last; ++it) {
-                        auto value = matcher_.evaluate(matcher_.roots_[*it], *prepared);
+                    for (auto u = instruction.unindexed_begin; u < instruction.unindexed_end; ++u) {
+                        auto value = matcher_.evaluate(matcher_.roots_[matcher_.unindexed_[u]], *prepared);
                         if (value == Matcher::Truth::yes) { yes = true; break; }
                         unknown |= value == Matcher::Truth::unknown;
                     }
                     if (!yes && !unknown) {
-                        unknown = (!prepared->input.ip && matcher_.has_ip_root(instruction.first, instruction.last)) ||
-                                  (!prepared->input.domain && !prepared->domain_absent && matcher_.has_domain_root(instruction.first, instruction.last));
+                        unknown = (ip_unknown && (instruction.flags & flag_ip_root)) ||
+                                  (!prepared->input.domain && !prepared->domain_absent && (instruction.flags & flag_domain_root));
                     }
                 }
             }

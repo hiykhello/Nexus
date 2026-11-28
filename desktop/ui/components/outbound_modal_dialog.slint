@@ -1,12 +1,15 @@
 import { ScrollView } from "std-widgets.slint";
-import { NexusVScrollBar } from "glass_primitives.slint";
-import { IconActionButton } from "icon_button.slint";
 import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { OutboundNodeDraft } from "../types.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { NexusVScrollBar } from "nexus_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+import { NexusChip } from "nexus_buttons.slint";
 import { OutboundEditorTab } from "outbound_editor_tab.slint";
+import { CustomKdlEditorTab, PolicyGroupEditorTab, ProxyChainEditorTab } from "profile_group_chain_editor.slint";
 
-// Centered modal dialog for creating a new Outbound node
 export component OutboundModalDialog inherits Rectangle {
     in property <string> editor-status: "";
     in property <bool> editor-ok: true;
@@ -14,108 +17,68 @@ export component OutboundModalDialog inherits Rectangle {
     callback close-requested();
     callback add-outbound-node(OutboundNodeDraft);
 
+    property <bool> is-editing:
+        (WorkspaceState.editor-kind == "node" && WorkspaceState.editor-node-draft.edit-id != "")
+        || (WorkspaceState.editor-kind == "policy_group" && WorkspaceState.editor-group-draft.edit-id != "")
+        || (WorkspaceState.editor-kind == "proxy_chain" && WorkspaceState.editor-chain-draft.edit-id != "")
+        || ((WorkspaceState.editor-kind == "custom_outbound" || WorkspaceState.editor-kind == "full_custom_kdl") && WorkspaceState.editor-kdl-draft.edit-id != "");
+
     background: Theme.modal-backdrop;
 
-    TouchArea {
-        clicked => { root.close-requested(); }
-    }
+    TouchArea { clicked => { root.close-requested(); } }
 
     Rectangle {
-        property <length> max-dialog-h: max(300px, min(parent.height - 64px, 600px));
-        width: max(340px, min(parent.width - 64px, 800px));
-        height: min(self.max-dialog-h, max(280px, 62px + modal-body.preferred-height));
+        property <length> max-dialog-h: max(320px, min(parent.height - 48px, 640px));
+        width: max(360px, min(parent.width - 56px, 840px));
+        height: min(self.max-dialog-h, max(320px, 108px + modal-body.preferred-height));
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
         border-radius: Theme.radius-card;
-        border-width: 1px;
+        border-width: 1.5px;
         border-color: Theme.modal-border;
         background: Theme.overlay-bg;
         clip: true;
 
-        // Absorb clicks inside modal sheet so backdrop does not dismiss
         TouchArea {}
 
         VerticalLayout {
-            // Modal header bar: icon badge + title + active protocol pill + close button
             HorizontalLayout {
                 vertical-stretch: 0;
                 padding-left: 20px;
                 padding-right: 16px;
                 padding-top: 14px;
-                padding-bottom: 12px;
+                padding-bottom: 10px;
                 spacing: Theme.space-md;
 
-                HorizontalLayout {
-                    horizontal-stretch: 0;
-                    spacing: Theme.space-sm;
-
-                    Rectangle {
-                        width: 28px;
-                        height: 28px;
-                        y: (parent.height - self.height) / 2;
-                        border-radius: Theme.radius-md;
-                        border-width: 1px;
-                        border-color: Theme.accent.with-alpha(Theme.dark ? 0.42 : 0.30);
-                        background: Theme.accent-soft;
-
-                        Image {
-                            x: 6px;
-                            y: 6px;
-                            width: 16px;
-                            height: 16px;
-                            source: @image-url("../icons/plus.svg");
-                            colorize: Theme.accent;
-                        }
-                    }
-
-                    Text {
-                        text: I18n.t("新增出站节点", "New Outbound");
-                        font-size: 15px;
-                        font-weight: 800;
-                        color: Theme.text-primary;
-                        vertical-alignment: center;
-                    }
-
-                    Rectangle {
-                        horizontal-stretch: 0;
-                        height: 22px;
-                        y: (parent.height - self.height) / 2;
-                        border-radius: Theme.radius-sm;
-                        border-width: 1px;
-                        border-color: Theme.selected-border;
-                        background: Theme.selected-bg;
-
-                        HorizontalLayout {
-                            padding-left: 8px;
-                            padding-right: 8px;
-                            Text {
-                                text: editor.proto;
-                                font-size: 11px;
-                                font-weight: 700;
-                                font-family: Theme.mono-font;
-                                color: Theme.nav-active-fg;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
+                Text {
+                    text: root.is-editing ? I18n.t("编辑配置项", "Edit Profile") : I18n.t("新建配置项", "New Profile");
+                    font-size: 16px;
+                    font-weight: 800;
+                    color: Theme.text-primary;
+                    vertical-alignment: center;
                 }
 
                 Rectangle { horizontal-stretch: 1; }
 
-                VerticalLayout {
-                    alignment: center;
-                    IconActionButton {
-                        size: 28px;
-                        icon: @image-url("../icons/x.svg");
-                        label: I18n.t("关闭 (Esc)", "Close (Esc)");
-                        clicked => { root.close-requested(); }
-                    }
+                if !root.is-editing : HorizontalLayout {
+                    spacing: 5px;
+                    NexusChip { chip-height: 26px; label: I18n.t("单节点服务器", "Server Node"); active: WorkspaceState.editor-kind == "node"; clicked => { WorkspaceState.request-new-profile("node"); } }
+                    NexusChip { chip-height: 26px; label: I18n.t("策略组", "Policy Group"); active: WorkspaceState.editor-kind == "policy_group"; clicked => { WorkspaceState.request-new-profile("policy_group"); } }
+                    NexusChip { chip-height: 26px; label: I18n.t("链式代理", "Proxy Chain"); active: WorkspaceState.editor-kind == "proxy_chain"; clicked => { WorkspaceState.request-new-profile("proxy_chain"); } }
+                    NexusChip { chip-height: 26px; label: I18n.t("自定义出站", "Custom Outbound"); active: WorkspaceState.editor-kind == "custom_outbound"; clicked => { WorkspaceState.request-new-profile("custom_outbound"); } }
+                    NexusChip { chip-height: 26px; label: I18n.t("完整配置", "Full Config"); active: WorkspaceState.editor-kind == "full_custom_kdl"; clicked => { WorkspaceState.request-new-profile("full_custom_kdl"); } }
+                }
+
+                IconActionButton {
+                    size: 28px;
+                    icon: @image-url("../icons/x.svg");
+                    label: I18n.t("关闭 (Esc)", "Close (Esc)");
+                    clicked => { root.close-requested(); }
                 }
             }
 
             Rectangle { height: 1px; background: Theme.hairline-subtle; }
 
-            // Scrollable modal body with clean NexusVScrollBar when overflowing
             Rectangle {
                 vertical-stretch: 1;
 
@@ -137,19 +100,35 @@ export component OutboundModalDialog inherits Rectangle {
                         padding-bottom: 18px;
                         alignment: start;
 
-                        editor := OutboundEditorTab {
+                        if WorkspaceState.editor-kind == "node" : OutboundEditorTab {
                             container-width: max(0px, modal-sv.visible-width - 40px);
                             status-text: root.editor-status;
                             status-ok: root.editor-ok;
                             add-outbound-node(draft) => { root.add-outbound-node(draft); }
+                        }
+
+                        if WorkspaceState.editor-kind == "policy_group" : PolicyGroupEditorTab {
+                            status-text: root.editor-status;
+                            status-ok: root.editor-ok;
+                        }
+
+                        if WorkspaceState.editor-kind == "proxy_chain" : ProxyChainEditorTab {
+                            status-text: root.editor-status;
+                            status-ok: root.editor-ok;
+                        }
+
+                        if WorkspaceState.editor-kind == "custom_outbound" || WorkspaceState.editor-kind == "full_custom_kdl" : CustomKdlEditorTab {
+                            kind: WorkspaceState.editor-kind;
+                            status-text: root.editor-status;
+                            status-ok: root.editor-ok;
                         }
                     }
                 }
 
                 NexusVScrollBar {
                     x: parent.width - self.width - 4px;
-                    y: 12px;
-                    height: max(0px, parent.height - 24px);
+                    y: 10px;
+                    height: max(0px, parent.height - 20px);
                     viewport-size: modal-sv.visible-height;
                     content-size: modal-sv.content-height;
                     scroll-pos <=> modal-sv.content-y;

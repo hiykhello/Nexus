@@ -30,6 +30,8 @@ export namespace tls {
         // Create an in-memory, self-signed Ed25519 template. It is
         // not a public PKI credential and the private key is never serialized.
         [[nodiscard]] static auto generate_ed25519() -> std::expected<ServerCredential,ServerCredentialError>;
+        // Create an in-memory, self-signed ML-DSA-44/65/87 (0x0904/0x0905/0x0906) template.
+        [[nodiscard]] static auto generate_mldsa(std::uint16_t scheme) -> std::expected<ServerCredential,ServerCredentialError>;
         // Replace the leaf while retaining the same key; validates key match.
         [[nodiscard]] auto with_certificate(std::span<std::uint8_t const> certificate) const
             -> std::expected<ServerCredential,ServerCredentialError>;

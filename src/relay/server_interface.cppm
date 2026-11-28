@@ -89,7 +89,7 @@ export namespace relay {
 #endif
 #endif
         // Session coroutines also borrow the policy and credentials.
-        rules::RouteMatcher policy;
+        rules::RouteProgram policy;
         std::shared_ptr<OrderedTcpPolicy const> ordered_tcp;
         std::shared_ptr<RouteSnapshots> route_snapshots;
         std::size_t route_snapshot_index = 0;
@@ -316,7 +316,7 @@ export namespace relay {
         [[nodiscard]] auto open_packet_tunnel(Session&, std::size_t outbound) -> std::unique_ptr<PacketTunnel>;
         [[nodiscard]] auto has_packet_outbound(std::size_t outbound) const noexcept -> bool;
         [[nodiscard]] auto ordered_routing_policy() const noexcept -> OrderedTcpPolicy const* { return ordered_tcp.get(); }
-        auto routing_policy() const noexcept -> rules::RouteMatcher const& { return policy; }
+        auto routing_policy() const noexcept -> rules::RouteProgram const& { return policy; }
         // Converts context initialization system failures into an error result.
         [[nodiscard]] static auto create() -> std::expected<std::unique_ptr<Server>, std::error_code>;
         [[nodiscard]] static auto create_shared(io::io_context& external_context) -> std::expected<std::unique_ptr<Server>, std::error_code>;
@@ -362,7 +362,7 @@ export namespace relay {
         auto set_runtime_mode(std::shared_ptr<rules::RuntimeRouteMode const>) noexcept -> void;
         [[nodiscard]] auto get_runtime_mode() const noexcept -> std::shared_ptr<rules::RuntimeRouteMode const> const& { return runtime_mode; }
 #ifdef NEXUS_TEST_SOURCE_ROUTE
-        [[nodiscard]] auto set_source_policy_for_test(rules::RouteMatcher policy) -> bool;
+        [[nodiscard]] auto set_source_policy_for_test(rules::RouteProgram policy) -> bool;
 #endif
         // Opt-in ordered TCP path, limited to SOCKS/Mixed CONNECT. Unknown
         // predicates may be skipped only when explicitly selected by caller.
@@ -373,11 +373,6 @@ export namespace relay {
         [[nodiscard]] auto set_socks5_credentials(std::string_view username, std::string_view password)
             -> std::expected<void, std::string>;
         [[nodiscard]] auto clear_socks5_credentials() -> std::expected<void, std::string>;
-        // Configure an explicit unscoped IP DNS server while stopped; absent by default.
-        [[nodiscard]] auto set_dns_upstream(std::array<std::uint8_t, 4> address, std::uint16_t port)
-            -> std::expected<void, std::error_code>;
-        [[nodiscard]] auto set_dns_upstream(std::array<std::uint8_t, 16> address, std::uint16_t port)
-            -> std::expected<void, std::error_code>;
         // A zero port selects the system resolver. Rules are ordered, first match wins.
         [[nodiscard]] auto set_dns_routing(DnsRouting routing) -> std::expected<void, std::error_code>;
 #ifdef NEXUS_ENABLE_FAKEIP

@@ -25,7 +25,7 @@ outbounds {
 routing {
     rulesets { "blocked" path="rules/blocked.kdl" format="kdl"; }
     rules {
-        - kind="rule-set" value="blocked" outbound="reject"
+        - rule-set="blocked" to="reject"
     }
     final "direct"
 }
@@ -199,9 +199,9 @@ routing { final "edge"; }
     vless_config = replace(vless_config, "final \"direct\"", "final \"edge\"");
     auto vless = config::parse_kdl(vless_config);
     auto combined = add_outbound(vless_config, "    outbound \"ss\" type=\"shadowsocks\" { server host=\"127.0.0.1\" port=8388; method \"2022-blake3-aes-256-gcm\"; key-file \"/secret\"; }\n");
-    combined = replace(combined, "outbound=\"reject\"", "outbound=\"ss\"");
+    combined = replace(combined, "to=\"reject\"", "to=\"ss\"");
     auto combined_config = config::parse_kdl(combined);
-    if (!combined_config || combined_config->default_outbound != 2 || combined_config->routes[0].outbound != 3) return 1;
+    if (!combined_config || combined_config->default_outbound != 2 || !combined_config->ordered_tcp || combined_config->ordered_tcp->rules[0].outbound != 3) return 1;
     if (!vless || !vless->vless || vless->vless->host != "127.0.0.1" || vless->vless->port != 443 ||
         vless->vless->uuid_file != "/tmp/edge.uuid" || vless->vless->server_name != "edge.example" ||
         vless->vless->ca_file != "/tmp/ca.pem" || vless->vless->key_exchange != config::TlsKeyExchange::x25519) {
@@ -275,32 +275,32 @@ routing { final "edge"; }
         config::parse_kdl(replace(bootstrap_config, "edge.example", "127.0.0.1")) ||
         config::parse_kdl(replace(bootstrap_config, "bootstrap-resolver \"boot\";", "bootstrap-resolver \"boot\"; bootstrap-resolver \"boot\";"))) return 1;
 
-    auto route_direct = config::parse_kdl(replace(vless_config, "outbound=\"reject\"", "outbound=\"direct\""));
-    if (!route_direct || route_direct->rule_action != config::RouteAction::direct ||
-        route_direct->default_action != config::RouteAction::vless) return 1;
-    auto route_vless = config::parse_kdl(replace(replace(vless_config, "outbound=\"reject\"", "outbound=\"edge\""),
+    auto route_direct = config::parse_kdl(replace(vless_config, "to=\"reject\"", "to=\"direct\""));
+    if (!route_direct || !route_direct->ordered_tcp || route_direct->ordered_tcp->rules.empty() ||
+        route_direct->ordered_tcp->rules[0].outbound != 0 || route_direct->default_outbound != 2) return 1;
+    auto route_vless = config::parse_kdl(replace(replace(vless_config, "to=\"reject\"", "to=\"edge\""),
         "final \"edge\"", "final \"direct\""));
-    if (!route_vless || route_vless->rule_action != config::RouteAction::vless ||
-        route_vless->default_action != config::RouteAction::direct) return 1;
+    if (!route_vless || !route_vless->ordered_tcp || route_vless->ordered_tcp->rules.empty() ||
+        route_vless->ordered_tcp->rules[0].outbound != 2 || route_vless->default_outbound != 0) return 1;
     auto second_vless = replace(vless_node, "\"edge\"", "\"edge2\"");
     auto multi_vless = add_outbound(vless_config, second_vless);
-    multi_vless = replace(multi_vless, "outbound=\"reject\"", "outbound=\"edge2\"");
+    multi_vless = replace(multi_vless, "to=\"reject\"", "to=\"edge2\"");
     auto multiple_vless = config::parse_kdl(multi_vless);
     if (!multiple_vless || multiple_vless->vless_outbounds.size() != 2 || multiple_vless->default_outbound != 2 ||
-        multiple_vless->routes.size() != 1 || multiple_vless->routes[0].outbound != 3) return 1;
+        !multiple_vless->ordered_tcp || multiple_vless->ordered_tcp->rules.size() != 1 || multiple_vless->ordered_tcp->rules[0].outbound != 3) return 1;
     if (config::parse_kdl(replace(multi_vless, "outbound \"edge2\"", "outbound \"edge\""))) return 1;
     auto many = vless_config;
     for (int i = 2; i <= 17; ++i) {
         auto name = "edge" + std::to_string(i);
         many = add_outbound(many, replace(vless_node, "\"edge\"", "\"" + name + "\""));
-        many = replace(many, "rules {", "rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\"" + name + "\"");
+        many = replace(many, "rules {", "rules {\n        - rule-set=\"blocked\" to=\"" + name + "\"");
     }
     if (auto parsed = config::parse_kdl(many); !parsed || parsed->vless_outbounds.size() != 17) return 1;
     auto scale_257 = vless_config;
     for (int i = 2; i <= 257; ++i) {
         auto name = "edge" + std::to_string(i);
         scale_257 = add_outbound(scale_257, replace(vless_node, "\"edge\"", "\"" + name + "\""));
-        scale_257 = replace(scale_257, "rules {", "rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\"" + name + "\"");
+        scale_257 = replace(scale_257, "rules {", "rules {\n        - rule-set=\"blocked\" to=\"" + name + "\"");
     }
     if (auto parsed = config::parse_kdl(scale_257); !parsed || parsed->vless_outbounds.size() != 257) return 1;
 

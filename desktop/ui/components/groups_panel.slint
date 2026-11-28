@@ -1,13 +1,11 @@
 import { ScrollView } from "std-widgets.slint";
-import { TelemetryWaveState } from "../command_palette_state.slint";
 import { ControlInspectState } from "../control_inspect_state.slint";
 import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
 import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { OutboundGroupItem, OutboundMemberItem } from "../types.slint";
-import { EmptyStateCard, NexusInput, NexusVScrollBar } from "glass_primitives.slint";
-import { GroupMemberCard } from "group_member_card.slint";
+import { EmptyStateCard, NexusInput, NexusVScrollBar } from "nexus_primitives.slint";
 import { GroupRail, GroupSummaryStrip } from "group_rail.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusButton } from "nexus_buttons.slint";
@@ -42,34 +40,37 @@ export component GroupsPanel inherits VerticalLayout {
     callback open-config-import();
 
     property <bool> is-wide: LayoutMetrics.is-wide-w(root.window-width);
+    private property <length> list-scroll-y: 0px;
     property <string> sort-label:
         root.member-sort == "latency" ? I18n.t("按延迟", "Latency")
         : root.member-sort == "name" ? I18n.t("按名称", "Name")
         : I18n.t("默认排序", "Default");
+    property <int> computed-p50-ms:
+        root.members.length > 0 ? root.members[Math.floor((root.members.length - 1) / 2)].latency-ms : -1;
 
     spacing: Theme.space-md;
 
-    // Non-wide group selector strip (unified 8px flat matte chips, 0ms instant switching)
+    // Non-wide Fluent 2 group chips
     if !root.is-wide && root.groups.length > 0 : FlexboxLayout {
         vertical-stretch: 0;
-        padding-right: 18px;
-        spacing: Theme.space-sm;
+        padding-right: 14px;
+        spacing: 6px;
         for g in root.groups : Rectangle {
             property <bool> is-current: g.tag == root.selected-group;
-            height: 32px;
-            border-radius: Theme.radius-md;
+            height: 28px;
+            border-radius: Theme.radius-sm;
             border-width: cg-fs.has-focus ? 2px : 1px;
-            border-color: cg-fs.has-focus ? Theme.accent : (is-current ? Theme.pill-active-top : Theme.card-border);
+            border-color: cg-fs.has-focus ? Theme.accent : (is-current ? Theme.pill-active-bot : Theme.card-border);
             background: is-current ? Theme.pill-active-bot : (group-ta.has-hover ? Theme.row-hover-bg : Theme.card-surface);
 
             accessible-role: button;
             accessible-label: g.tag;
-            accessible-action-default => { sv.content-y = 0px; root.choose-group(g.tag); }
+            accessible-action-default => { root.list-scroll-y = 0px; root.choose-group(g.tag); }
 
             cg-fs := FocusScope {
                 key-pressed(ev) => {
                     if (ev.text == Key.Return || ev.text == " ") {
-                        sv.content-y = 0px;
+                        root.list-scroll-y = 0px;
                         root.choose-group(g.tag);
                         return accept;
                     }
@@ -79,23 +80,22 @@ export component GroupsPanel inherits VerticalLayout {
 
             group-ta := TouchArea {
                 mouse-cursor: pointer;
-                clicked => { sv.content-y = 0px; root.choose-group(g.tag); }
+                clicked => { root.list-scroll-y = 0px; root.choose-group(g.tag); }
             }
 
             HorizontalLayout {
-                padding-left: 12px;
-                padding-right: 12px;
+                padding-left: 10px;
+                padding-right: 10px;
                 spacing: 6px;
                 Text { text: g.tag; font-size: 12px; font-weight: is-current ? 700 : 600; color: is-current ? Theme.pill-active-fg : Theme.text-primary; vertical-alignment: center; }
-                Text { text: "· \{g.active-member}"; font-size: 11px; color: is-current ? Theme.pill-active-fg.with-alpha(0.82) : Theme.text-secondary; vertical-alignment: center; }
+                Text { text: "· \{g.active-member}"; font-size: 11px; color: is-current ? Theme.pill-active-fg.with-alpha(0.84) : Theme.text-secondary; vertical-alignment: center; }
             }
         }
     }
 
-    // Main Proxies Workspace: Wide Studio 224px left GroupRail + right Concentric Node Grid
     HorizontalLayout {
         vertical-stretch: 1;
-        spacing: Theme.space-md;
+        spacing: 20px;
 
         if root.is-wide && root.groups.length > 0 : GroupRail {
             groups: root.groups;
@@ -103,19 +103,19 @@ export component GroupsPanel inherits VerticalLayout {
             healthy-count: root.active-group-healthy;
             total-count: root.active-group-total > 0 ? root.active-group-total : root.members.length;
             fastest-latency-ms: root.active-group-fastest-ms > 0 ? root.active-group-fastest-ms : root.active-group-latency-ms;
-            choose-group(tag) => { sv.content-y = 0px; root.choose-group(tag); }
+            p50-latency-ms: root.computed-p50-ms;
+            choose-group(tag) => { root.list-scroll-y = 0px; root.choose-group(tag); }
         }
 
         VerticalLayout {
             horizontal-stretch: 1;
             min-width: 0px;
-            spacing: Theme.space-sm;
+            spacing: 10px;
 
-            // Matte Toolbar (includes inline Probe action; no floating FAB!)
             HorizontalLayout {
                 vertical-stretch: 0;
-                padding-right: 18px;
-                spacing: Theme.space-sm;
+                padding-right: 14px;
+                spacing: 8px;
 
                 NexusInput {
                     horizontal-stretch: 1;
@@ -182,7 +182,7 @@ export component GroupsPanel inherits VerticalLayout {
 
             if root.is-wide && root.selected-group != "" : HorizontalLayout {
                 vertical-stretch: 0;
-                padding-right: 18px;
+                padding-right: 14px;
                 GroupSummaryStrip {
                     horizontal-stretch: 1;
                     min-width: 0px;
@@ -191,6 +191,7 @@ export component GroupsPanel inherits VerticalLayout {
                     auto-mode: root.active-group-auto;
                     active-node: root.active-group-node;
                     active-latency-ms: root.active-group-latency-ms;
+                    p50-latency-ms: root.computed-p50-ms;
                     healthy-count: root.active-group-healthy;
                     total-count: root.active-group-total > 0 ? root.active-group-total : root.members.length;
                     probing: root.probing;
@@ -199,11 +200,10 @@ export component GroupsPanel inherits VerticalLayout {
 
             if root.probing && (!root.is-wide || root.selected-group == "") : HorizontalLayout {
                 vertical-stretch: 0;
-                padding-right: 18px;
+                padding-right: 14px;
                 Rectangle {
                     horizontal-stretch: 1;
                     height: 2px;
-                    border-radius: 1px;
                     background: Theme.accent-soft;
                     clip: true;
                     Rectangle {
@@ -216,74 +216,202 @@ export component GroupsPanel inherits VerticalLayout {
                 }
             }
 
-            // Bento Node Grid directly on #101114 graphite canvas
-            Rectangle {
+            // Full-Width Fluent 2 Single-Level Node Table Card
+            if root.members.length == 0 : HorizontalLayout {
                 vertical-stretch: 1;
-                clip: true;
+                padding-right: 14px;
+                EmptyStateCard {
+                    horizontal-stretch: 1;
+                    icon: @image-url("../icons/groups.svg");
+                    title: I18n.t("暂无可用节点", "No nodes yet");
+                    subtitle: I18n.t("连接后自动同步策略组，或导入分享链接添加节点", "Connect to sync groups, or import a share link");
+                    action-label: I18n.t("导入链接", "Import URI");
+                    secondary-action-label: I18n.t("新增节点", "Add Node");
+                    action-clicked => { root.open-config-import(); }
+                    secondary-action-clicked => { root.open-add-outbound(); }
+                }
+            }
 
-                sv := ScrollView {
-                    width: 100%;
-                    height: 100%;
-                    vertical-scrollbar-policy: ScrollBarPolicy.always-off;
-                    horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
-                    content-width: self.visible-width;
-                    content-height: max(self.visible-height, grid-col.preferred-height);
+            if root.members.length > 0 : HorizontalLayout {
+                vertical-stretch: 1;
+                padding-right: 14px;
 
-                    grid-col := VerticalLayout {
-                        x: 0px;
-                        y: 0px;
-                        width: sv.visible-width;
-                        padding-bottom: 12px;
-                        alignment: start;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: Theme.radius-card;
+                    border-width: 1px;
+                    border-color: Theme.card-border;
+                    background: Theme.card-surface;
+                    clip: true;
 
-                        property <length> grid-w: max(0px, sv.visible-width - 18px);
-                        property <int> grid-cols: grid-w >= 760px ? 3 : grid-w >= 440px ? 2 : 1;
-                        property <length> card-w: max(0px, Math.floor((grid-w - 10px * (grid-cols - 1)) / grid-cols / 1px) * 1px);
-                        property <length> cell-w: card-w + 10px;
-
-                        if root.members.length == 0 : EmptyStateCard {
-                            width: grid-w;
-                            height: max(self.preferred-height, sv.visible-height - 16px);
-                            icon: @image-url("../icons/groups.svg");
-                            title: I18n.t("暂无可用节点", "No nodes yet");
-                            subtitle: I18n.t("连接后自动同步策略组，或导入分享链接添加节点", "Connect to sync groups, or import a share link");
-                            action-label: I18n.t("导入链接", "Import URI");
-                            primary-cta: false;
-                            secondary-action-label: I18n.t("新增节点", "Add Node");
-                            action-clicked => { root.open-config-import(); }
-                            secondary-action-clicked => { root.open-add-outbound(); }
+                    VerticalLayout {
+                        Rectangle {
+                            vertical-stretch: 0;
+                            height: 36px;
+                            background: Theme.well-bg;
+                            HorizontalLayout {
+                                padding-left: 14px;
+                                padding-right: 14px;
+                                spacing: 12px;
+                                Text { horizontal-stretch: 2; min-width: 0px; text: I18n.t("出口节点与传输协议", "EXIT NODE & TRANSPORT"); font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                                Text { width: 96px; text: I18n.t("状态", "STATE"); font-size: 11px; font-weight: 700; color: Theme.text-muted; vertical-alignment: center; }
+                                Text { width: 88px; text: I18n.t("延迟", "RTT"); font-size: 11px; font-weight: 700; color: Theme.text-muted; horizontal-alignment: right; vertical-alignment: center; }
+                                Text { width: 62px; text: I18n.t("操作", "ACTIONS"); font-size: 11px; font-weight: 700; color: Theme.text-muted; horizontal-alignment: right; vertical-alignment: center; }
+                            }
+                            Rectangle { x: 0px; y: parent.height - 1px; width: 100%; height: 1px; background: Theme.card-border; }
                         }
 
-                        if root.members.length > 0 : FlexboxLayout {
-                            width: max(0px, grid-w + 10px);
-                            height: Math.ceil(root.members.length / grid-cols) * 102px;
-                            for m in root.members : Rectangle {
-                                width: cell-w;
-                                height: 102px;
+                        Rectangle {
+                            vertical-stretch: 1;
+                            clip: true;
 
-                                GroupMemberCard {
+                            sv := ScrollView {
+                                vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+                                horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+                                content-y <=> root.list-scroll-y;
+                                content-width: self.visible-width;
+                                content-height: max(self.visible-height, ledger-col.preferred-height);
+
+                                ledger-col := VerticalLayout {
                                     x: 0px;
                                     y: 0px;
-                                    width: card-w;
-                                    group-name: root.selected-group;
-                                    group-max-latency-ms: TelemetryWaveState.spectrum.max-ms;
-                                    member: m;
-                                    select-clicked => { root.select-member(root.selected-group, m.name); }
-                                    toggle-pin-clicked => { root.toggle-pin-member(root.selected-group, m.name); }
-                                    probe-clicked => { ControlInspectState.probe-member(root.selected-group, m.name); }
+                                    width: sv.visible-width;
+                                    padding-right: root.members.length * 48px > sv.visible-height ? 12px : 0px;
+                                    alignment: start;
+
+                                    for m[idx] in root.members : Rectangle {
+                                        property <bool> is-timeout: m.latency-ms <= 0 && (m.state == "timeout" || m.state == "unreachable" || m.state == "error" || m.state == "failed");
+                                        property <color> lat-col: Theme.latency-fg(m.latency-ms, m.state);
+                                        height: 48px;
+                                        background: m.selected ? Theme.selected-bg : row-ta.has-hover ? Theme.row-hover-bg : Math.mod(idx, 2) == 0 ? transparent : Theme.row-alt-bg;
+
+                                        row-ta := TouchArea {
+                                            mouse-cursor: m.selected ? default : pointer;
+                                            clicked => { root.select-member(root.selected-group, m.name); }
+                                        }
+
+                                        HorizontalLayout {
+                                            padding-left: 14px;
+                                            padding-right: 14px;
+                                            spacing: 12px;
+
+                                            HorizontalLayout {
+                                                horizontal-stretch: 2;
+                                                min-width: 0px;
+                                                spacing: 10px;
+                                                if m.selected : Image {
+                                                    width: 14px; height: 14px; y: (parent.height - self.height) / 2;
+                                                    source: @image-url("../icons/check.svg"); colorize: Theme.live-emerald;
+                                                }
+                                                if !m.selected : Rectangle {
+                                                    width: 7px; height: 7px; y: (parent.height - self.height) / 2;
+                                                    border-radius: 3.5px; background: m.latency-ms > 0 ? lat-col : Theme.offline-fg;
+                                                }
+                                                Text {
+                                                    horizontal-stretch: 1;
+                                                    min-width: 0px;
+                                                    text: m.name;
+                                                    font-size: 13.5px;
+                                                    font-weight: m.selected ? 800 : 600;
+                                                    color: Theme.text-primary;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
+                                            }
+
+                                            HorizontalLayout {
+                                                width: 96px;
+                                                spacing: 6px;
+                                                if m.overridden : Rectangle {
+                                                    height: 20px;
+                                                    y: (parent.height - self.height) / 2;
+                                                    border-radius: Theme.radius-sm;
+                                                    border-width: 1px;
+                                                    border-color: Theme.warn-border;
+                                                    background: Theme.warn-bg;
+                                                    HorizontalLayout {
+                                                        padding-left: 6px;
+                                                        padding-right: 6px;
+                                                        Text {
+                                                            text: I18n.t("手动锁定", "Pinned");
+                                                            font-size: 10px;
+                                                            font-weight: 700;
+                                                            color: Theme.warn-fg;
+                                                            vertical-alignment: center;
+                                                        }
+                                                    }
+                                                }
+                                                if !m.overridden : Text {
+                                                    text: m.selected ? I18n.t("当前活动", "Active")
+                                                        : m.breaker-open ? I18n.t("熔断保护", "Tripped")
+                                                        : is-timeout ? I18n.t("不可达", "Timeout")
+                                                        : I18n.t("就绪", "Ready");
+                                                    font-size: 12px;
+                                                    font-weight: m.selected ? 700 : 500;
+                                                    color: m.selected ? Theme.live-emerald : (is-timeout || m.breaker-open) ? Theme.error-fg : Theme.text-secondary;
+                                                    vertical-alignment: center;
+                                                    overflow: elide;
+                                                }
+                                            }
+
+                                            Text {
+                                                width: 88px;
+                                                text: m.latency-ms > 0 ? "\{m.latency-ms} ms" : is-timeout ? I18n.t("超时", "Timeout") : "--";
+                                                font-size: 14px;
+                                                font-weight: 800;
+                                                font-family: Theme.mono-font;
+                                                color: lat-col;
+                                                horizontal-alignment: right;
+                                                vertical-alignment: center;
+                                            }
+
+                                            HorizontalLayout {
+                                                width: 62px;
+                                                spacing: 4px;
+                                                alignment: end;
+                                                VerticalLayout {
+                                                    alignment: center;
+                                                    IconActionButton {
+                                                        size: 26px;
+                                                        icon: @image-url("../icons/bolt.svg");
+                                                        label: I18n.t("单节点测速", "Probe Node");
+                                                        clicked => { ControlInspectState.probe-member(root.selected-group, m.name); }
+                                                    }
+                                                }
+                                                VerticalLayout {
+                                                    alignment: center;
+                                                    IconActionButton {
+                                                        size: 26px;
+                                                        icon: m.pinned ? @image-url("../icons/star-filled.svg") : @image-url("../icons/star.svg");
+                                                        label: m.pinned ? I18n.t("取消收藏", "Unpin") : I18n.t("收藏置顶", "Pin");
+                                                        active: m.pinned;
+                                                        clicked => { root.toggle-pin-member(root.selected-group, m.name); }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            x: 0px;
+                                            y: parent.height - 1px;
+                                            width: 100%;
+                                            height: 1px;
+                                            background: Theme.hairline-subtle;
+                                        }
+                                    }
                                 }
+                            }
+
+                            NexusVScrollBar {
+                                x: parent.width - self.width - 1px;
+                                y: 2px;
+                                height: max(0px, parent.height - 4px);
+                                viewport-size: sv.visible-height;
+                                content-size: sv.content-height;
+                                scroll-pos <=> sv.content-y;
                             }
                         }
                     }
-                }
-
-                NexusVScrollBar {
-                    x: parent.width - self.width - 3px;
-                    y: 2px;
-                    height: max(0px, parent.height - 4px);
-                    viewport-size: sv.visible-height;
-                    content-size: sv.content-height;
-                    scroll-pos <=> sv.content-y;
                 }
             }
         }

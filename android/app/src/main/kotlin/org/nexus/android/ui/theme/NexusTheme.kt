@@ -14,16 +14,16 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import org.nexus.android.bridge.workspace.AndroidThemePreset
 
 /**
- * Calibrated Material 3 Adaptive instrument semantic tokens:
- * - Decoupled telemetry channels: Download Sky Cyan (`telemetryDownload`) & Upload Prism Violet (`telemetryUpload`)
- * - Dedicated Signal Emerald (`success`) reserved strictly for live connected/healthy link state
- * - 5-tier latency scale: <80ms Emerald, 80..179ms Amber, 180..349ms Orange, >=350ms/Timeout Rose, Unprobed Neutral
- * - Flat matte surfaces (`cardSurface`, `wellSurface`, `insetSurface`) & hairlines derived from `ColorScheme`
- *   so all 3 static instrument themes AND API 31+ Material You dynamic color harmonize cleanly.
+ * Modern Flagship Card Console Material 3 Adaptive tokens (aligned with Clash Verge Rev & FlClash):
+ * - Cool Mist-Slate Light ground (`#F4F6F9`) with crisp `#FFFFFF` `12dp` single-level cards (`#E2E8F0` hairline)
+ * - Deep Slate-Obsidian Dark ground (`#0F141C`) with elevated `#171E29` cards (`#263142` hairline)
+ * - Electric Cobalt primary (`#2563EB` / `#60A5FA`), Signal Emerald live/TX (`#059669` / `#10B981`), Warm Amber (`#D97706` / `#F59E0B`)
+ * - Continuous `surfaceAlpha` (`0.50f..1.0f`) translucency support
  */
 @Immutable
 data class NexusExtendedColors(
@@ -48,190 +48,234 @@ data class NexusExtendedColors(
     val protocolTlsContainer: Color,
     val protocolDirect: Color,
     val protocolDirectContainer: Color,
+    val ruleVermilion: Color,
+    val ruleVermilionContainer: Color,
+    val commandSurface: Color,
+    val commandWell: Color,
+    val commandBorder: Color,
+    val onCommandSurface: Color,
+    val onCommandSurfaceVariant: Color,
     val hairline: Color,
     val hairlineStrong: Color,
     val cardSurface: Color,
     val wellSurface: Color,
     val insetSurface: Color,
+    val surfaceAlpha: Float = 1.0f,
 )
 
 private val ObsidianExtendedBase = NexusExtendedColors(
     isDark = true,
-    success = Color(0xFF34D399),
-    successContainer = Color(0xFF0E2D24),
-    warning = Color(0xFFFBBF24),
-    warningContainer = Color(0xFF312716),
+    success = Color(0xFF10B981),
+    successContainer = Color(0xFF0E2E24),
+    warning = Color(0xFFF59E0B),
+    warningContainer = Color(0xFF332512),
     slow = Color(0xFFFB923C),
-    slowContainer = Color(0xFF352316),
-    danger = Color(0xFFFB7185),
-    dangerContainer = Color(0xFF361C24),
-    muted = Color(0xFF939DAF),
-    mutedContainer = Color(0xFF202530),
-    telemetryDownload = Color(0xFF38BDF8),
-    telemetryDownloadContainer = Color(0xFF142A3A),
-    telemetryUpload = Color(0xFFC084FC),
-    telemetryUploadContainer = Color(0xFF2A1E3A),
+    slowContainer = Color(0xFF362115),
+    danger = Color(0xFFF87171),
+    dangerContainer = Color(0xFF381A1F),
+    muted = Color(0xFF7E8FA6),
+    mutedContainer = Color(0xFF1E2736),
+    telemetryDownload = Color(0xFF60A5FA),
+    telemetryDownloadContainer = Color(0xFF172B4D),
+    telemetryUpload = Color(0xFF10B981),
+    telemetryUploadContainer = Color(0xFF0E2E24),
     protocolQuic = Color(0xFFF59E0B),
-    protocolQuicContainer = Color(0xFF312615),
-    protocolTls = Color(0xFF38BDF8),
-    protocolTlsContainer = Color(0xFF142A3A),
-    protocolDirect = Color(0xFF34D399),
-    protocolDirectContainer = Color(0xFF0E2D24),
-    hairline = Color(0xFF2A303E),
-    hairlineStrong = Color(0xFF384152),
-    cardSurface = Color(0xFF191D25),
-    wellSurface = Color(0xFF202530),
-    insetSurface = Color(0xFF282E3B),
+    protocolQuicContainer = Color(0xFF332512),
+    protocolTls = Color(0xFF60A5FA),
+    protocolTlsContainer = Color(0xFF172B4D),
+    protocolDirect = Color(0xFF10B981),
+    protocolDirectContainer = Color(0xFF0E2E24),
+    ruleVermilion = Color(0xFFF59E0B),
+    ruleVermilionContainer = Color(0xFF332512),
+    commandSurface = Color(0xFF171E29),
+    commandWell = Color(0xFF1E2736),
+    commandBorder = Color(0xFF263142),
+    onCommandSurface = Color(0xFFF1F5F9),
+    onCommandSurfaceVariant = Color(0xFF94A3B8),
+    hairline = Color(0xFF263142),
+    hairlineStrong = Color(0xFF37465E),
+    cardSurface = Color(0xFF171E29),
+    wellSurface = Color(0xFF1E2736),
+    insetSurface = Color(0xFF283447),
 )
 
 private val StudioAmberExtendedBase = ObsidianExtendedBase.copy(
-    muted = Color(0xFFA69D8E),
-    mutedContainer = Color(0xFF25221E),
-    hairline = Color(0xFF302C26),
-    hairlineStrong = Color(0xFF423C33),
-    cardSurface = Color(0xFF1C1A17),
-    wellSurface = Color(0xFF25221E),
-    insetSurface = Color(0xFF2F2B25),
+    muted = Color(0xFFA89F91),
+    mutedContainer = Color(0xFF24201B),
+    telemetryDownload = Color(0xFFF59E0B),
+    telemetryDownloadContainer = Color(0xFF362813),
+    commandSurface = Color(0xFF1B1815),
+    commandWell = Color(0xFF24201B),
+    commandBorder = Color(0xFF2E2923),
+    onCommandSurface = Color(0xFFF5F1E8),
+    onCommandSurfaceVariant = Color(0xFFB8AEA0),
+    hairline = Color(0xFF2E2923),
+    hairlineStrong = Color(0xFF453D34),
+    cardSurface = Color(0xFF1B1815),
+    wellSurface = Color(0xFF24201B),
+    insetSurface = Color(0xFF302B24),
 )
 
 private val PaperExtendedBase = NexusExtendedColors(
     isDark = false,
-    success = Color(0xFF047857),
+    success = Color(0xFF059669),
     successContainer = Color(0xFFD1FAE5),
-    warning = Color(0xFF9A5B00),
+    warning = Color(0xFFD97706),
     warningContainer = Color(0xFFFEF3C7),
-    slow = Color(0xFFC2410C),
+    slow = Color(0xFFEA580C),
     slowContainer = Color(0xFFFFEDD5),
-    danger = Color(0xFFBE123C),
-    dangerContainer = Color(0xFFFFE4E6),
-    muted = Color(0xFF545B69),
-    mutedContainer = Color(0xFFE5E2D9),
-    telemetryDownload = Color(0xFF0369A1),
-    telemetryDownloadContainer = Color(0xFFE0F2FE),
-    telemetryUpload = Color(0xFF7C3AED),
-    telemetryUploadContainer = Color(0xFFF3E8FF),
-    protocolQuic = Color(0xFF9A5B00),
+    danger = Color(0xFFDC2626),
+    dangerContainer = Color(0xFFFEE2E2),
+    muted = Color(0xFF64748B),
+    mutedContainer = Color(0xFFF1F5F9),
+    telemetryDownload = Color(0xFF2563EB),
+    telemetryDownloadContainer = Color(0xFFDBEAFE),
+    telemetryUpload = Color(0xFF059669),
+    telemetryUploadContainer = Color(0xFFD1FAE5),
+    protocolQuic = Color(0xFFD97706),
     protocolQuicContainer = Color(0xFFFEF3C7),
-    protocolTls = Color(0xFF0369A1),
-    protocolTlsContainer = Color(0xFFE0F2FE),
-    protocolDirect = Color(0xFF047857),
+    protocolTls = Color(0xFF2563EB),
+    protocolTlsContainer = Color(0xFFDBEAFE),
+    protocolDirect = Color(0xFF059669),
     protocolDirectContainer = Color(0xFFD1FAE5),
-    hairline = Color(0xFFDDD9D0),
-    hairlineStrong = Color(0xFFC9C5BB),
+    ruleVermilion = Color(0xFFD97706),
+    ruleVermilionContainer = Color(0xFFFEF3C7),
+    commandSurface = Color(0xFFFFFFFF),
+    commandWell = Color(0xFFF1F5F9),
+    commandBorder = Color(0xFFE2E8F0),
+    onCommandSurface = Color(0xFF0F172A),
+    onCommandSurfaceVariant = Color(0xFF475569),
+    hairline = Color(0xFFE2E8F0),
+    hairlineStrong = Color(0xFFCBD5E1),
     cardSurface = Color(0xFFFFFFFF),
-    wellSurface = Color(0xFFEFEDE7),
-    insetSurface = Color(0xFFE5E2D9),
+    wellSurface = Color(0xFFF1F5F9),
+    insetSurface = Color(0xFFE2E8F0),
 )
 
 private fun deriveExtendedColors(
     colorScheme: ColorScheme,
     darkTheme: Boolean,
     amberBase: Boolean = false,
+    dynamicActive: Boolean = false,
+    surfaceAlpha: Float = 1.0f,
 ): NexusExtendedColors {
+    val alpha = surfaceAlpha.coerceIn(0.50f, 1.0f)
     val base = when {
         !darkTheme -> PaperExtendedBase
         amberBase -> StudioAmberExtendedBase
         else -> ObsidianExtendedBase
     }
+    val rawCard = colorScheme.surfaceContainerLow
+    val cardWithAlpha = if (alpha < 0.995f) rawCard.copy(alpha = alpha) else rawCard
+    val wellWithAlpha = if (alpha < 0.995f) colorScheme.surfaceContainerHigh.copy(alpha = alpha) else colorScheme.surfaceContainerHigh
+    val insetWithAlpha = if (alpha < 0.995f) colorScheme.surfaceContainerHighest.copy(alpha = alpha) else colorScheme.surfaceContainerHighest
+    val cmdLight = rawCard.luminance() > 0.45f
+
     return base.copy(
-        cardSurface = colorScheme.surfaceContainerLow,
-        wellSurface = colorScheme.surfaceContainerHigh,
-        insetSurface = colorScheme.surfaceContainerHighest,
+        commandSurface = cardWithAlpha,
+        commandWell = wellWithAlpha,
+        commandBorder = colorScheme.outlineVariant,
+        onCommandSurface = if (dynamicActive) (if (cmdLight) Color(0xFF0F172A) else Color(0xFFF1F5F9)) else colorScheme.onSurface,
+        onCommandSurfaceVariant = colorScheme.onSurfaceVariant,
+        cardSurface = cardWithAlpha,
+        wellSurface = wellWithAlpha,
+        insetSurface = insetWithAlpha,
         hairline = colorScheme.outlineVariant,
         hairlineStrong = colorScheme.outline,
+        surfaceAlpha = alpha,
     )
 }
 
 val LocalNexusExtendedColors = staticCompositionLocalOf { PaperExtendedBase }
 
 private val ObsidianDarkColorScheme = darkColorScheme(
-    primary = Color(0xFF6F8BFF),
-    onPrimary = Color(0xFF091026),
-    primaryContainer = Color(0xFF1E2B57),
-    onPrimaryContainer = Color(0xFFDDE5FF),
-    secondary = Color(0xFF93B0FF),
-    onSecondary = Color(0xFF0B193D),
-    secondaryContainer = Color(0xFF202530),
-    onSecondaryContainer = Color(0xFFE5E9F2),
-    tertiary = Color(0xFF34D399),
-    onTertiary = Color(0xFF052218),
-    background = Color(0xFF12151B),
-    onBackground = Color(0xFFF2F4F8),
-    surface = Color(0xFF12151B),
-    onSurface = Color(0xFFF2F4F8),
-    surfaceVariant = Color(0xFF202530),
-    onSurfaceVariant = Color(0xFFA7B0C0),
-    surfaceContainerLowest = Color(0xFF0D0F13),
-    surfaceContainerLow = Color(0xFF191D25),
-    surfaceContainer = Color(0xFF151820),
-    surfaceContainerHigh = Color(0xFF202530),
-    surfaceContainerHighest = Color(0xFF282E3B),
-    outline = Color(0xFF384152),
-    outlineVariant = Color(0xFF2A303E),
-    error = Color(0xFFFB7185),
+    primary = Color(0xFF60A5FA),
+    onPrimary = Color(0xFF081A38),
+    primaryContainer = Color(0xFF1E3A6E),
+    onPrimaryContainer = Color(0xFFDBEAFE),
+    secondary = Color(0xFF93C5FD),
+    onSecondary = Color(0xFF0B2149),
+    secondaryContainer = Color(0xFF1E2736),
+    onSecondaryContainer = Color(0xFFE2E8F0),
+    tertiary = Color(0xFF10B981),
+    onTertiary = Color(0xFF042217),
+    background = Color(0xFF0F141C),
+    onBackground = Color(0xFFF1F5F9),
+    surface = Color(0xFF0F141C),
+    onSurface = Color(0xFFF1F5F9),
+    surfaceVariant = Color(0xFF1E2736),
+    onSurfaceVariant = Color(0xFF94A3B8),
+    surfaceContainerLowest = Color(0xFF0A0E14),
+    surfaceContainerLow = Color(0xFF171E29),
+    surfaceContainer = Color(0xFF131923),
+    surfaceContainerHigh = Color(0xFF1E2736),
+    surfaceContainerHighest = Color(0xFF283447),
+    outline = Color(0xFF37465E),
+    outlineVariant = Color(0xFF263142),
+    error = Color(0xFFF87171),
     onError = Color(0xFF3B0813),
-    errorContainer = Color(0xFF361C24),
-    onErrorContainer = Color(0xFFFFD6DD),
+    errorContainer = Color(0xFF381A1F),
+    onErrorContainer = Color(0xFFFECACA),
 )
 
 private val PaperLightColorScheme = lightColorScheme(
-    primary = Color(0xFF3452D6),
+    primary = Color(0xFF2563EB),
     onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFE1E7FF),
-    onPrimaryContainer = Color(0xFF142670),
-    secondary = Color(0xFF4763DB),
+    primaryContainer = Color(0xFFDBEAFE),
+    onPrimaryContainer = Color(0xFF1E3A8A),
+    secondary = Color(0xFF3B82F6),
     onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFEFEDE7),
-    onSecondaryContainer = Color(0xFF181C24),
-    tertiary = Color(0xFF047857),
+    secondaryContainer = Color(0xFFF1F5F9),
+    onSecondaryContainer = Color(0xFF0F172A),
+    tertiary = Color(0xFF059669),
     onTertiary = Color(0xFFFFFFFF),
-    background = Color(0xFFF6F5F2),
-    onBackground = Color(0xFF181C24),
-    surface = Color(0xFFF6F5F2),
-    onSurface = Color(0xFF181C24),
-    surfaceVariant = Color(0xFFEFEDE7),
-    onSurfaceVariant = Color(0xFF545B69),
-    surfaceContainerLowest = Color(0xFFECEAE4),
+    background = Color(0xFFF4F6F9),
+    onBackground = Color(0xFF0F172A),
+    surface = Color(0xFFF4F6F9),
+    onSurface = Color(0xFF0F172A),
+    surfaceVariant = Color(0xFFF1F5F9),
+    onSurfaceVariant = Color(0xFF475569),
+    surfaceContainerLowest = Color(0xFFE9EEF5),
     surfaceContainerLow = Color(0xFFFFFFFF),
-    surfaceContainer = Color(0xFFECEAE4),
-    surfaceContainerHigh = Color(0xFFEFEDE7),
-    surfaceContainerHighest = Color(0xFFE5E2D9),
-    outline = Color(0xFFC9C5BB),
-    outlineVariant = Color(0xFFDDD9D0),
-    error = Color(0xFFBE123C),
+    surfaceContainer = Color(0xFFEEF2F7),
+    surfaceContainerHigh = Color(0xFFF1F5F9),
+    surfaceContainerHighest = Color(0xFFE2E8F0),
+    outline = Color(0xFFCBD5E1),
+    outlineVariant = Color(0xFFE2E8F0),
+    error = Color(0xFFDC2626),
     onError = Color(0xFFFFFFFF),
-    errorContainer = Color(0xFFFFE4E6),
+    errorContainer = Color(0xFFFEE2E2),
     onErrorContainer = Color(0xFF7F1D1D),
 )
 
 private val StudioAmberDarkColorScheme = darkColorScheme(
-    primary = Color(0xFFE59A2E),
-    onPrimary = Color(0xFF14120F),
-    primaryContainer = Color(0xFF3B2910),
-    onPrimaryContainer = Color(0xFFFCE3B8),
-    secondary = Color(0xFFF0B45B),
+    primary = Color(0xFFF59E0B),
+    onPrimary = Color(0xFF17120A),
+    primaryContainer = Color(0xFF3D2A0F),
+    onPrimaryContainer = Color(0xFFFDE68A),
+    secondary = Color(0xFFFBBF24),
     onSecondary = Color(0xFF1A140B),
-    secondaryContainer = Color(0xFF25221E),
+    secondaryContainer = Color(0xFF24201B),
     onSecondaryContainer = Color(0xFFF0EAE0),
-    tertiary = Color(0xFF34D399),
+    tertiary = Color(0xFF10B981),
     onTertiary = Color(0xFF052218),
-    background = Color(0xFF141311),
+    background = Color(0xFF12100E),
     onBackground = Color(0xFFF5F1E8),
-    surface = Color(0xFF141311),
+    surface = Color(0xFF12100E),
     onSurface = Color(0xFFF5F1E8),
-    surfaceVariant = Color(0xFF25221E),
-    onSurfaceVariant = Color(0xFFB3AA9B),
-    surfaceContainerLowest = Color(0xFF0E0D0C),
-    surfaceContainerLow = Color(0xFF1C1A17),
-    surfaceContainer = Color(0xFF171512),
-    surfaceContainerHigh = Color(0xFF25221E),
-    surfaceContainerHighest = Color(0xFF2F2B25),
-    outline = Color(0xFF423C33),
-    outlineVariant = Color(0xFF302C26),
-    error = Color(0xFFFB7185),
+    surfaceVariant = Color(0xFF24201B),
+    onSurfaceVariant = Color(0xFFB8AEA0),
+    surfaceContainerLowest = Color(0xFF0D0B0A),
+    surfaceContainerLow = Color(0xFF1B1815),
+    surfaceContainer = Color(0xFF161411),
+    surfaceContainerHigh = Color(0xFF24201B),
+    surfaceContainerHighest = Color(0xFF302B24),
+    outline = Color(0xFF453D34),
+    outlineVariant = Color(0xFF2E2923),
+    error = Color(0xFFF87171),
     onError = Color(0xFF3B0813),
-    errorContainer = Color(0xFF361C24),
-    onErrorContainer = Color(0xFFFFD6DD),
+    errorContainer = Color(0xFF381A1F),
+    onErrorContainer = Color(0xFFFECACA),
 )
 
 fun resolveEffectiveDarkTheme(
@@ -254,21 +298,39 @@ fun NexusTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     themePreset: AndroidThemePreset = AndroidThemePreset.SYSTEM,
     dynamicColor: Boolean = false,
+    surfaceAlpha: Float = 1.0f,
     content: @Composable () -> Unit,
 ) {
     val context = LocalContext.current
     val effectiveDark = resolveEffectiveDarkTheme(themePreset, darkTheme)
-    val useAmberBase = !dynamicColor && themePreset == AndroidThemePreset.STUDIO_AMBER
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+    val dynamicActive = dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+    val useAmberBase = !dynamicActive && themePreset == AndroidThemePreset.STUDIO_AMBER
+    val clampedAlpha = surfaceAlpha.coerceIn(0.50f, 1.0f)
+    val rawScheme = when {
+        dynamicActive -> {
             if (effectiveDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
         }
         themePreset == AndroidThemePreset.STUDIO_AMBER -> StudioAmberDarkColorScheme
         effectiveDark -> ObsidianDarkColorScheme
         else -> PaperLightColorScheme
     }
-    val extendedColors = remember(colorScheme, effectiveDark, useAmberBase) {
-        deriveExtendedColors(colorScheme, effectiveDark, amberBase = useAmberBase)
+    val colorScheme = remember(rawScheme, clampedAlpha) {
+        if (clampedAlpha < 0.995f) {
+            rawScheme.copy(
+                surfaceContainer = rawScheme.surfaceContainer.copy(alpha = clampedAlpha),
+                surfaceContainerLow = rawScheme.surfaceContainerLow.copy(alpha = clampedAlpha),
+                surfaceContainerHigh = rawScheme.surfaceContainerHigh.copy(alpha = clampedAlpha),
+            )
+        } else rawScheme
+    }
+    val extendedColors = remember(colorScheme, effectiveDark, useAmberBase, dynamicActive, clampedAlpha) {
+        deriveExtendedColors(
+            colorScheme = colorScheme,
+            darkTheme = effectiveDark,
+            amberBase = useAmberBase,
+            dynamicActive = dynamicActive,
+            surfaceAlpha = clampedAlpha,
+        )
     }
 
     CompositionLocalProvider(LocalNexusExtendedColors provides extendedColors) {

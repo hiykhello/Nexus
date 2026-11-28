@@ -53,7 +53,7 @@ namespace relay::naive_in_detail {
     }
 
     template<class In>
-    auto dial_naive_target(Session& child, corosio::io_context& context, rules::RouteMatcher const& policy,
+    auto dial_naive_target(Session& child, corosio::io_context& context, rules::RouteProgram const& policy,
                            socks5::Request const& target, In& incoming) -> capy::task<std::uint8_t> {
         if (child.ordered_tcp) {
             bool ok = co_await route_ordered_stream_tcp(child, context, target, &incoming, &sniff_naive_stream<In>);

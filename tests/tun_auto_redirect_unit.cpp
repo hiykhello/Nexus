@@ -92,6 +92,37 @@ namespace {
         check(e32123 && e53 &&
             std::ranges::count(commands(*e53),0xa06)+2==std::ranges::count(commands(*e32123),0xa06),
             "port 53 skips intercept_dns to avoid self-redirect loop");
+
+        // Verify UDP tproxy_prerouting orders port guard < protected/FakeIP < intercept_udp_dns < local_destinations < excludes/includes
+        nft::Redirect udp_ordered{.port=32123,.ipv4=true,.ipv6=false,.intercept_dns=true,.intercept_udp_dns=true,
+            .socket_mark=42,.excludes=std::span(&private_ip,1),.protected_destinations=std::span(&fake_ip,1),
+            .local_destinations=std::span(&local_ip,1),.tproxy_mark=0x4444u,.tproxy_port=15444u};
+        auto enc_udp=nft::encode(table,&udp_ordered,129);
+        check(enc_udp.has_value(),"encode ordered UDP tproxy_prerouting");
+        std::size_t ug_idx=999, ufake_idx=999, udns_idx=999, ulocal_idx=999, uexcl_idx=999, ur_idx=0;
+        constexpr std::array<std::uint8_t,2> tport_b{0x3c,0x54}; // 15444
+        for (std::size_t pos=0;pos<enc_udp->bytes.size();) {
+            auto msg=std::span(enc_udp->bytes).subspan(pos);
+            auto size=read<std::uint32_t>(msg,0);
+            auto type=read<std::uint16_t>(msg,4);
+            auto body=msg.first(size);
+            if (type==0xa06 && contains_str(body,"tproxy_prerouting")) {
+                bool is_tp=contains_str(body,std::string_view("tproxy\0",7));
+                if (!is_tp && contains_seq(body,local_b) && contains_seq(body,tport_b)) ug_idx=ur_idx;
+                else if (is_tp && contains_seq(body,fake_b)) ufake_idx=ur_idx;
+                else if (is_tp && contains_seq(body,dns_b)) udns_idx=ur_idx;
+                else if (!is_tp && contains_seq(body,local_b)) ulocal_idx=ur_idx;
+                else if (!is_tp && contains_seq(body,excl_b)) uexcl_idx=ur_idx;
+                ++ur_idx;
+            }
+            pos+=size;
+        }
+        check(ug_idx<ufake_idx && ufake_idx<udns_idx && udns_idx<ulocal_idx && ulocal_idx<uexcl_idx,
+            "tproxy_prerouting rule order: port guard < fakeip < udp dns < local_destinations < excludes");
+        nft::Redirect udp_p53=udp_ordered; udp_p53.tproxy_port=53;
+        auto e_udp53=nft::encode(table,&udp_p53,129);
+        check(e_udp53 && std::ranges::count(commands(*e_udp53),0xa06)+2==std::ranges::count(commands(*enc_udp),0xa06),
+            "tproxy_port 53 skips intercept_udp_dns to avoid self-redirect loop");
     }
 
     auto configuration() -> void {
@@ -242,10 +273,11 @@ routing {
 role "client"
 inbounds {{ inbound "s" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}; }}
 outbounds {{ outbound "direct" type="direct"; }}
+state {{ directory "/tmp/nexus-fakeip-test"; }}
 dns {{
     listen host="127.0.0.1" port=1053
     servers {{ server "up" type="udp" host="127.0.0.1" port=5353; }}
-    fake-ip server="up" ipv4-pool="{}" state-directory="/tmp/fakeip"
+    fake-ip server="up" ipv4-pool="{}"
     final "up"
 }}
 routing {{ final "direct"; }}
@@ -254,6 +286,30 @@ routing {{ final "direct"; }}
         check(parse_fakeip("198.18.0.0/30").has_value(),"fake-ip /30 accepted");
         check(!parse_fakeip("198.18.0.0/31").has_value(),"fake-ip /31 rejected");
         check(!parse_fakeip("198.18.0.0/32").has_value(),"fake-ip /32 rejected");
+
+        // OpenConnect strict DTLS (dtls #true, dtls-fallback #false) allowed with detour "direct", rejected with proxy detour
+        auto parse_oc_detour=[](std::string_view target) {
+            std::string extra_hop = target == "hop" ? "    outbound \"hop\" type=\"socks5\" { server host=\"127.0.0.1\" port=1081; }\n" : "";
+            return config::parse_kdl(std::format(R"kdl(schema-version 1
+role "client"
+inbounds {{ inbound "s" type="socks5" {{ listen host="127.0.0.1" port=1080; authentication "none"; }}; }}
+outbounds {{
+    outbound "direct" type="direct"
+{}    outbound "oc" type="openconnect" {{
+        server host="oc.test" port=443
+        tls {{ server-name "oc.test"; ca-file "/tmp/ca.crt"; }}
+        authentication cookie-file="/tmp/ck"
+        dtls #true
+        dtls-fallback #false
+        detour "{}"
+    }}
+}}
+routing {{ final "oc"; }}
+)kdl",extra_hop,target));
+        };
+        auto oc_direct=parse_oc_detour("direct");
+        check(oc_direct.has_value(),oc_direct ? "ok" : "OpenConnect strict DTLS allowed over direct detour: "+oc_direct.error());
+        check(!parse_oc_detour("hop").has_value(),"OpenConnect strict DTLS rejected over proxy detour");
     }
 }
 int main() {

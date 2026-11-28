@@ -244,7 +244,7 @@ outbound "edge" type="vless" {{
   authentication {{ uuid-file "{directory / 'user.uuid'}"; }}
   tls {{ server-name "server.example"; ca-file "{directory / 'root.pem'}"; verify #true; }}
 }}
-routing {{ rulesets {{ "deny" path="deny.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="deny" outbound="reject"; }}; final "edge"; }}
+routing {{ rulesets {{ "deny" path="deny.kdl" format="kdl"; }}; rules {{ - rule-set="deny" to="reject"; }}; final "edge"; }}
 ''')
     process = subprocess.Popen([NEXUS, "run", "--config", config], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:

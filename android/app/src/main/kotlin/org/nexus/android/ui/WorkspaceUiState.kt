@@ -2,8 +2,11 @@ package org.nexus.android.ui
 
 import org.nexus.android.bridge.workspace.AndroidHostConfig
 import org.nexus.android.bridge.workspace.DnsConfig
+import org.nexus.android.bridge.workspace.FullTemplateConfig
 import org.nexus.android.bridge.workspace.ProfileItem
 import org.nexus.android.bridge.workspace.RoutingRuleItem
+import org.nexus.android.bridge.workspace.RuleSetAsset
+import org.nexus.android.bridge.workspace.SubscriptionItem
 import org.nexus.android.bridge.workspace.UdpProbeKind
 import org.nexus.android.bridge.workspace.UdpProbeResult
 import org.nexus.android.bridge.workspace.WorkspaceDefaults
@@ -51,16 +54,30 @@ data class WorkspaceUiState(
 data class WorkspaceUiActions(
     val onSelectProfile: suspend (String) -> String = { "" },
     val onAddProfile: suspend (ProfileItem) -> String = { "" },
+    val onSaveProfile: suspend (profile: ProfileItem, isEdit: Boolean) -> String = { _, _ -> "" },
     val onDeleteProfile: suspend (String) -> String = { "" },
     val onAddSubscription: suspend (name: String, url: String) -> String = { _, _ -> "" },
+    val onSaveSubscription: suspend (sub: SubscriptionItem, fetchNow: Boolean) -> String = { _, _ -> "" },
+    val onDeleteSubscription: suspend (subId: String) -> String = { "" },
     val onRefreshSubscription: suspend (subId: String) -> String = { "" },
+    val onRefreshAllSubscriptions: suspend () -> String = { "" },
     val onUpdateSubscriptionChain: suspend (subId: String, prevId: String, nextId: String) -> String = { _, _, _ -> "" },
     val onSelectRoutingProfile: suspend (routingId: String) -> String = { "" },
+    val onSaveRoutingStrategy: suspend (
+        newPresetName: String,
+        domainStrategy: String,
+        defaultOutbound: String,
+        autoDetectInterface: Boolean,
+        findProcess: Boolean,
+    ) -> String = { _, _, _, _, _ -> "" },
     val onAddRoutingRule: suspend (RoutingRuleItem) -> String = { "" },
     val onToggleRoutingRule: suspend (ruleId: String, enabled: Boolean) -> String = { _, _ -> "" },
     val onDeleteRoutingRule: suspend (ruleId: String) -> String = { "" },
     val onUpdateRoutingFlags: suspend (autoDetectInterface: Boolean, findProcess: Boolean) -> String = { _, _ -> "" },
+    val onSaveRuleSetAsset: suspend (RuleSetAsset) -> String = { "" },
+    val onDeleteRuleSetAsset: suspend (tag: String) -> String = { "" },
     val onUpdateDns: suspend (DnsConfig) -> String = { "" },
+    val onUpdateFullTemplate: suspend (FullTemplateConfig) -> String = { "" },
     val onUpdateHost: suspend (AndroidHostConfig) -> String = { "" },
     val onUpdateSyncSettings: suspend (
         url: String,

@@ -206,4 +206,108 @@ class AndroidHostConfigAndComposerTest {
         store.clearUnexpectedCrash()
         assertFalse(store.hasUnreadUnexpectedCrash())
     }
+
+    @Test
+    fun arbitraryInboundCombinationsAndHttpProxySelectionWorkEndToEnd() {
+        val baseComposed = """
+            schema-version 1
+            inbounds {
+              inbound "tun-in" type="tun" {
+                stack "system"
+                mtu 1400
+                endpoint-independent-nat #false
+              }
+              inbound "local-mixed" type="mixed" {
+                listen host="127.0.0.1" port=10808
+                authentication "none"
+              }
+            }
+            outbounds {
+              outbound "direct" type="direct"
+            }
+        """.trimIndent() + "\n"
+
+        // Combination 1: HTTP + SOCKS5 enabled, Mixed OFF, Allow LAN ON (0.0.0.0 bind) in PROXY_ONLY mode
+        val httpAndSocksLan = AndroidHostSection(
+            runMode = AndroidRunMode.PROXY_ONLY,
+            enableLocalProxy = false,
+            localListen = "127.0.0.1:10808",
+            enableHttp = true,
+            httpListen = "127.0.0.1:10809",
+            enableSocks = true,
+            socksListen = "127.0.0.1:10806",
+            allowLan = true,
+        )
+        val overlaid1 = WorkspaceComposer.applyAndroidInboundsOverlay(baseComposed, httpAndSocksLan)
+        assertFalse(overlaid1.contains("type=\"tun\""))
+        assertFalse(overlaid1.contains("type=\"mixed\""))
+        assertTrue(overlaid1.contains("inbound \"local-http\" type=\"http\""))
+        assertTrue(overlaid1.contains("listen host=\"0.0.0.0\" port=10809"))
+        assertTrue(overlaid1.contains("inbound \"local-socks\" type=\"socks5\""))
+        assertTrue(overlaid1.contains("listen host=\"0.0.0.0\" port=10806"))
+        assertEquals("127.0.0.1" to 10809, AndroidHostConfig.selectHttpProxyEndpoint(httpAndSocksLan))
+        assertEquals("HTTP :10809 · SOCKS :10806", AndroidHostConfig.formatActiveInboundsSummary(httpAndSocksLan))
+
+        // Combination 2: All three (Mixed + HTTP + SOCKS5) simultaneously in VPN mode
+        val allThreeVpn = AndroidHostSection(
+            runMode = AndroidRunMode.VPN,
+            enableLocalProxy = true,
+            localListen = "127.0.0.1:10808",
+            enableHttp = true,
+            httpListen = "127.0.0.1:10809",
+            enableSocks = true,
+            socksListen = "127.0.0.1:10806",
+            allowLan = false,
+            tunMtu = 1500,
+        )
+        val overlaid2 = WorkspaceComposer.applyAndroidInboundsOverlay(baseComposed, allThreeVpn)
+        assertTrue(overlaid2.contains("inbound \"tun-in\" type=\"tun\""))
+        assertTrue(overlaid2.contains("inbound \"local-mixed\" type=\"mixed\""))
+        assertTrue(overlaid2.contains("inbound \"local-http\" type=\"http\""))
+        assertTrue(overlaid2.contains("inbound \"local-socks\" type=\"socks5\""))
+        // Dedicated HTTP takes precedence over Mixed for VpnService.Builder.setHttpProxy
+        assertEquals("127.0.0.1" to 10809, AndroidHostConfig.selectHttpProxyEndpoint(allThreeVpn))
+        assertEquals("127.0.0.1" to 10808, AndroidHostConfig.selectHttpProxyEndpoint(allThreeVpn.copy(enableHttp = false)))
+
+        // Combination 3: VPN mode with all local proxies OFF (pure TUN)
+        val pureVpn = allThreeVpn.copy(enableLocalProxy = false, enableHttp = false, enableSocks = false)
+        val overlaid3 = WorkspaceComposer.applyAndroidInboundsOverlay(baseComposed, pureVpn)
+        assertTrue(overlaid3.contains("inbound \"tun-in\" type=\"tun\""))
+        assertFalse(overlaid3.contains("local-mixed"))
+        assertFalse(overlaid3.contains("local-http"))
+        assertFalse(overlaid3.contains("local-socks"))
+        assertEquals(null, AndroidHostConfig.selectHttpProxyEndpoint(pureVpn))
+        assertEquals("本地监听关", AndroidHostConfig.formatActiveInboundsSummary(pureVpn))
+        assertEquals("tun-in", AndroidHostConfig.selectActiveInboundTag(pureVpn))
+        assertEquals("local-http", AndroidHostConfig.selectActiveInboundTag(httpAndSocksLan))
+
+        // PROXY_ONLY normalization prevents disabling all local proxy ports simultaneously
+        val (normEmptyProxy, warn) = AndroidHostConfig.normalizeForSave(
+            AndroidHostConfig(android = httpAndSocksLan.copy(enableHttp = false, enableSocks = false)),
+        )
+        assertTrue(normEmptyProxy.android.enableLocalProxy)
+        assertTrue(!warn.isNullOrBlank())
+
+        // Runtime action classification: UI-only -> NONE, Inbound/LAN -> RELOAD_CORE, VPN/MTU/PerApp -> RESTART_VPN
+        val base = AndroidHostConfig(android = allThreeVpn)
+        assertEquals(
+            HostRuntimeAction.NONE,
+            AndroidHostConfig.classifyRuntimeAction(base, base.copy(android = base.android.copy(surfaceAlpha = 0.72f))),
+        )
+        assertEquals(
+            HostRuntimeAction.RELOAD_CORE,
+            AndroidHostConfig.classifyRuntimeAction(base, base.copy(android = base.android.copy(enableSocks = false, allowLan = true))),
+        )
+        assertEquals(
+            HostRuntimeAction.RESTART_VPN,
+            AndroidHostConfig.classifyRuntimeAction(base, base.copy(android = base.android.copy(tunMtu = 1420))),
+        )
+        assertEquals(
+            HostRuntimeAction.RESTART_VPN,
+            AndroidHostConfig.classifyRuntimeAction(
+                base.copy(android = base.android.copy(appendHttpProxy = true)),
+                base.copy(android = base.android.copy(appendHttpProxy = true, enableHttp = false)),
+            ),
+        )
+    }
 }

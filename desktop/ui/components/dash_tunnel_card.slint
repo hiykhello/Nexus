@@ -1,0 +1,355 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { ProportionBar, SlidingSegmentBar } from "nexus_primitives.slint";
+import { IconActionButton } from "icon_button.slint";
+
+export component DashboardTunnelCard inherits Rectangle {
+    in property <bool> compact: false;
+    in property <bool> core-running: false;
+    in property <bool> core-toggling: false;
+    in property <string> core-uptime: "";
+    in property <string> outbound-mode: "rule";
+    in property <string> active-profile: "";
+    in property <string> active-node: "";
+    in property <int> active-node-latency-ms: -1;
+    in property <string> core-memory-text: "--";
+    in property <string> app-memory-text: "--";
+    in property <string> diagnostic-message: "";
+    in property <bool> diagnostic-ok: true;
+    in property <string> hero-state-override: "";
+
+    callback toggle-core();
+    callback switch-outbound-mode(string);
+    callback copy-proxy-env();
+    callback reload-config();
+    callback open-profiles();
+
+    property <bool> is-error: root.hero-state-override == "error" || (!root.diagnostic-ok && root.diagnostic-message != "");
+    property <string> exit-title:
+        root.core-running && root.outbound-mode == "direct" ? I18n.t("全局直连", "Direct")
+        : root.active-node != "" ? root.active-node
+        : root.active-profile != "" ? root.active-profile
+        : I18n.t("默认配置", "Default");
+    property <int> mode-idx: root.outbound-mode == "global" ? 1 : root.outbound-mode == "direct" ? 2 : 0;
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        // Card Header (with live breathing halo when Core is running or toggling; 0% idle CPU when Standby)
+        HorizontalLayout {
+            height: 28px;
+            spacing: 8px;
+            Rectangle {
+                property <float> breath: (root.core-running || root.core-toggling)
+                    ? (0.5 - 0.5 * Math.cos(360deg * (Math.mod(animation-tick() / 1ms, 2200) / 2200.0)))
+                    : 0.0;
+                width: 18px;
+                height: 18px;
+                y: (parent.height - self.height) / 2;
+
+                if root.core-running || root.core-toggling : Rectangle {
+                    width: 9px + 9px * parent.breath;
+                    height: 9px + 9px * parent.breath;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: self.width / 2;
+                    background: (root.core-toggling ? Theme.warn-fg : Theme.live-emerald).with-alpha(0.36 * (1.0 - parent.breath));
+                }
+
+                Rectangle {
+                    width: 9px;
+                    height: 9px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    border-radius: 4.5px;
+                    background: root.is-error ? Theme.error-fg : root.core-toggling ? Theme.warn-fg : root.core-running ? Theme.live-emerald : Theme.offline-fg;
+                    animate background { duration: Motion.normal; }
+                }
+            }
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: I18n.t("代理核心", "Core");
+                font-size: 16px;
+                font-weight: 800;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            Text {
+                text: root.core-running
+                    ? (root.core-uptime != "" ? root.core-uptime : I18n.t("运行中", "Running"))
+                    : I18n.t("待命", "Standby");
+                font-size: 12px;
+                font-weight: 700;
+                font-family: Theme.mono-font;
+                color: root.core-running ? Theme.live-emerald : Theme.text-muted;
+                vertical-alignment: center;
+            }
+            IconActionButton {
+                size: 28px;
+                icon: @image-url("../icons/copy.svg");
+                label: I18n.t("复制终端代理命令", "Copy Shell Proxy Env");
+                clicked => { root.copy-proxy-env(); }
+            }
+            IconActionButton {
+                size: 28px;
+                icon: @image-url("../icons/reload.svg");
+                label: I18n.t("热重载配置", "Reload Config");
+                clicked => { root.reload-config(); }
+            }
+        }
+
+        // Primary 52px Tactile Tunnel CTA (Cobalt when Standby, Signal Emerald when Connected)
+        Rectangle {
+            forward-focus: cta-fs;
+            height: 52px;
+            border-radius: Theme.radius-md;
+            border-width: cta-fs.has-focus ? 2px : 1px;
+            border-color:
+                cta-fs.has-focus ? #ffffff
+                : root.is-error ? Theme.error-fg
+                : root.core-running ? Theme.live-emerald
+                : Theme.accent-control-border;
+            background:
+                root.is-error ? Theme.pill-danger-bot
+                : root.core-running ? (cta-ta.pressed ? #047857 : cta-ta.has-hover ? #10b981 : #059669)
+                : (cta-ta.pressed ? Theme.pill-active-bot.darker(0.10) : cta-ta.has-hover ? Theme.pill-active-top.brighter(0.06) : Theme.pill-active-top);
+            transform-scale: (cta-ta.pressed && !root.core-toggling) ? 0.98 : 1.0;
+            animate background { duration: Motion.fast; }
+            animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+            accessible-role: button;
+            accessible-label: root.core-running ? I18n.t("停止代理核心", "Stop Core") : I18n.t("启动代理核心", "Start Core");
+            accessible-action-default => { if (!root.core-toggling) { root.toggle-core(); } }
+
+            cta-fs := FocusScope {
+                key-pressed(ev) => {
+                    if (!root.core-toggling && (ev.text == Key.Return || ev.text == " ")) {
+                        root.toggle-core();
+                        return accept;
+                    }
+                    reject
+                }
+            }
+
+            cta-ta := TouchArea {
+                enabled: !root.core-toggling;
+                mouse-cursor: root.core-toggling ? default : pointer;
+                clicked => { root.toggle-core(); }
+            }
+
+            HorizontalLayout {
+                padding-left: 16px;
+                padding-right: 16px;
+                spacing: 10px;
+
+                Image {
+                    width: 18px;
+                    height: 18px;
+                    y: (parent.height - self.height) / 2;
+                    source: root.core-toggling ? @image-url("../icons/loader.svg")
+                        : root.core-running ? @image-url("../icons/stop.svg")
+                        : @image-url("../icons/play.svg");
+                    colorize: #ffffff;
+                    transform-rotation: root.core-toggling ? (360deg * (Math.mod(animation-tick() / 1ms, 900) / 900.0)) : 0deg;
+                }
+
+                Text {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    text: root.core-toggling ? I18n.t("切换中…", "Switching…")
+                        : root.core-running ? root.exit-title
+                        : (I18n.t("启动 · ", "Start · ") + root.exit-title);
+                    font-size: 15px;
+                    font-weight: 800;
+                    color: #ffffff;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+
+                Text {
+                    text: root.core-running && root.active-node-latency-ms > 0 ? "\{root.active-node-latency-ms} ms"
+                        : root.core-running ? I18n.t("停止", "Stop")
+                        : "";
+                    font-size: 12px;
+                    font-weight: 700;
+                    font-family: root.core-running && root.active-node-latency-ms > 0 ? Theme.mono-font : "";
+                    color: root.core-running ? #d1fae5 : #dbeafe;
+                    vertical-alignment: center;
+                }
+            }
+        }
+
+        // 3-Way Outbound Mode Segmented Bar
+        SlidingSegmentBar {
+            bar-height: 36px;
+            options: [I18n.t("规则分流", "Rule"), I18n.t("全局代理", "Global"), I18n.t("全局直连", "Direct")];
+            current-index: root.mode-idx;
+            selected(idx) => {
+                root.switch-outbound-mode(idx == 1 ? "global" : idx == 2 ? "direct" : "rule");
+            }
+        }
+
+        // 2-Column Symmetrical Metric Wells (Profiles/Quota + Memory)
+        HorizontalLayout {
+            spacing: 10px;
+
+            Rectangle {
+                horizontal-stretch: 1.0;
+                preferred-width: 0px;
+                min-width: 0px;
+                height: 58px;
+                border-radius: Theme.radius-md;
+                background: sub-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+
+                sub-ta := TouchArea {
+                    mouse-cursor: pointer;
+                    clicked => { root.open-profiles(); }
+                }
+
+                VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    alignment: space-between;
+
+                    HorizontalLayout {
+                        spacing: 6px;
+                        Text {
+                            horizontal-stretch: 1;
+                            min-width: 0px;
+                            text: WorkspaceState.subscriptions.length > 0
+                                ? (WorkspaceState.subscriptions[0].remarks != "" ? WorkspaceState.subscriptions[0].remarks : WorkspaceState.subscriptions[0].id)
+                                : I18n.t("配置库", "Profiles");
+                            font-size: 11px;
+                            font-weight: 600;
+                            color: Theme.text-secondary;
+                            overflow: elide;
+                        }
+                        Image {
+                            width: 12px;
+                            height: 12px;
+                            y: (parent.height - self.height) / 2;
+                            source: @image-url("../icons/chevron-right.svg");
+                            colorize: Theme.text-muted;
+                        }
+                    }
+
+                    if WorkspaceState.subscriptions.length > 0 && WorkspaceState.subscriptions[0].quota-ratio > 0.0 : ProportionBar {
+                        bar-height: 4px;
+                        first-ratio: WorkspaceState.subscriptions[0].quota-ratio;
+                        first-color: Theme.accent;
+                        has-second: false;
+                    }
+
+                    Text {
+                        text: WorkspaceState.subscriptions.length > 0 && WorkspaceState.subscriptions[0].quota-text != ""
+                            ? WorkspaceState.subscriptions[0].quota-text
+                            : I18n.t("\{WorkspaceState.profiles.length} 个节点", "\{WorkspaceState.profiles.length} nodes");
+                        font-size: 13px;
+                        font-weight: 700;
+                        font-family: Theme.mono-font;
+                        color: Theme.text-primary;
+                        overflow: elide;
+                    }
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1.0;
+                preferred-width: 0px;
+                min-width: 0px;
+                height: 58px;
+                border-radius: Theme.radius-md;
+                background: Theme.well-bg;
+
+                VerticalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+                    padding-top: 8px;
+                    padding-bottom: 8px;
+                    alignment: space-between;
+
+                    Text {
+                        text: I18n.t("内存", "Memory");
+                        font-size: 11px;
+                        font-weight: 600;
+                        color: Theme.text-secondary;
+                        overflow: elide;
+                    }
+
+                    Text {
+                        text: root.core-running
+                            ? ("Core " + root.core-memory-text + " · UI " + root.app-memory-text)
+                            : ("UI " + root.app-memory-text);
+                        font-size: 13px;
+                        font-weight: 700;
+                        font-family: Theme.mono-font;
+                        color: Theme.text-primary;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+
+        // Terminal Proxy Copy Strip
+        Rectangle {
+            vertical-stretch: 1;
+            min-height: 44px;
+            border-radius: Theme.radius-md;
+            background: env-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+            env-ta := TouchArea {
+                mouse-cursor: pointer;
+                clicked => { root.copy-proxy-env(); }
+            }
+            HorizontalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                spacing: 8px;
+                Image {
+                    width: 14px;
+                    height: 14px;
+                    y: (parent.height - self.height) / 2;
+                    source: @image-url("../icons/logs.svg");
+                    colorize: Theme.nav-active-fg;
+                }
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    alignment: center;
+                    spacing: 2px;
+                    Text {
+                        text: I18n.t("终端代理", "Shell Proxy");
+                        font-size: 12px;
+                        font-weight: 700;
+                        color: Theme.text-primary;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: I18n.t("复制 HTTP / SOCKS5 环境变量", "Copy HTTP / SOCKS5 export");
+                        font-size: 11px;
+                        color: Theme.text-muted;
+                        overflow: elide;
+                    }
+                }
+                Image {
+                    width: 13px;
+                    height: 13px;
+                    y: (parent.height - self.height) / 2;
+                    source: @image-url("../icons/copy.svg");
+                    colorize: Theme.text-muted;
+                }
+            }
+        }
+    }
+}

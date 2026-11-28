@@ -64,7 +64,7 @@ export namespace shadowsocks::detail {
         std::vector<std::stop_source> receive_stops_;
         std::vector<std::unique_ptr<udp_io::udp_socket>> sockets_;
         // Borrowed policies remain stable until the listener and all DNS work drain.
-        std::span<rules::RouteMatcher const> policies_;
+        std::span<rules::RouteProgram const> policies_;
         UdpListenerState& state_;
         std::optional<UdpListenerTraffic> traffic_;
         [[no_unique_address]] OwnedCache owned_cache_;
@@ -324,7 +324,7 @@ export namespace shadowsocks::detail {
         }
         // All sockets share a single serialized session/replay owner. The
         // latest authenticated request selects the socket used for replies.
-        [[nodiscard]] auto start(std::span<udp_io::endpoint const> listens,std::span<rules::RouteMatcher const> policies={},
+        [[nodiscard]] auto start(std::span<udp_io::endpoint const> listens,std::span<rules::RouteProgram const> policies={},
             std::span<relay::Server* const> traffic_listeners={},std::span<std::optional<UdpIdentityRoute> const> identities={})
             -> std::error_code {
             if (started_ || stopped_) return std::make_error_code(std::errc::operation_not_permitted);

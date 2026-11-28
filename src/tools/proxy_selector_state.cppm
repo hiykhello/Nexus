@@ -96,8 +96,6 @@ export namespace cli::run_detail {
         };
         for (auto const& s : config.selectors) map->selector_names.push_back(s.name);
         map->default_group = find_sel(config.default_outbound_name);
-        map->indexed_rule_groups.reserve(config.routes.size());
-        for (auto const& r : config.routes) map->indexed_rule_groups.push_back(find_sel(r.outbound_name));
         if (config.ordered_tcp) {
             map->ordered_rule_groups.reserve(config.ordered_tcp->rules.size());
             for (auto const& r : config.ordered_tcp->rules)

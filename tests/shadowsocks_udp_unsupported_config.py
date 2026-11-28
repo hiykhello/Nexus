@@ -29,7 +29,7 @@ inbound "ss-in" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; metho
 outbound "direct" type="direct"
 outbound "reject" type="block"
 outbound "ss-out" type="shadowsocks" {{ server host="127.0.0.1" port={outbound.getsockname()[1]}; method "2022-blake3-aes-{size*8}-gcm"; key-file "{key}"; }}
-routing {{ rulesets {{ "allow" path="direct.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="allow" outbound="direct"; }}; final "ss-out"; }}
+routing {{ rulesets {{ "allow" path="direct.kdl" format="kdl"; }}; rules {{ - rule-set="allow" to="direct"; }}; final "ss-out"; }}
 ''')
             server = subprocess.Popen(["stdbuf", "-oL", nexus, "run", "--config", config],
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)

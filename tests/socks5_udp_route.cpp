@@ -6,7 +6,7 @@ namespace r = ::rules;
 int main() {
     r::RuleSet domain{{{"domain-suffix","ok.test"}}};
     r::RuleSet blocked{{{"ip-cidr","192.0.2.0/24"}}};
-    auto policy=r::RouteMatcher::compile(std::array{r::RouteRule{blocked,1},r::RouteRule{domain,0}},2,3);
+    auto policy=r::RouteProgram::compile_policy(std::array{r::ProgramRule{blocked,{r::ProgramActionKind::route,1}},r::ProgramRule{domain,{r::ProgramActionKind::route,0}}},2,3);
     if (!policy) return 1;
     s::UdpDatagram packet; packet.address_type=3; packet.address_length=7; packet.port=53;
     std::ranges::copy(std::string_view("ok.test"),packet.address.begin());
@@ -21,18 +21,18 @@ int main() {
     auto other=packet; other.address[0]='x';
     auto tunnel=s::udp_select(*policy,other,allowed);
     if (!tunnel || tunnel->outbound!=2 || tunnel->target!=allowed) return 17;
-    auto tunnel_policy=r::RouteMatcher::compile(std::array{r::RouteRule{domain,2}},0,3);
+    auto tunnel_policy=r::RouteProgram::compile_policy(std::array{r::ProgramRule{domain,{r::ProgramActionKind::route,2}}},0,3);
     if (!tunnel_policy) return 18;
     auto early=s::udp_select_preflight(*tunnel_policy,packet);
     if (!early || !early->has_value() || **early!=2 || s::udp_preflight(*tunnel_policy,packet).error()!=s::UdpRouteError::unsupported) return 19;
     auto selected=s::udp_select(*tunnel_policy,packet,allowed);
     if (!selected || selected->outbound!=2 || selected->target!=allowed) return 20;
-    auto blocked_policy=r::RouteMatcher::compile(std::array{r::RouteRule{domain,1}},0,3);
+    auto blocked_policy=r::RouteProgram::compile_policy(std::array{r::ProgramRule{domain,{r::ProgramActionKind::route,1}}},0,3);
     if (!blocked_policy || s::udp_select_preflight(*blocked_policy,packet).error()!=s::UdpRouteError::blocked ||
         s::udp_select(*blocked_policy,packet,allowed).error()!=s::UdpRouteError::blocked) return 21;
     if (!s::udp_preflight(*policy,other) || s::udp_route(*policy,other,allowed).error()!=s::UdpRouteError::unsupported) return 3;
     packet.address_type=1; packet.address_length=4; packet.address={127,0,0,1};
-    auto direct=r::RouteMatcher::compile(std::span<r::RouteRule const>{},0,3);
+    auto direct=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},0,3);
     if (!direct || !s::udp_route(*direct,packet,allowed) || s::udp_route(*direct,packet,denied).error()!=s::UdpRouteError::invalid_target) return 4;
     auto wrong=allowed; wrong.port=54;
     if (s::udp_route(*direct,packet,wrong).error()!=s::UdpRouteError::invalid_target) return 5;
@@ -59,7 +59,7 @@ int main() {
     auto admitted=association->admit({1,{127,0,0,1},5000},wire);
     if (!admitted) return 10;
     r::RuleSet source{{{"and","",{{"source-ip-cidr","127.0.0.0/8",{}},{"source-port","5000",{}}}}},2};
-    auto source_policy=r::RouteMatcher::compile(std::array{r::RouteRule{source,1}},0,2,r::SourceMetadata::provided);
+    auto source_policy=r::RouteProgram::compile_policy(std::array{r::ProgramRule{source,{r::ProgramActionKind::route,1}}},0,2,r::SourceMetadata::provided);
     if (!source_policy) return 22;
     auto source_blocked=s::udp_prepare_send(*association,*source_policy,*admitted,mapped);
     if (source_blocked || !std::holds_alternative<s::UdpRouteError>(source_blocked.error()) ||

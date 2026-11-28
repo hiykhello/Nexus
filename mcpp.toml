@@ -98,7 +98,7 @@ tls = { implies = ["crypto", "protocols/tls"], defines = ["NEXUS_ENABLE_TLS"], s
 tls-resumption = ["tls", "protocols/tls-resumption"]
 tls-certificate-compression = ["tls", "protocols/tls-certificate-compression"]
 ktls = { implies = ["tls", "protocols/ktls"], defines = ["NEXUS_ENABLE_KTLS"] }
-dns-fakeip = { implies = ["dns/fakeip-history", "relay-runtime/fakeip"], defines = ["NEXUS_ENABLE_FAKEIP"], sources = ["src/tools/dns_fakeip_backend.cppm", "!src/tools/dns_fakeip_backend_disabled.cppm"] }
+dns-fakeip = { implies = ["dns/fakeip", "relay-runtime/fakeip"], defines = ["NEXUS_ENABLE_FAKEIP"], sources = ["src/tools/dns_fakeip_backend.cppm", "!src/tools/dns_fakeip_backend_disabled.cppm"] }
 dns-tls = { implies = ["tls", "dns/tls-query"], sources = ["src/tools/dns_transports.cpp", "src/tools/dns_extra_transports.cpp", "!src/tools/dns_transports_disabled.cpp", "src/tools/dns_proxy_stream.cppm", "src/tools/dns_proxy_tls.cppm", "src/tools/dns_proxy_tls.cpp"] }
 dns-https = { implies = ["dns-tls", "http2", "dns/https-query"], sources = ["src/tools/dns_proxy_https.cpp", "!src/tools/dns_proxy_https_disabled.cpp"] }
 dns-quic = { implies = ["dns-tls", "quic-tls", "quic-shared-port", "packet-stream-socket", "dns/quic-query"], sources = ["src/tools/dns_proxy_quic.cpp", "!src/tools/dns_proxy_quic_disabled.cpp"] }
@@ -241,7 +241,7 @@ sources = [
     "src/tools/logging.cppm", "src/tools/logging.cpp",
     "src/control_api/types.cppm", "src/control_api/openmetrics_disabled.cppm", "src/control_api/control_api_disabled.cppm", "src/control_api/ssmapi_bridge.cppm", "src/control_api/ssmapi_bridge_disabled.cpp",
     "src/tools/dns_transports.cppm", "src/tools/dns_transports_disabled.cpp", "src/tools/dns_dhcp_transport_disabled.cpp", "src/tools/dns_mdns_transport_disabled.cpp", "src/tools/dns_fakeip_backend_disabled.cppm",
-    "src/tools/control.cppm", "src/tools/selector_state.cpp", "src/tools/state_cli.cpp", "src/tools/dns_cache_state.cppm", "src/tools/dns_cache_unified.cppm", "src/tools/dns_live_query.cppm", "src/tools/dns_message_runtime.cppm", "src/tools/dns_message_runtime.cpp", "src/tools/fakeip_state.cpp", "src/tools/dns_proxy_https.cppm", "src/tools/dns_proxy_https_disabled.cpp", "src/tools/dns_proxy_quic.cppm", "src/tools/dns_proxy_quic_disabled.cpp", "src/tools/dns_https3.cppm", "src/tools/dns_https3_disabled.cpp", "src/tools/endpoint.cppm", "src/tools/endpoint_disabled.cpp", "src/tools/hy2_cli_disabled.cppm", "src/tools/hy2_cli_enabled_disabled.cppm", "src/tools/masque_cli_disabled.cppm", "src/tools/masque_cli_enabled_disabled.cppm", "src/tools/tuic_cli_disabled.cppm", "src/tools/tuic_cli_enabled_disabled.cppm", "src/tools/tun_cli_disabled.cppm", "src/tools/tun_cli_enabled_disabled.cppm", "src/tools/udp_cli.cppm", "src/tools/tailscale_outbound.cppm", "src/tools/tailscale_outbound_disabled.cpp", "src/tools/proxy_ntp.cppm", "src/tools/proxy_ntp_disabled.cpp", "src/tools/proxy_services.cppm", "src/tools/proxy_services.cpp", "src/tools/cert_reloader_disabled.cppm", "src/tools/svc_watchdog_disabled.cpp", "src/tools/svc_sni_demux_disabled.cpp", "src/tools/svc_acme_disabled.cpp", "src/tools/svc_reverse_tunnel_disabled.cpp", "src/tools/svc_bridge_disabled.cpp", "src/tools/svc_tor_disabled.cpp", "src/tools/svc_derp_disabled.cpp", "src/tools/cli_gen_tools.cppm", "src/tools/stun_rfc5780.cppm", "src/tools/generate_cli.cpp", "src/tools/tools_cli.cpp", "src/tools/tools_fetch_disabled.cpp", "src/tools/udp_probe.cpp", "src/tools/tun_route_sets.cppm", "src/tools/route_files_nxmm.cppm", "src/tools/route_files.cppm", "src/tools/route_files.cpp", "src/tools/outbound_config.cppm", "src/tools/outbound_config.cpp", "src/tools/proxy_providers.cppm", "src/tools/proxy_providers.cpp", "src/tools/convert_config.cpp", "src/tools/workspace_cli.cpp", "src/tools/provider_cli.cpp", "src/tools/system_proxy_cli.cpp", "src/tools/service_cli.cpp", "src/tools/proxy_run_state.cppm", "src/tools/proxy_group_health.cppm", "src/tools/proxy_outbound_probe.cppm", "src/tools/proxy_listener.cppm", "src/tools/proxy_log.cppm", "src/tools/proxy_host.cppm", "src/tools/proxy_control_wake.cppm", "src/tools/proxy_dns_reload.cppm", "src/tools/ruleset_watcher.cppm", "src/tools/proxy_selector_state.cppm", "src/tools/proxy_listener_reload.cppm", "src/tools/proxy_tun_reload.cppm", "src/tools/proxy_control_operations.cppm", "src/tools/proxy_mode.cppm", "src/tools/proxy_control.cppm", "src/tools/proxy_http_control.cppm", "src/tools/proxy_run.cppm", "src/tools/proxy_server.cpp", "src/tools/core_c_api.cpp", "src/tools/rule_convert.cpp", "src/tools/rule_explain_query.cppm", "src/tools/rule_explain.cpp", "src/tools/rule_fetch_disabled.cpp",
+    "src/tools/control.cppm", "src/tools/selector_state.cpp", "src/tools/state_cli.cpp", "src/tools/dns_cache_unified.cppm", "src/tools/dns_live_query.cppm", "src/tools/dns_message_runtime.cppm", "src/tools/dns_message_runtime.cpp", "src/tools/fakeip_state.cpp", "src/tools/dns_proxy_https.cppm", "src/tools/dns_proxy_https_disabled.cpp", "src/tools/dns_proxy_quic.cppm", "src/tools/dns_proxy_quic_disabled.cpp", "src/tools/dns_https3.cppm", "src/tools/dns_https3_disabled.cpp", "src/tools/endpoint.cppm", "src/tools/endpoint_disabled.cpp", "src/tools/hy2_cli_disabled.cppm", "src/tools/hy2_cli_enabled_disabled.cppm", "src/tools/masque_cli_disabled.cppm", "src/tools/masque_cli_enabled_disabled.cppm", "src/tools/tuic_cli_disabled.cppm", "src/tools/tuic_cli_enabled_disabled.cppm", "src/tools/tun_cli_disabled.cppm", "src/tools/tun_cli_enabled_disabled.cppm", "src/tools/udp_cli.cppm", "src/tools/tailscale_outbound.cppm", "src/tools/tailscale_outbound_disabled.cpp", "src/tools/proxy_ntp.cppm", "src/tools/proxy_ntp_disabled.cpp", "src/tools/proxy_services.cppm", "src/tools/proxy_services.cpp", "src/tools/cert_reloader_disabled.cppm", "src/tools/svc_watchdog_disabled.cpp", "src/tools/svc_sni_demux_disabled.cpp", "src/tools/svc_acme_disabled.cpp", "src/tools/svc_reverse_tunnel_disabled.cpp", "src/tools/svc_bridge_disabled.cpp", "src/tools/svc_tor_disabled.cpp", "src/tools/svc_derp_disabled.cpp", "src/tools/cli_gen_tools.cppm", "src/tools/stun_rfc5780.cppm", "src/tools/generate_cli.cpp", "src/tools/tools_cli.cpp", "src/tools/tools_fetch_disabled.cpp", "src/tools/udp_probe.cpp", "src/tools/tun_route_sets.cppm", "src/tools/route_files_nxmm.cppm", "src/tools/route_files.cppm", "src/tools/route_files.cpp", "src/tools/outbound_config.cppm", "src/tools/outbound_config.cpp", "src/tools/proxy_providers.cppm", "src/tools/proxy_providers.cpp", "src/tools/convert_config.cpp", "src/tools/workspace_cli.cpp", "src/tools/provider_cli.cpp", "src/tools/system_proxy_cli.cpp", "src/tools/service_cli.cpp", "src/tools/proxy_run_state.cppm", "src/tools/proxy_group_health.cppm", "src/tools/proxy_outbound_probe.cppm", "src/tools/proxy_listener.cppm", "src/tools/proxy_log.cppm", "src/tools/proxy_host.cppm", "src/tools/proxy_control_wake.cppm", "src/tools/proxy_dns_reload.cppm", "src/tools/ruleset_watcher.cppm", "src/tools/proxy_selector_state.cppm", "src/tools/proxy_listener_reload.cppm", "src/tools/proxy_tun_reload.cppm", "src/tools/proxy_control_operations.cppm", "src/tools/proxy_mode.cppm", "src/tools/proxy_control.cppm", "src/tools/proxy_http_control.cppm", "src/tools/proxy_run.cppm", "src/tools/proxy_server.cpp", "src/tools/core_c_api.cpp", "src/tools/rule_convert.cpp", "src/tools/rule_explain_query.cppm", "src/tools/rule_explain.cpp", "src/tools/rule_fetch_disabled.cpp",
 ]
 
 [target.'cfg(not(os = "windows"))'.build]
@@ -1191,7 +1191,7 @@ discover = [
     "tests/ngcpp_proxy_module.cpp", "tests/network_modules.cpp",
     "tests/capy_quitter.cpp", "tests/corosio_endpoint.cpp", "tests/corosio_connect_module_probe.cpp",
     "tests/corosio_connect.cpp", "tests/io.cpp", "tests/io_threads.cpp",
-    "tests/http_sniff.cpp", "tests/tls_sniff.cpp", "tests/sniff_route.cpp", "tests/config.cpp", "tests/config_tunnels.cpp", "tests/config_detour.cpp", "tests/config_dial.cpp", "tests/tcp_socket_options.cpp", "tests/dependency_graph.cpp", "tests/rules_kdl.cpp", "tests/rules_beve.cpp", "tests/rules_match.cpp", "tests/rules_v2.cpp", "tests/rules_patterns_allocation.cpp",
+    "tests/http_sniff.cpp", "tests/tls_sniff.cpp", "tests/sniff_route.cpp", "tests/config.cpp", "tests/config_tunnels.cpp", "tests/config_detour.cpp", "tests/config_dial.cpp", "tests/tcp_socket_options.cpp", "tests/dependency_graph.cpp", "tests/rules_kdl.cpp", "tests/rules_beve.cpp", "tests/rules_match.cpp", "tests/rules_v2.cpp", "tests/rules_patterns_allocation.cpp", "tests/route_program_perf_unit.cpp",
     "tests/socks5.cpp", "tests/uot.cpp", "tests/vision.cpp",
     "tests/trojan.cpp",
     "tests/anytls.cpp", "tests/anytls_settings.cpp", "tests/anytls_padding.cpp",
@@ -1580,6 +1580,11 @@ kind = "bin"
 main = "tests/batch94c_utls.cpp"
 required_features = ["tls", "test-bins"]
 
+[targets.utls-dump]
+kind = "bin"
+main = "tests/utls_dump.cpp"
+required_features = ["tls", "test-bins"]
+
 [targets.batch96b-ktls-unit]
 kind = "bin"
 main = "tests/batch96b_ktls.cpp"
@@ -1894,3 +1899,9 @@ required_features = ["http-client", "srs", "test-bins"]
 kind = "bin"
 main = "tests/wave38_canonical_kdl_unit.cpp"
 required_features = ["dns-response", "http-client", "srs", "test-bins"]
+
+
+[targets.route-program-perf-unit]
+kind = "bin"
+main = "tests/route_program_perf_unit.cpp"
+required_features = ["test-bins"]

@@ -73,17 +73,14 @@ def fake_dns(case, root, transport_address):
         port=reservation.getsockname()[1]
     state=root/"state"
     state.mkdir(mode=0o700)
-    for name,size in (("instance.id",16),("history.key",32)):
-        path=state/name
-        path.touch(mode=0o600)
-        path.write_bytes(os.urandom(size))
     strategy="ipv6_only" if peer.kind==28 else "ipv4_only"
-    dns=f'''dns {{
+    dns=f'''state {{ directory "{state}"; }}
+    dns {{
         listen host="127.0.0.1" port={port}
         server "protected" type="udp" host="127.0.0.1" port={peer.port}
         final "protected"
         strategy "{strategy}"
-        fake-ip server="protected" ipv4-pool="198.18.0.0/29" ipv6-pool="fd15:4231::/96" ttl-seconds=2 state-directory="{state}" initialize=#true
+        fake-ip server="protected" ipv4-pool="198.18.0.0/29" ipv6-pool="fd15:4231::/96" ttl-seconds=2
     }}'''
     return port, peer.kind, dns
 
@@ -126,8 +123,8 @@ with socket.socket(int(sys.argv[1]),socket.SOCK_DGRAM) as peer:
             }'''
         else:
             route_items = [
-                '- kind="rule-set" value="uid" outbound="deny"',
-                '- kind="rule-set" value="process" outbound="deny"',
+                '- rule-set="uid" to="deny"',
+                '- rule-set="process" to="deny"',
             ]
         alias_rule=""
         if fakeip:
@@ -137,7 +134,7 @@ with socket.socket(int(sys.argv[1]),socket.SOCK_DGRAM) as peer:
                 route=route.replace('rule action="route" outbound="edge"',
                     'rule action="route" rule-set="alias" domain-source="fakeip" outbound="edge"\n                rule action="reject"')
             else:
-                route_items.append('- kind="rule-set" value="alias" outbound="direct"')
+                route_items.append('- rule-set="alias" to="direct"')
         ingress_rule=""
         if check_interface:
             ingress='rule type="source-interface" value="nxclienthost"'
@@ -155,11 +152,11 @@ with socket.socket(int(sys.argv[1]),socket.SOCK_DGRAM) as peer:
                 if fakeip:
                     route_items=[item.replace('value="alias" outbound="direct"', 'value="ingress" outbound="direct"') for item in route_items]
                 else:
-                    route_items.append('- kind="rule-set" value="ingress" outbound="direct"')
+                    route_items.append('- rule-set="ingress" to="direct"')
                 ingress_rule+='\n        all path="all.kdl" format="kdl"'
                 (root/"all.kdl").write_text(
                     'schema-version 2\nkind "predicate"\nrule type="network" value="udp"\n')
-                route_items.append('- kind="rule-set" value="all" outbound="deny"')
+                route_items.append('- rule-set="all" to="deny"')
         if not tunneled:
             route = "rules {\n        " + "\n        ".join(route_items) + "\n    }"
         config.write_text(f'''schema-version 1

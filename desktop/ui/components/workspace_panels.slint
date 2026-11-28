@@ -1,225 +1,104 @@
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
-import { WorkspaceState, WorkspaceProfileRow, WorkspaceSubRow } from "../workspace_state.slint";
-import { EmptyStateCard, NexusInput } from "glass_primitives.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { NexusInput, ProportionBar } from "nexus_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusButton, NexusChip } from "nexus_buttons.slint";
-import { NexusSwitch } from "nexus_controls.slint";
 
-export component WorkspaceProfilesView inherits VerticalLayout {
+export component WorkspaceSubscriptionsDrawer inherits Rectangle {
     in property <length> grid-w: 600px;
-    in property <length> viewport-h: 480px;
-    callback open-add-outbound();
-    spacing: Theme.space-sm;
 
-    // 5-Kind Profile Creator Card
-    Rectangle {
-        width: root.grid-w;
-        border-radius: Theme.radius-card; border-width: 1px;
-        border-color: Theme.card-border; background: Theme.card-surface;
-        VerticalLayout {
-            padding: Theme.space-md; spacing: Theme.space-sm;
-            FlexboxLayout {
-                spacing: 6px;
-                NexusChip { chip-height: 26px; label: I18n.t("节点", "Node"); active: WorkspaceState.draft-kind == "node"; clicked => { WorkspaceState.draft-kind = "node"; } }
-                NexusChip { chip-height: 26px; label: I18n.t("策略组", "Group"); active: WorkspaceState.draft-kind == "policy_group"; clicked => { WorkspaceState.draft-kind = "policy_group"; } }
-                NexusChip { chip-height: 26px; label: I18n.t("代理链", "Chain"); active: WorkspaceState.draft-kind == "proxy_chain"; clicked => { WorkspaceState.draft-kind = "proxy_chain"; } }
-                NexusChip { chip-height: 26px; label: I18n.t("自定义出站", "Custom Out"); active: WorkspaceState.draft-kind == "custom_outbound"; clicked => { WorkspaceState.draft-kind = "custom_outbound"; } }
-                NexusChip { chip-height: 26px; label: I18n.t("自定义配置", "Custom Config"); active: WorkspaceState.draft-kind == "full_custom_kdl"; clicked => { WorkspaceState.draft-kind = "full_custom_kdl"; } }
-                NexusChip { chip-height: 26px; label: I18n.t("导入 nexus://", "Import nexus://"); active: WorkspaceState.draft-kind == "nexus_share"; clicked => { WorkspaceState.draft-kind = "nexus_share"; } }
+    width: root.grid-w;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 8px;
+            Text {
+                horizontal-stretch: 1;
+                text: I18n.t("远端订阅分组与链式代理设置", "Subscription Groups & Chain Proxy");
+                font-size: 14px;
+                font-weight: 800;
+                color: Theme.text-primary;
+                vertical-alignment: center;
             }
-            if WorkspaceState.draft-kind == "policy_group" : HorizontalLayout {
-                spacing: 8px;
-                NexusSwitch {
-                    text: I18n.t("切换节点时中断已有连接", "Interrupt existing connections on switch");
-                    checked <=> WorkspaceState.draft-group-interrupt;
-                }
-                Rectangle { horizontal-stretch: 1; }
+            NexusButton {
+                btn-height: 28px;
+                has-icon: true;
+                icon: @image-url("../icons/refresh.svg");
+                label: WorkspaceState.sub-updating ? I18n.t("更新中...", "Updating...") : I18n.t("更新全部订阅", "Update All");
+                primary: true;
+                enabled: !WorkspaceState.sub-updating && WorkspaceState.subscriptions.length > 0;
+                clicked => { WorkspaceState.refresh-subscription(""); }
             }
-            HorizontalLayout {
-                spacing: 8px;
-                if WorkspaceState.draft-kind != "nexus_share" : NexusInput {
-                    horizontal-stretch: 32; preferred-width: 0px; min-width: 100px;
-                    text <=> WorkspaceState.draft-remarks;
-                    placeholder-text: I18n.t("名称 / 备注...", "Remarks / Name...");
-                }
-                NexusInput {
-                    horizontal-stretch: 68; preferred-width: 0px; min-width: 140px; mono: true;
-                    text <=> WorkspaceState.draft-payload;
-                    placeholder-text:
-                        WorkspaceState.draft-kind == "nexus_share" ? I18n.t("粘贴 nexus://share/v1/... 便携分享包", "Paste nexus://share/v1/... portable bundle")
-                        : WorkspaceState.draft-kind == "node" ? I18n.t("分享链接 URI 或 host:port...", "Share URI or host:port...")
-                        : WorkspaceState.draft-kind == "policy_group" ? I18n.t("策略(url-test/selector):成员ID逗号分隔", "strategy:member1,member2")
-                        : WorkspaceState.draft-kind == "proxy_chain" ? I18n.t("跳点 ID 逗号分隔 (入口 -> 出口)", "hop1,hop2 (entry -> exit)")
-                        : WorkspaceState.draft-kind == "custom_outbound" ? I18n.t("粘贴自定义出站配置...", "Paste custom outbound definition...")
-                        : I18n.t("粘贴自定义完整配置...", "Paste custom full configuration...");
-                }
-                IconActionButton {
-                    icon: WorkspaceState.draft-kind == "nexus_share" ? @image-url("../icons/download.svg") : @image-url("../icons/plus.svg");
-                    label: WorkspaceState.draft-kind == "nexus_share" ? I18n.t("导入分享包", "Import Bundle") : I18n.t("添加", "Add");
-                    primary: true;
-                    clicked => {
-                        if (WorkspaceState.draft-kind == "nexus_share") {
-                            WorkspaceState.import-profile-share(WorkspaceState.draft-payload);
-                        } else {
-                            WorkspaceState.create-profile(WorkspaceState.draft-kind, WorkspaceState.draft-remarks, WorkspaceState.draft-payload);
-                        }
-                        WorkspaceState.draft-remarks = "";
-                        WorkspaceState.draft-payload = "";
+            IconActionButton {
+                size: 28px;
+                icon: @image-url("../icons/x.svg");
+                label: I18n.t("收起", "Close");
+                clicked => { WorkspaceState.sub-drawer-open = false; }
+            }
+        }
+
+        // Add Subscription Form
+        HorizontalLayout {
+            spacing: 8px;
+            NexusInput { horizontal-stretch: 28; preferred-width: 0px; min-width: 90px; text <=> WorkspaceState.sub-remarks; placeholder-text: I18n.t("订阅备注名称", "Group Remarks"); }
+            NexusInput { horizontal-stretch: 54; preferred-width: 0px; min-width: 140px; mono: true; text <=> WorkspaceState.sub-url; placeholder-text: "https://sub.example.com/api/v1/client/subscribe?token=..."; }
+            NexusInput { width: 88px; mono: true; text <=> WorkspaceState.sub-auto-min; placeholder-text: I18n.t("自动分钟", "Auto min"); }
+            NexusButton {
+                has-icon: true;
+                icon: @image-url("../icons/plus.svg");
+                label: I18n.t("添加并更新", "Add & Fetch");
+                primary: true;
+                clicked => {
+                    if (WorkspaceState.sub-remarks != "" || WorkspaceState.sub-url != "") {
+                        WorkspaceState.add-subscription(WorkspaceState.sub-remarks, WorkspaceState.sub-url, WorkspaceState.sub-prev-id, WorkspaceState.sub-next-id);
+                        WorkspaceState.sub-remarks = ""; WorkspaceState.sub-url = "";
+                        WorkspaceState.sub-prev-id = ""; WorkspaceState.sub-next-id = "";
+                        WorkspaceState.sub-include-regex = ""; WorkspaceState.sub-exclude-regex = "";
                     }
                 }
             }
         }
-    }
 
-    property <int> cols: root.grid-w >= 760px ? 3 : root.grid-w >= 440px ? 2 : 1;
-    property <length> card-w: max(0px, Math.floor((root.grid-w - 12px * (cols - 1)) / cols / 1px) * 1px);
-    property <length> cell-w: card-w + 12px;
-
-    if WorkspaceState.profiles.length == 0 : EmptyStateCard {
-        width: root.grid-w;
-        height: max(self.preferred-height, root.viewport-h - 118px);
-        icon: @image-url("../icons/profiles.svg");
-        title: I18n.t("暂无配置项", "No profiles yet");
-        subtitle: I18n.t("粘贴分享链接导入、添加远端订阅，或通过向导创建节点", "Paste a share link above, add a subscription, or use the node wizard");
-        action-label: I18n.t("新建节点向导", "New Node Wizard");
-        primary-cta: false;
-        secondary-action-label: I18n.t("前往订阅", "Add Subscription");
-        action-clicked => { root.open-add-outbound(); }
-        secondary-action-clicked => { WorkspaceState.active-subtab = 1; }
-    }
-
-    if WorkspaceState.profiles.length > 0 : FlexboxLayout {
-        width: max(0px, root.grid-w + 12px);
-        height: Math.ceil(WorkspaceState.profiles.length / cols) * 88px;
-        for item in WorkspaceState.profiles : Rectangle {
-            width: cell-w; height: 88px;
-            Rectangle {
-                x: 0px; y: 0px; width: card-w; height: 76px;
-                border-radius: Theme.radius-card; border-width: 1px;
-                border-color: item.active ? Theme.live-emerald-border : pta.has-hover ? Theme.hairline-strong : Theme.card-border;
-                background: item.active ? Theme.selected-bg : pta.has-hover ? Theme.row-hover-bg : Theme.card-surface;
-                clip: true;
-
-                if item.active : Rectangle {
-                    x: 0px; y: 0px; width: 3px; height: parent.height;
-                    background: Theme.live-emerald;
-                }
-
-                pta := TouchArea {
-                    mouse-cursor: pointer;
-                    clicked => { WorkspaceState.activate-profile(item.id); }
-                }
-                HorizontalLayout {
-                    padding-left: 14px; padding-right: 12px; spacing: 8px;
-                    VerticalLayout {
-                        horizontal-stretch: 1; min-width: 0px; alignment: center; spacing: 4px;
-                        HorizontalLayout {
-                            spacing: 6px;
-                            Rectangle {
-                                horizontal-stretch: 0; height: 18px; y: (parent.height - self.height) / 2;
-                                border-radius: 6px; border-width: 1px;
-                                border-color: item.kind == "proxy_chain" ? Theme.warn-border : item.kind == "policy_group" ? Theme.selected-border : Theme.well-border;
-                                background: item.kind == "proxy_chain" ? Theme.warn-bg : item.kind == "policy_group" ? Theme.selected-bg : Theme.well-bg;
-                                HorizontalLayout {
-                                    padding-left: 6px; padding-right: 6px;
-                                    Text {
-                                        text: item.kind == "node" ? "NODE" : item.kind == "policy_group" ? "GROUP" : item.kind == "proxy_chain" ? "CHAIN" : item.kind == "custom_outbound" ? "OUT" : "CFG";
-                                        font-size: 9px; font-weight: 700; font-family: Theme.mono-font;
-                                        color: item.kind == "proxy_chain" ? Theme.warn-fg : item.kind == "policy_group" ? Theme.nav-active-fg : Theme.text-secondary;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                            }
-                            Text {
-                                horizontal-stretch: 1; min-width: 0px;
-                                text: item.remarks != "" ? item.remarks : item.id;
-                                font-size: 13px; font-weight: item.active ? 700 : 600;
-                                color: Theme.text-primary; overflow: elide; vertical-alignment: center;
-                            }
-                        }
-                        Text {
-                            text: item.subtitle != "" ? item.subtitle : item.sub-name;
-                            font-size: 11px; font-family: Theme.mono-font;
-                            color: Theme.text-muted; overflow: elide;
-                        }
-                    }
-                    if item.kind != "full_custom_kdl" : VerticalLayout {
-                        alignment: center;
-                        IconActionButton {
-                            icon: @image-url("../icons/copy.svg"); label: I18n.t("分享 nexus://", "Share nexus://");
-                            size: 26px;
-                            clicked => { WorkspaceState.export-profile-share(item.id); }
-                        }
-                    }
-                    if item.active : VerticalLayout {
-                        alignment: center;
-                        Rectangle {
-                            height: 22px; border-radius: 11px; border-width: 1px; border-color: Theme.success-border; background: Theme.success-bg;
-                            HorizontalLayout {
-                                padding-left: 8px; padding-right: 8px;
-                                Text { text: I18n.t("使用中", "Active"); font-size: 10px; font-weight: 700; color: Theme.success-fg; vertical-alignment: center; }
-                            }
-                        }
-                    }
-                    if !item.active : VerticalLayout {
-                        alignment: center;
-                        IconActionButton {
-                            icon: @image-url("../icons/trash.svg"); label: I18n.t("删除", "Delete");
-                            danger: true; size: 26px;
-                            clicked => { WorkspaceState.delete-profile(item.id); }
-                        }
-                    }
-                }
-            }
+        HorizontalLayout {
+            spacing: 8px;
+            NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.sub-include-regex; placeholder-text: I18n.t("包含节点正则(可选)", "Include regex"); }
+            NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.sub-exclude-regex; placeholder-text: I18n.t("排除节点正则(可选)", "Exclude regex"); }
+            NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.sub-prev-id; placeholder-text: I18n.t("前置代理 ID(可选)", "Pre-proxy ID"); }
+            NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.sub-next-id; placeholder-text: I18n.t("落地代理 ID(可选)", "Landing ID"); }
         }
-    }
-}
 
-export component WorkspaceSubscriptionsView inherits VerticalLayout {
-    in property <length> grid-w: 600px;
-    spacing: Theme.space-sm;
+        if WorkspaceState.subscriptions.length > 0 : Rectangle { height: 1px; background: Theme.hairline-subtle; }
 
-    Rectangle {
-        width: root.grid-w; border-radius: Theme.radius-card; border-width: 1px;
-        border-color: Theme.card-border; background: Theme.card-surface;
-        VerticalLayout {
-            padding: Theme.space-md; spacing: Theme.space-sm;
+        for sub in WorkspaceState.subscriptions : VerticalLayout {
+            spacing: 6px;
             HorizontalLayout {
                 spacing: 8px;
-                NexusInput { horizontal-stretch: 28; preferred-width: 0px; min-width: 90px; text <=> WorkspaceState.sub-remarks; placeholder-text: I18n.t("订阅名称...", "Subscription name..."); }
-                NexusInput { horizontal-stretch: 72; preferred-width: 0px; min-width: 140px; mono: true; text <=> WorkspaceState.sub-url; placeholder-text: I18n.t("订阅 URL (https://...)", "Subscription URL (https://...)"); }
-                IconActionButton {
-                    icon: @image-url("../icons/plus.svg"); label: I18n.t("添加", "Add"); primary: true;
-                    clicked => {
-                        if (WorkspaceState.sub-remarks != "" || WorkspaceState.sub-url != "") {
-                            WorkspaceState.add-subscription(WorkspaceState.sub-remarks, WorkspaceState.sub-url, WorkspaceState.sub-prev-id, WorkspaceState.sub-next-id);
-                            WorkspaceState.sub-remarks = ""; WorkspaceState.sub-url = "";
-                            WorkspaceState.sub-prev-id = ""; WorkspaceState.sub-next-id = "";
-                        }
-                    }
+                Text {
+                    horizontal-stretch: 1; min-width: 0px;
+                    text: (sub.remarks != "" ? sub.remarks : sub.id) + "  (" + sub.node-count + I18n.t(" 节点)", " nodes)");
+                    font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; overflow: elide;
                 }
-            }
-            HorizontalLayout {
-                spacing: 8px;
-                NexusInput { horizontal-stretch: 50; preferred-width: 0px; min-width: 100px; mono: true; text <=> WorkspaceState.sub-prev-id; placeholder-text: I18n.t("前置代理 ID（可选）", "Pre-proxy ID (optional)"); }
-                NexusInput { horizontal-stretch: 50; preferred-width: 0px; min-width: 100px; mono: true; text <=> WorkspaceState.sub-next-id; placeholder-text: I18n.t("落地代理 ID（可选）", "Landing proxy ID (optional)"); }
-            }
-        }
-    }
-
-    for sub in WorkspaceState.subscriptions : Rectangle {
-        width: root.grid-w; border-radius: Theme.radius-card; border-width: 1px;
-        border-color: Theme.card-border; background: Theme.card-surface;
-        VerticalLayout {
-            padding: Theme.space-md; spacing: 6px;
-            HorizontalLayout {
-                spacing: 8px;
-                Text { horizontal-stretch: 1; min-width: 0px; text: sub.remarks != "" ? sub.remarks : sub.id; font-size: 13px; font-weight: 700; color: Theme.text-primary; overflow: elide; vertical-alignment: center; }
-                Text { text: I18n.t("\{sub.node-count} 节点", "\{sub.node-count} nodes"); font-size: 11px; font-family: Theme.mono-font; color: Theme.text-muted; vertical-alignment: center; }
+                if sub.quota-text != "" : Text {
+                    text: sub.quota-text + (sub.expire-text != "" ? " · " + sub.expire-text : "");
+                    font-size: 11px; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center;
+                }
+                if sub.url != "" : NexusButton {
+                    btn-height: 26px;
+                    label: I18n.t("更新", "Update");
+                    enabled: !WorkspaceState.sub-updating;
+                    clicked => { WorkspaceState.refresh-subscription(sub.id); }
+                }
                 NexusChip {
                     chip-height: 26px;
-                    label: I18n.t("订阅链", "Chain");
+                    label: I18n.t("链式前置/落地", "Chain");
                     active: WorkspaceState.edit-chain-sub-id == sub.id;
                     clicked => {
                         if (WorkspaceState.edit-chain-sub-id == sub.id) {
@@ -232,36 +111,22 @@ export component WorkspaceSubscriptionsView inherits VerticalLayout {
                     }
                 }
                 if sub.id != "manual" : IconActionButton {
-                    icon: @image-url("../icons/trash.svg"); label: I18n.t("删除", "Delete"); danger: true; size: 24px;
+                    icon: @image-url("../icons/trash.svg"); label: I18n.t("删除订阅", "Delete"); danger: true; size: 26px;
                     clicked => { WorkspaceState.delete-subscription(sub.id); }
                 }
             }
-            if sub.url != "" : Text {
-                text: sub.url; font-size: 10px; font-family: Theme.mono-font; color: Theme.text-muted; overflow: elide;
-            }
-            if sub.quota-text != "" || sub.expire-text != "" : HorizontalLayout {
-                spacing: 10px;
-                Text { horizontal-stretch: 1; min-width: 0px; text: sub.quota-text; font-size: 11px; font-family: Theme.mono-font; color: Theme.text-secondary; overflow: elide; }
-                Text { text: sub.expire-text; font-size: 11px; color: Theme.text-muted; }
-            }
-            if sub.quota-ratio > 0.0 : Rectangle {
-                height: 4px; border-radius: 2px; background: Theme.well-bg;
-                Rectangle {
-                    x: 0px; y: 0px; height: 4px; width: parent.width * min(1.0, max(0.0, sub.quota-ratio)); border-radius: 2px;
-                    background: sub.quota-ratio >= 0.90 ? Theme.error-fg : sub.quota-ratio >= 0.75 ? Theme.warn-fg : Theme.live-emerald;
-                }
-            }
-            if sub.prev-profile-id != "" || sub.next-profile-id != "" : Text {
-                text: I18n.t("订阅链: 前置=\{sub.prev-profile-id} · 落地=\{sub.next-profile-id}", "Sub-Chain: prev=\{sub.prev-profile-id} · next=\{sub.next-profile-id}");
-                font-size: 11px; font-family: Theme.mono-font; color: Theme.nav-active-fg; overflow: elide;
+            if sub.quota-ratio > 0.0 : ProportionBar {
+                bar-height: 4px;
+                first-ratio: sub.quota-ratio;
+                first-color: sub.quota-ratio >= 0.90 ? Theme.error-fg : Theme.accent;
+                has-second: false;
             }
             if WorkspaceState.edit-chain-sub-id == sub.id : HorizontalLayout {
                 spacing: 8px;
-                NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.edit-chain-prev; placeholder-text: I18n.t("前置 ID (prev)", "Prev ID"); }
-                NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.edit-chain-next; placeholder-text: I18n.t("落地 ID (next)", "Next ID"); }
+                NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.edit-chain-prev; placeholder-text: I18n.t("前置代理 ID", "Prev Profile ID"); }
+                NexusInput { horizontal-stretch: 1; preferred-width: 0px; mono: true; text <=> WorkspaceState.edit-chain-next; placeholder-text: I18n.t("落地代理 ID", "Next Profile ID"); }
                 NexusButton {
-                    btn-height: 30px; has-icon: true;
-                    icon: @image-url("../icons/check.svg"); label: I18n.t("保存链", "Save"); primary: true;
+                    btn-height: 30px; label: I18n.t("保存链", "Save"); primary: true;
                     clicked => {
                         WorkspaceState.update-subscription-chain(sub.id, WorkspaceState.edit-chain-prev, WorkspaceState.edit-chain-next);
                         WorkspaceState.edit-chain-sub-id = "";

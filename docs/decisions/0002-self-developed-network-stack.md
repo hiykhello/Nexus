@@ -20,4 +20,4 @@
 - TLS 独立定义协议状态机、证书与身份校验、指纹 profile、密码原语边界与异步连接适配。
 - 按后续决策，依赖锁定与发布产物只链接静态 BoringSSL `libcrypto`，不通过传递依赖或可选回退引入 `libssl` 或其他第三方 TLS 协议栈。
 
-细化文档：[组件模型](../architecture/component-model.md)、[自研 TUN 栈](../architecture/tun.md)、[自研 TLS 与指纹](../architecture/tls.md)、[网络栈验证](../planning/network-validation.md)。
+细化文档：[组件模型](../architecture/component-model.md)、[自研 TUN 栈](../architecture/tun.md)、[自研 TLS 与指纹](../architecture/tls.md)、[验证体系与实机基线](../planning/validation.md)。

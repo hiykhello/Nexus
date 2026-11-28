@@ -1,7 +1,6 @@
 // Bridges executor-owned DNS message rows to "NXDN03" policy shards.
 export module cli.dns_cache_unified;
 import std;
-import cli.dns_cache_state;
 import cli.dns_transports;
 import config;
 import corosio;
@@ -15,7 +14,6 @@ export namespace cli {
     class UnifiedDnsCache {
         ::state::DnsCache disk_;
         ::state::Fingerprint fingerprint_;
-        DnsCacheState::Scope scope_;
         std::vector<bool> persistent_;
         std::size_t limit_;
         std::optional<std::uint64_t> epoch_;
@@ -66,11 +64,25 @@ export namespace cli {
             return std::unexpected("invalid DNS cache shard rows");
         }
 
+        static auto append_be32(std::string& out, std::uint64_t value) -> void {
+            for (unsigned i = 4; i > 0; --i) out.push_back(static_cast<char>(value >> ((i - 1) * 8)));
+        }
+
     public:
         UnifiedDnsCache(config::DnsRouting const& routing, std::span<dns::MessageUpstream const> upstreams)
-            : disk_(routing.unified_cache_root, routing.unified_cache_bytes), scope_(routing, upstreams),
+            : disk_(routing.unified_cache_root, routing.unified_cache_bytes),
               limit_(std::min(routing.unified_cache_bytes - ::state::header_bytes, ::state::dns_shard_payload)) {
-            auto identity = scope_.identity + routing.cache_rule_fingerprints;
+            (void)upstreams;
+            std::string identity("NXDN03");
+            append_be32(identity, routing.message_cache_policy.size());
+            identity += routing.message_cache_policy;
+            if (!routing.cache_rule_fingerprints.empty()) {
+                append_be32(identity, routing.cache_rule_fingerprints.size());
+                identity += routing.cache_rule_fingerprints;
+            }
+            for (auto const& server : routing.servers) {
+                append_be32(identity, server.upstream ? server.upstream->binding.routing_mark.value_or(0) : 0);
+            }
             for (auto const& server : routing.servers) {
                 // Local snapshots are process-local; numeric, TLS, and detour upstreams
                 // are cacheable because their detour/trust identities enter the shard hash.

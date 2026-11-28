@@ -1,9 +1,9 @@
 import { I18n, LanguagePreference } from "../i18n.slint";
 import { Motion } from "../motion.slint";
 import { AccentPreset, Theme, ThemePreference } from "../theme.slint";
-import { SlidingSegmentBar } from "glass_primitives.slint";
-import { NexusButton } from "nexus_buttons.slint";
-import { NexusSwitch } from "nexus_controls.slint";
+import { SlidingSegmentBar } from "nexus_primitives.slint";
+import { NexusButton, NexusChip } from "nexus_buttons.slint";
+import { NexusOpacitySlider, NexusSwitch } from "nexus_controls.slint";
 
 // Pure-Slint miniature chassis window swatch (0ms instant theme switching, zero bitmaps/gradients)
 component ThemeSwatchCard inherits Rectangle {
@@ -63,63 +63,55 @@ component ThemeSwatchCard inherits Rectangle {
             clip: true;
 
             if !root.split-system : HorizontalLayout {
-                // Mini sidebar rail
+                // Mini Navigation Rail
                 Rectangle {
                     width: 14px;
                     background: root.rail-bg;
-                    Rectangle { x: 4px; y: 6px; width: 6px; height: 4px; border-radius: 2px; background: root.swatch-accent; }
-                    Rectangle { x: 4px; y: 13px; width: 6px; height: 3px; border-radius: 1.5px; background: root.mini-border; }
-                    Rectangle { x: 4px; y: 19px; width: 6px; height: 3px; border-radius: 1.5px; background: root.mini-border; }
-                    Rectangle { x: parent.width - 1px; y: 0px; width: 1px; height: 100%; background: root.mini-border; }
+                    Rectangle { x: 2px; y: 5px; width: 10px; height: 5px; border-radius: 2px; background: root.swatch-accent; }
+                    Rectangle { x: 2px; y: 13px; width: 10px; height: 3px; border-radius: 1.5px; background: root.mini-border; }
+                    Rectangle { x: 2px; y: 19px; width: 10px; height: 3px; border-radius: 1.5px; background: root.mini-border; }
                 }
-                // Mini canvas + 2 matte cards + dual interactive/emerald dots
+                Rectangle { width: 1px; background: root.mini-border; }
+                // Mini 2x2 Card Dashboard
                 VerticalLayout {
                     horizontal-stretch: 1;
                     padding: 4px;
                     spacing: 3px;
-                    Rectangle {
-                        height: 11px;
-                        border-radius: 2px;
-                        border-width: 1px;
-                        border-color: root.mini-border;
-                        background: root.mini-card-bg;
-                        Rectangle { x: 4px; y: 3px; width: 4px; height: 4px; border-radius: 2px; background: root.swatch-emerald; }
-                        Rectangle { x: 11px; y: 4px; width: 22px; height: 2.5px; border-radius: 1px; background: root.mini-border; }
-                        Rectangle { x: parent.width - 10px; y: 3px; width: 6px; height: 4px; border-radius: 2px; background: root.swatch-accent; }
+                    HorizontalLayout {
+                        vertical-stretch: 1;
+                        spacing: 3px;
+                        Rectangle { horizontal-stretch: 1; border-radius: 3px; border-width: 1px; border-color: root.mini-border; background: root.mini-card-bg;
+                            Rectangle { x: 3px; y: 4px; width: max(6px, parent.width - 6px); height: 5px; border-radius: 2px; background: root.swatch-accent; }
+                        }
+                        Rectangle { horizontal-stretch: 1; border-radius: 3px; border-width: 1px; border-color: root.mini-border; background: root.mini-card-bg;
+                            Rectangle { x: 3px; y: 6px; width: max(6px, parent.width - 6px); height: 3px; border-radius: 1.5px; background: root.swatch-emerald; }
+                        }
                     }
                     HorizontalLayout {
                         vertical-stretch: 1;
                         spacing: 3px;
-                        Rectangle {
-                            horizontal-stretch: 1; border-radius: 2px; border-width: 1px;
-                            border-color: root.mini-border; background: root.mini-card-bg;
-                        }
-                        Rectangle {
-                            horizontal-stretch: 1; border-radius: 2px; border-width: 1px;
-                            border-color: root.mini-border; background: root.mini-card-bg;
-                        }
+                        Rectangle { horizontal-stretch: 1; border-radius: 3px; border-width: 1px; border-color: root.mini-border; background: root.mini-card-bg; }
+                        Rectangle { horizontal-stretch: 1; border-radius: 3px; border-width: 1px; border-color: root.mini-border; background: root.mini-card-bg; }
                     }
                 }
             }
 
-            // System Auto split preview: left Obsidian dark / right Paper daylight
+            // System Auto split preview: left Light Card Console / right Dark Card Console
             if root.split-system : HorizontalLayout {
                 Rectangle {
                     horizontal-stretch: 1;
-                    background: #12151b;
-                    Rectangle { x: 0px; y: 0px; width: 10px; height: 100%; background: #0d0f13; }
-                    Rectangle { x: 14px; y: 5px; width: max(12px, parent.width - 18px); height: 11px; border-radius: 2px; background: #191d25; border-width: 1px; border-color: #262b36; }
-                    Rectangle { x: 18px; y: 8px; width: 4px; height: 4px; border-radius: 2px; background: #10b981; }
-                    Rectangle { x: 14px; y: 19px; width: max(12px, parent.width - 18px); height: max(6px, parent.height - 24px); border-radius: 2px; background: #191d25; border-width: 1px; border-color: #262b36; }
+                    background: #f4f6f9;
+                    Rectangle { x: 0px; y: 0px; width: 10px; height: 100%; background: #ffffff; }
+                    Rectangle { x: 14px; y: 4px; width: max(8px, parent.width - 18px); height: 12px; border-radius: 3px; border-width: 1px; border-color: #e2e8f0; background: #ffffff; }
+                    Rectangle { x: 14px; y: 19px; width: max(8px, parent.width - 18px); height: 11px; border-radius: 3px; border-width: 1px; border-color: #e2e8f0; background: #ffffff; }
                 }
                 Rectangle { width: 1px; background: Theme.hairline-strong; }
                 Rectangle {
                     horizontal-stretch: 1;
-                    background: #f6f5f2;
-                    Rectangle { x: 0px; y: 0px; width: 10px; height: 100%; background: #eceae4; }
-                    Rectangle { x: 14px; y: 5px; width: max(12px, parent.width - 18px); height: 11px; border-radius: 2px; background: #ffffff; border-width: 1px; border-color: #dddad2; }
-                    Rectangle { x: 18px; y: 8px; width: 4px; height: 4px; border-radius: 2px; background: #3355e6; }
-                    Rectangle { x: 14px; y: 19px; width: max(12px, parent.width - 18px); height: max(6px, parent.height - 24px); border-radius: 2px; background: #ffffff; border-width: 1px; border-color: #dddad2; }
+                    background: #0f141c;
+                    Rectangle { x: 0px; y: 0px; width: 10px; height: 100%; background: #131923; }
+                    Rectangle { x: 14px; y: 4px; width: max(8px, parent.width - 18px); height: 12px; border-radius: 3px; border-width: 1px; border-color: #263142; background: #171e29; }
+                    Rectangle { x: 14px; y: 19px; width: max(8px, parent.width - 18px); height: 11px; border-radius: 3px; border-width: 1px; border-color: #263142; background: #171e29; }
                 }
             }
         }
@@ -228,9 +220,9 @@ export component ThemeStudioCard inherits Rectangle {
             Text {
                 horizontal-stretch: 1;
                 min-width: 0px;
-                text: I18n.t("外观与仪表主题", "Appearance & Instrument Theme");
-                font-size: 14px;
-                font-weight: 700;
+                text: I18n.t("外观", "Appearance");
+                font-size: 16px;
+                font-weight: 800;
                 color: Theme.text-primary;
                 vertical-alignment: center;
                 overflow: elide;
@@ -243,8 +235,8 @@ export component ThemeStudioCard inherits Rectangle {
                     Theme.apply-preference(ThemePreference.system);
                     Theme.accent-preset = AccentPreset.ocean;
                     Theme.blur-enabled = true;
+                    Theme.window-opacity = 0.88;
                     I18n.preference = LanguagePreference.system;
-                    Motion.reduced = false;
                     root.prefs-changed();
                 }
             }
@@ -260,29 +252,29 @@ export component ThemeStudioCard inherits Rectangle {
                 ThemeSwatchCard {
                     label: I18n.t("跟随系统", "System");
                     split-system: true;
-                    rail-bg: #0d0f13; canvas-bg: #12151b; mini-card-bg: #191d25; mini-border: #3b4354;
-                    swatch-accent: #4f6ef7; swatch-emerald: #10b981;
+                    rail-bg: #ffffff; canvas-bg: #f4f6f9; mini-card-bg: #ffffff; mini-border: #e2e8f0;
+                    swatch-accent: #2563eb; swatch-emerald: #10b981;
                     selected: Theme.preference == ThemePreference.system;
                     chosen => { Theme.apply-preference(ThemePreference.system); root.prefs-changed(); }
                 }
                 ThemeSwatchCard {
-                    label: I18n.t("曜石仪表", "Obsidian");
-                    rail-bg: #0d0f13; canvas-bg: #12151b; mini-card-bg: #191d25; mini-border: #2e3543;
-                    swatch-accent: #4f6ef7; swatch-emerald: #10b981;
-                    selected: Theme.preference == ThemePreference.obsidian;
-                    chosen => { Theme.apply-preference(ThemePreference.obsidian); root.prefs-changed(); }
-                }
-                ThemeSwatchCard {
-                    label: I18n.t("暖纸日光", "Paper");
-                    rail-bg: #eceae4; canvas-bg: #f6f5f2; mini-card-bg: #ffffff; mini-border: #d4d0c7;
-                    swatch-accent: #3355e6; swatch-emerald: #047857;
+                    label: I18n.t("浅色", "Light");
+                    rail-bg: #ffffff; canvas-bg: #f4f6f9; mini-card-bg: #ffffff; mini-border: #e2e8f0;
+                    swatch-accent: #2563eb; swatch-emerald: #059669;
                     selected: Theme.preference == ThemePreference.paper;
                     chosen => { Theme.apply-preference(ThemePreference.paper); root.prefs-changed(); }
                 }
                 ThemeSwatchCard {
-                    label: I18n.t("精密琥珀", "Amber");
-                    rail-bg: #0e0d0c; canvas-bg: #141311; mini-card-bg: #1c1a17; mini-border: #36312a;
-                    swatch-accent: #e59a2e; swatch-emerald: #10b981;
+                    label: I18n.t("深色", "Dark");
+                    rail-bg: #131923; canvas-bg: #0f141c; mini-card-bg: #171e29; mini-border: #263142;
+                    swatch-accent: #60a5fa; swatch-emerald: #10b981;
+                    selected: Theme.preference == ThemePreference.obsidian;
+                    chosen => { Theme.apply-preference(ThemePreference.obsidian); root.prefs-changed(); }
+                }
+                ThemeSwatchCard {
+                    label: I18n.t("暖金", "Amber");
+                    rail-bg: #161411; canvas-bg: #12100e; mini-card-bg: #1b1815; mini-border: #2f2a23;
+                    swatch-accent: #f59e0b; swatch-emerald: #10b981;
                     selected: Theme.preference == ThemePreference.amber;
                     chosen => { Theme.apply-preference(ThemePreference.amber); root.prefs-changed(); }
                 }
@@ -315,15 +307,89 @@ export component ThemeStudioCard inherits Rectangle {
                 horizontal-stretch: 1;
                 vertical-stretch: 0;
                 spacing: 6px;
-                AccentChip { label: I18n.t("默认", "Default"); swatch-color: Theme.is-amber ? #e59a2e : (Theme.dark ? #4f6ef7 : #3355e6); selected: Theme.accent-preset == AccentPreset.ocean; chosen => { Theme.accent-preset = AccentPreset.ocean; root.prefs-changed(); } }
-                AccentChip { label: I18n.t("翡翠", "Emerald"); swatch-color: Theme.dark ? #10b981 : #047857; selected: Theme.accent-preset == AccentPreset.emerald; chosen => { Theme.accent-preset = AccentPreset.emerald; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("默认", "Default"); swatch-color: Theme.is-amber ? #f59e0b : (Theme.dark ? #60a5fa : #2563eb); selected: Theme.accent-preset == AccentPreset.ocean; chosen => { Theme.accent-preset = AccentPreset.ocean; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("翡翠", "Emerald"); swatch-color: Theme.dark ? #10b981 : #059669; selected: Theme.accent-preset == AccentPreset.emerald; chosen => { Theme.accent-preset = AccentPreset.emerald; root.prefs-changed(); } }
                 AccentChip { label: I18n.t("极光紫", "Violet"); swatch-color: Theme.dark ? #a78bfa : #6d28d9; selected: Theme.accent-preset == AccentPreset.violet; chosen => { Theme.accent-preset = AccentPreset.violet; root.prefs-changed(); } }
-                AccentChip { label: I18n.t("琥珀", "Amber"); swatch-color: Theme.dark ? #e59a2e : #b45309; selected: Theme.accent-preset == AccentPreset.amber; chosen => { Theme.accent-preset = AccentPreset.amber; root.prefs-changed(); } }
-                AccentChip { label: I18n.t("绯红", "Rose"); swatch-color: Theme.dark ? #f87171 : #dc2626; selected: Theme.accent-preset == AccentPreset.rose; chosen => { Theme.accent-preset = AccentPreset.rose; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("琥珀", "Amber"); swatch-color: Theme.dark ? #f59e0b : #d97706; selected: Theme.accent-preset == AccentPreset.amber; chosen => { Theme.accent-preset = AccentPreset.amber; root.prefs-changed(); } }
+                AccentChip { label: I18n.t("绯红", "Rose"); swatch-color: Theme.dark ? #f87171 : #e11d48; selected: Theme.accent-preset == AccentPreset.rose; chosen => { Theme.accent-preset = AccentPreset.rose; root.prefs-changed(); } }
             }
         }
 
         Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+        // Window & Surface Opacity Control (40% – 100% continuous slider + presets)
+        VerticalLayout {
+            vertical-stretch: 0;
+            spacing: 8px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    min-width: 0px;
+                    spacing: 2px;
+                    Text {
+                        text: I18n.t("窗口透明度", "Window Opacity");
+                        font-size: 13px;
+                        font-weight: 600;
+                        color: Theme.text-primary;
+                    }
+                    Text {
+                        text: I18n.t("低于 100% 自动启用窗口透明", "Below 100% enables translucency");
+                        font-size: 11px;
+                        color: Theme.text-muted;
+                        overflow: elide;
+                    }
+                }
+                Text {
+                    text: "\{Math.round(Theme.clamped-opacity * 100.0)}%";
+                    font-size: 12px;
+                    font-weight: 700;
+                    font-family: Theme.mono-font;
+                    color: Theme.text-secondary;
+                    vertical-alignment: center;
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 10px;
+                NexusOpacitySlider {
+                    horizontal-stretch: 1;
+                    value <=> Theme.window-opacity;
+                    changed-value(v) => {
+                        root.prefs-changed();
+                    }
+                }
+                HorizontalLayout {
+                    horizontal-stretch: 0;
+                    spacing: 4px;
+                    NexusChip {
+                        chip-height: 24px;
+                        label: "100%";
+                        active: Math.abs(Theme.window-opacity - 1.0) < 0.02;
+                        clicked => { Theme.window-opacity = 1.0; root.prefs-changed(); }
+                    }
+                    NexusChip {
+                        chip-height: 24px;
+                        label: "88%";
+                        active: Math.abs(Theme.window-opacity - 0.88) < 0.02;
+                        clicked => { Theme.window-opacity = 0.88; root.prefs-changed(); }
+                    }
+                    NexusChip {
+                        chip-height: 24px;
+                        label: "75%";
+                        active: Math.abs(Theme.window-opacity - 0.75) < 0.02;
+                        clicked => { Theme.window-opacity = 0.75; root.prefs-changed(); }
+                    }
+                    NexusChip {
+                        chip-height: 24px;
+                        label: "60%";
+                        active: Math.abs(Theme.window-opacity - 0.60) < 0.02;
+                        clicked => { Theme.window-opacity = 0.60; root.prefs-changed(); }
+                    }
+                }
+            }
+        }
 
         HorizontalLayout {
             vertical-stretch: 0;
@@ -335,13 +401,13 @@ export component ThemeStudioCard inherits Rectangle {
                 alignment: center;
                 spacing: 2px;
                 Text {
-                    text: I18n.t("窗口模糊", "Window Blur");
+                    text: I18n.t("背景模糊", "Backdrop Blur");
                     font-size: 13px;
                     font-weight: 500;
                     color: Theme.text-primary;
                 }
                 Text {
-                    text: I18n.t("半透明磨砂窗口背景", "Translucent frosted window background");
+                    text: I18n.t("启用系统毛玻璃效果", "Enable native window blur");
                     font-size: 11px;
                     color: Theme.text-muted;
                     overflow: elide;
@@ -351,30 +417,6 @@ export component ThemeStudioCard inherits Rectangle {
                 alignment: center;
                 NexusSwitch {
                     checked <=> Theme.blur-enabled;
-                    toggled => { root.prefs-changed(); }
-                }
-            }
-        }
-
-        HorizontalLayout {
-            vertical-stretch: 0;
-            height: 30px;
-            spacing: Theme.space-md;
-            VerticalLayout {
-                horizontal-stretch: 1;
-                alignment: center;
-                spacing: 1px;
-                Text {
-                    text: I18n.t("减弱动态效果", "Reduced Motion");
-                    font-size: 13px;
-                    font-weight: 500;
-                    color: Theme.text-primary;
-                }
-            }
-            VerticalLayout {
-                alignment: center;
-                NexusSwitch {
-                    checked <=> Motion.reduced;
                     toggled => { root.prefs-changed(); }
                 }
             }

@@ -58,7 +58,7 @@ export namespace tls {
         if (!hello.validate_tls13() || (!Policy::enabled && hello.extension(41)) ||
             (hello.extension(42) && (!EarlyDataPolicy<Policy> || transport!=HandshakeTransport::quic)) ||
             hello.extension(44) || !hello.extension(51)) return std::unexpected(ClientHelloDriverError::invalid_hello);
-        if (!validate_handshake_transport(hello,transport) || initial_groups.size()>2) return std::unexpected(ClientHelloDriverError::invalid_hello);
+        if (!validate_handshake_transport(hello,transport) || initial_groups.size()>3) return std::unexpected(ClientHelloDriverError::invalid_hello);
         auto* groups=hello.extension(10);
         if (!groups || groups->data.size()<4 || ((std::size_t{groups->data[0]}<<8)|groups->data[1])!=groups->data.size()-2 || (groups->data.size()-2)%2) return std::unexpected(ClientHelloDriverError::invalid_hello);
         std::bitset<65536> seen;
@@ -69,7 +69,8 @@ export namespace tls {
         }
         for (std::size_t i=0;i<initial_groups.size();++i) {
             auto value=initial_groups[i];
-            if ((value!=0x001d && value!=x25519_mlkem768_group && !crypto::nist_curve(value)) || !seen.test(value) || (i && initial_groups[0]==value)) return std::unexpected(ClientHelloDriverError::invalid_hello);
+            if ((value!=0x001d && value!=x25519_mlkem768_group && !crypto::nist_curve(value)) || !seen.test(value) ||
+                std::ranges::contains(initial_groups.first(i),value)) return std::unexpected(ClientHelloDriverError::invalid_hello);
         }
         auto template_shares=KeyShare::parse_client(hello.extension(51)->data);
         if (!template_shares) return std::unexpected(ClientHelloDriverError::invalid_hello);

@@ -47,10 +47,6 @@ with tempfile.TemporaryDirectory() as directory, DnsPeer() as dns, Echo() as ech
     root=Path(directory)
     state=root/"state"
     state.mkdir(mode=0o700)
-    for name,size in (("instance.id",16),("history.key",32)):
-        credential=state/name
-        credential.touch(mode=0o600)
-        credential.write_bytes(os.urandom(size))
     listener=free_port()
     config=root/"proxy.kdl"
     dns_rules=""
@@ -70,13 +66,14 @@ inbounds {{
   }}
 }}
 outbounds {{ direct "direct"; }}
+state {{ directory "{state}"; }}
 dns {{
   listen host="127.0.0.1" port={listener}
   server "business" type="udp" host="127.0.0.1" port={dns.port}
   final "business"
   strategy "ipv4_only"
   {dns_rules}
-  fake-ip server="business" ipv4-pool="198.18.12.0/29" ipv6-pool="fd15:42::/96" ttl-seconds=2 state-directory="{state}" initialize=#true
+  fake-ip server="business" ipv4-pool="198.18.12.0/29" ipv6-pool="fd15:42::/96" ttl-seconds=2
 }}
 routing {{ final "direct"; }}
 """)

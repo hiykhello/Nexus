@@ -240,7 +240,7 @@ namespace relay {
     }
 
 #ifdef NEXUS_TEST_SOURCE_ROUTE
-    auto Server::set_source_policy_for_test(rules::RouteMatcher replacement) -> bool {
+    auto Server::set_source_policy_for_test(rules::RouteProgram replacement) -> bool {
         if (running || (listener && listener->is_open()) || !sessions.empty() || !workers.empty()) return false;
         policy=std::move(replacement);
         return true;
@@ -272,22 +272,6 @@ namespace relay {
         return {};
     }
 
-    auto Server::set_dns_upstream(std::array<std::uint8_t,4> address, std::uint16_t port)
-        -> std::expected<void,std::error_code> {
-        if (this->running || (this->listener && this->listener->is_open()) || !this->sessions.empty() || !this->workers.empty())
-            return std::unexpected(std::make_error_code(std::errc::operation_in_progress));
-        if (!port) return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-        DnsServer server; std::copy(address.begin(),address.end(),server.address.begin()); server.port=port;
-        return set_dns_routing({{server},{},0});
-    }
-    auto Server::set_dns_upstream(std::array<std::uint8_t,16> address, std::uint16_t port)
-        -> std::expected<void,std::error_code> {
-        if (this->running || (this->listener && this->listener->is_open()) || !this->sessions.empty() || !this->workers.empty())
-            return std::unexpected(std::make_error_code(std::errc::operation_in_progress));
-        if (!port) return std::unexpected(std::make_error_code(std::errc::invalid_argument));
-        DnsServer server{address,true,port};
-        return set_dns_routing({{server},{},0});
-    }
     auto Server::set_dns_routing(DnsRouting routing) -> std::expected<void,std::error_code> {
         if (this->running || (this->listener && this->listener->is_open()) || !this->sessions.empty() || !this->workers.empty())
             return std::unexpected(std::make_error_code(std::errc::operation_in_progress));

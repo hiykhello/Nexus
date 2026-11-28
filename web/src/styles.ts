@@ -10,6 +10,13 @@ export const sharedStyles = css`
   :host {
     display: block;
     color: var(--nx-text);
+    caret-color: var(--nx-accent);
+    scrollbar-width: thin;
+    scrollbar-color: var(--nx-border-strong) transparent;
+  }
+  ::selection {
+    background: var(--nx-accent-soft);
+    color: var(--nx-text);
   }
   .page {
     display: flex;
@@ -212,17 +219,18 @@ export const sharedStyles = css`
     gap: 2px;
   }
   .segmented button {
-    border: none;
+    border: 1px solid transparent;
     background: transparent;
     color: var(--nx-text-secondary);
     padding: 5px 11px;
-    border-radius: 7px;
+    border-radius: 6px;
     font-size: 12px;
     font-weight: 600;
   }
   .segmented button.active {
-    background: var(--nx-accent);
-    color: var(--nx-accent-fg);
+    background: var(--nx-surface);
+    border-color: var(--nx-accent-border);
+    color: var(--nx-accent-text, var(--nx-accent));
   }
   .chip {
     display: inline-flex;

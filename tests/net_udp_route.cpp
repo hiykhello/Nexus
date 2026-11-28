@@ -8,8 +8,8 @@ namespace r = ::rules;
 int main() {
     r::RuleSet blocked{{{"ip-cidr","192.0.2.0/24"}}};
     r::RuleSet named{{{"domain-suffix","ok.test"}}};
-    auto policy=r::RouteMatcher::compile(std::array{r::RouteRule{blocked,1},r::RouteRule{named,0}},2,3);
-    auto direct=r::RouteMatcher::compile(std::span<r::RouteRule const>{},0,3);
+    auto policy=r::RouteProgram::compile_policy(std::array{r::ProgramRule{blocked,{r::ProgramActionKind::route,1}},r::ProgramRule{named,{r::ProgramActionKind::route,0}}},2,3);
+    auto direct=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},0,3);
     if (!policy || !direct) return 1;
     std::array<std::uint8_t,7> host{'o','k','.','t','e','s','t'};
     n::UdpTarget domain{n::UdpTargetKind::domain,host,53};
@@ -35,7 +35,7 @@ int main() {
     n::UdpTarget fixed{n::UdpTargetKind::ipv4,std::span(allowed.address).first(4),allowed.port};
     if(n::udp_validate_candidate(fixed,different_literal) || !n::udp_validate_candidate(fixed,allowed))return 15;
     r::RuleSet source{{{"and","",{{"source-ip-cidr","192.0.2.0/24",{}},{"source-port","5000",{}}}}},2};
-    auto source_policy=r::RouteMatcher::compile(std::array{r::RouteRule{source,1}},0,2,r::SourceMetadata::provided);
+    auto source_policy=r::RouteProgram::compile_policy(std::array{r::ProgramRule{source,{r::ProgramActionKind::route,1}}},0,2,r::SourceMetadata::provided);
     n::UdpEndpoint sender{4,{192,0,2,4},5000};
     if (!source_policy || n::udp_select_preflight(*source_policy,domain,&sender).error()!=n::UdpRouteError::blocked ||
         n::udp_select(*source_policy,domain,allowed,&sender).error()!=n::UdpRouteError::blocked) return 9;

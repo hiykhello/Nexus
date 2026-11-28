@@ -24,7 +24,7 @@ export namespace cli::tun_enabled {
 
     inline auto lookup_tun_owner(bool is_udp, std::span<std::uint8_t const> local_ip, std::uint16_t local_port,
         std::span<std::uint8_t const> remote_ip, std::uint16_t remote_port,
-        rules::RouteMatcher const& policy, auto const* ordered) -> std::optional<TunOwnerInfo> {
+        rules::RouteProgram const& policy, auto const* ordered) -> std::optional<TunOwnerInfo> {
         bool need_uid = policy.uses_source_uid() || (ordered && ordered->program.uses_source_uid());
         bool need_process = policy.uses_process() || (ordered && ordered->program.uses_process());
         if (!need_uid && !need_process)
@@ -81,7 +81,7 @@ export namespace cli::tun_enabled {
         [[nodiscard]] auto size() const noexcept -> std::size_t { return table_.size(); }
         auto lookup_or_query(std::uint64_t now_ms_val, std::span<std::uint8_t const> local_ip, std::uint16_t local_port,
             std::span<std::uint8_t const> remote_ip, std::uint16_t remote_port,
-            rules::RouteMatcher const& policy, auto const* ordered) -> std::optional<TunOwnerInfo> {
+            rules::RouteProgram const& policy, auto const* ordered) -> std::optional<TunOwnerInfo> {
             bool need_uid = policy.uses_source_uid() || (ordered && ordered->program.uses_source_uid());
             bool need_process = policy.uses_process() || (ordered && ordered->program.uses_process());
             if (!need_uid && !need_process) return {};
@@ -110,13 +110,13 @@ export namespace cli::tun_enabled {
     inline auto lookup_tun_owner_cached(TunUdpOwnerCache& cache, std::uint64_t now,
         std::span<std::uint8_t const> local_ip, std::uint16_t local_port,
         std::span<std::uint8_t const> remote_ip, std::uint16_t remote_port,
-        rules::RouteMatcher const& policy, auto const* ordered) -> std::optional<TunOwnerInfo> {
+        rules::RouteProgram const& policy, auto const* ordered) -> std::optional<TunOwnerInfo> {
         return cache.lookup_or_query(now, local_ip, local_port, remote_ip, remote_port, policy, ordered);
     }
 
     inline auto populate_tun_owner(bool is_udp, std::span<std::uint8_t const> local_ip, std::uint16_t local_port,
         std::span<std::uint8_t const> remote_ip, std::uint16_t remote_port,
-        rules::RouteMatcher const& policy, auto const* ordered,
+        rules::RouteProgram const& policy, auto const* ordered,
         std::optional<std::uint32_t>& uid_out, std::string& proc_out) -> void {
         if (auto info = lookup_tun_owner(is_udp, local_ip, local_port, remote_ip, remote_port, policy, ordered)) {
             if (info->uid) uid_out = info->uid;

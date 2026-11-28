@@ -1,31 +1,30 @@
-import { I18n } from "../i18n.slint";
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { OutboundGroupItem } from "../types.slint";
-import { DualTrackSpeedCard, HeroStatusCard } from "dash_perf_cards.slint";
-import { AppPerfCard, CorePerfCard } from "dash_process_cards.slint";
-import { QuickSwitchRow } from "dash_row_cards.slint";
-import { OutboundModeCard, PolicyGroupsCard, RoutingSummaryCard, ServiceHealthCard } from "dash_utility_cards.slint";
-import { RouteTransitStrip } from "route_transit_strip.slint";
+import { OutboundGroupItem, OutboundMemberItem } from "../types.slint";
+import { DashboardBentoTileStrip } from "dash_bento_tiles.slint";
+import { DashboardInboundCard } from "dash_inbound_card.slint";
+import { DashboardServersCard } from "dash_servers_card.slint";
+import { DashboardTrafficCard } from "dash_traffic_card.slint";
+import { DashboardTunnelCard } from "dash_tunnel_card.slint";
+import { NexusVScrollBar } from "nexus_primitives.slint";
 
-// Zero-Scroll 5-Row Instrument Overview Console (1280x760 fits in one screen with 80px cushion; stacks cleanly on compact <960px)
-export component StatusCard inherits VerticalLayout {
-    in property <length> window-width: 1280px;
+export component StatusCard inherits Rectangle {
     in property <bool> core-running: false;
     in property <bool> core-toggling: false;
     in property <string> core-uptime: "";
-    in property <string> app-pid-text: "--";
-    in property <string> app-cpu-text: "0.0%";
-    in property <float> app-cpu-ratio: 0.0;
     in property <string> app-memory-text: "--";
-    in property <string> core-pid-text: "";
-    in property <string> core-cpu-text: "--";
-    in property <float> core-cpu-ratio: 0.0;
     in property <string> core-memory-text: "--";
     in property <string> outbound-mode: "rule";
     in property <bool> system-proxy-supported: true;
     in property <bool> system-proxy-enabled: false;
     in property <bool> mixed-proxy-enabled: true;
+    in property <string> mixed-proxy-host: "127.0.0.1";
     in property <string> mixed-proxy-port: "7890";
+    in property <bool> socks-proxy-enabled: false;
+    in property <string> socks-proxy-host: "127.0.0.1";
+    in property <string> socks-proxy-port: "10808";
+    in property <bool> http-proxy-enabled: false;
+    in property <string> http-proxy-port: "10809";
     in property <bool> lan-share-enabled: false;
     in property <string> lan-share-subtitle: "";
     in property <bool> tun-enabled: false;
@@ -34,11 +33,11 @@ export component StatusCard inherits VerticalLayout {
     in property <int> active-node-latency-ms: -1;
     in property <int> active-sessions: 0;
     in property <[OutboundGroupItem]> groups: [];
+    in property <[OutboundMemberItem]> members: [];
     in property <string> selected-group: "";
+    in property <bool> groups-probing: false;
     in property <string> active-routing-name: "";
     in property <int> active-rule-count: 0;
-    in property <string> upload-rate: "0.0 KB/s";
-    in property <string> download-rate: "0.0 KB/s";
     in property <string> upload-total: "0 B";
     in property <string> download-total: "0 B";
     in property <string> down-speed-value: "0.0";
@@ -59,287 +58,273 @@ export component StatusCard inherits VerticalLayout {
     callback toggle-system-proxy(bool);
     callback toggle-tun(bool);
     callback toggle-mixed-port(bool);
+    callback toggle-http-port(bool);
+    callback toggle-socks-port(bool);
     callback toggle-lan-share(bool);
+    callback copy-proxy-env();
+    callback reload-config();
     callback probe-connectivity();
+    callback probe-group(string);
+    callback select-member(string, string);
     callback clear-cache();
     callback choose-group(string);
+    callback import-clipboard();
     callback open-groups();
     callback open-connections();
-    callback open-rules();
+    callback open-routing();
     callback open-host-settings();
+    callback open-profiles();
 
-    property <bool> is-desktop-grid: root.window-width >= 960px;
+    // Responsive Bento Tiers based on actual Dashboard content width (never window-width guesswork!)
+    property <length> grid-w: min(max(320px, dash-sv.visible-width - 36px), 1560px);
+    property <bool> is-4col-tiles: root.grid-w >= 820px;
+    property <bool> is-3col-cards: root.grid-w >= 1320px;
+    property <bool> is-2col-cards: root.grid-w >= 560px && !root.is-3col-cards;
+    property <bool> is-narrow-cards: root.grid-w < 560px;
 
-    padding: Theme.space-md;
-    spacing: Theme.space-sm;
+    clip: true;
 
-    // Desktop Precision 5-Row Zero-Scroll Bento Grid (>= 960px, min sum 624px <= 624px at 680px & 704px at 760px)
-    if root.is-desktop-grid : VerticalLayout {
-        vertical-stretch: 1;
-        spacing: Theme.space-sm;
+    dash-sv := ScrollView {
+        width: 100%;
+        height: 100%;
+        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, bento-col.preferred-height + 32px);
 
-        // Row 0 (44px): Live Route Transit Strip
-        RouteTransitStrip {
-            core-running: root.core-running;
-            tun-enabled: root.tun-enabled;
-            mixed-proxy-enabled: root.mixed-proxy-enabled;
-            mixed-proxy-port: root.mixed-proxy-port;
-            outbound-mode: root.outbound-mode;
-            active-rule-count: root.active-rule-count;
-            selected-group: root.selected-group;
-            active-node: root.active-node;
-            active-node-latency-ms: root.active-node-latency-ms;
-            download-rate: root.download-rate;
-            upload-rate: root.upload-rate;
-            active-sessions: root.active-sessions;
-            open-host-settings => { root.open-host-settings(); }
-            open-rules => { root.open-rules(); }
-            open-groups => { root.open-groups(); }
-            open-connections => { root.open-connections(); }
-        }
+        bento-col := VerticalLayout {
+            x: (dash-sv.visible-width - root.grid-w) / 2;
+            y: 16px;
+            width: root.grid-w;
+            height: max(self.preferred-height, dash-sv.visible-height - 32px);
+            spacing: 14px;
 
-        // Row 1 (142px, 2fr : 2fr): Status Hero | Spacious Dual-Track Throughput Sparkline
-        HorizontalLayout {
-            vertical-stretch: 0;
-            height: 142px;
-            spacing: Theme.space-sm;
-
-            HeroStatusCard {
-                horizontal-stretch: 2;
-                preferred-width: 0px;
-                min-width: 0px;
+            // Row 1: 4 Proportional Quick-Control Bento Tiles (4-across or 2x2 Grid — never full-width strips)
+            DashboardBentoTileStrip {
+                vertical-stretch: 0;
+                four-columns: root.is-4col-tiles;
                 core-running: root.core-running;
-                core-toggling: root.core-toggling;
-                core-uptime: root.core-uptime;
-                active-profile: root.active-profile;
-                active-node: root.active-node;
-                active-node-latency-ms: root.active-node-latency-ms;
-                outbound-mode: root.outbound-mode;
+                system-proxy-supported: root.system-proxy-supported;
+                system-proxy-enabled: root.system-proxy-enabled;
+                mixed-proxy-enabled: root.mixed-proxy-enabled;
+                mixed-proxy-port: root.mixed-proxy-port;
+                http-proxy-enabled: root.http-proxy-enabled;
+                http-proxy-port: root.http-proxy-port;
+                socks-proxy-enabled: root.socks-proxy-enabled;
+                socks-proxy-port: root.socks-proxy-port;
                 tun-enabled: root.tun-enabled;
-                diagnostic-message: root.diagnostic-message;
-                diagnostic-ok: root.diagnostic-ok;
-                hero-state-override: root.hero-state-override;
-                toggle-core => { root.toggle-core(); }
-                open-groups => { root.open-groups(); }
+                lan-share-enabled: root.lan-share-enabled;
+                lan-share-subtitle: root.lan-share-subtitle;
+                active-routing-name: root.active-routing-name;
+                active-rule-count: root.active-rule-count;
+                toggle-system-proxy(on) => { root.toggle-system-proxy(on); }
+                toggle-tun(on) => { root.toggle-tun(on); }
+                toggle-lan-share(on) => { root.toggle-lan-share(on); }
+                open-routing => { root.open-routing(); }
             }
 
-            DualTrackSpeedCard {
-                horizontal-stretch: 2;
-                preferred-width: 0px;
-                min-width: 0px;
-                down-value: root.down-speed-value;
-                down-unit: root.down-speed-unit;
-                down-total: root.download-total;
-                up-value: root.up-speed-value;
-                up-unit: root.up-speed-unit;
-                up-total: root.upload-total;
-            }
-        }
+            // Tier A: Ultrawide / 1080p+ Maximized (>= 1320px content width) -> 3-Column Bento Row + 4-Column Node Matrix
+            if root.is-3col-cards : VerticalLayout {
+                vertical-stretch: 1;
+                spacing: 14px;
 
-        // Row 2 (min 166px, 1fr : 1fr): App Performance | Core Performance
-        HorizontalLayout {
-            vertical-stretch: 1;
-            min-height: 166px;
-            spacing: Theme.space-sm;
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    spacing: 14px;
 
-            AppPerfCard {
-                horizontal-stretch: 1;
-                preferred-width: 0px;
-                min-width: 0px;
-                pid-text: root.app-pid-text;
-                cpu-text: root.app-cpu-text;
-                cpu-ratio: root.app-cpu-ratio;
-                memory-text: root.app-memory-text;
-            }
+                    DashboardTunnelCard {
+                        horizontal-stretch: 0.95; preferred-width: 0px; min-width: 0px;
+                        compact: !root.is-4col-tiles;
+                        core-running: root.core-running; core-toggling: root.core-toggling; core-uptime: root.core-uptime;
+                        outbound-mode: root.outbound-mode;
+                        active-profile: root.active-profile; active-node: root.active-node; active-node-latency-ms: root.active-node-latency-ms;
+                        core-memory-text: root.core-memory-text; app-memory-text: root.app-memory-text;
+                        diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok; hero-state-override: root.hero-state-override;
+                        toggle-core => { root.toggle-core(); }
+                        switch-outbound-mode(m) => { root.switch-outbound-mode(m); }
+                        copy-proxy-env => { root.copy-proxy-env(); }
+                        reload-config => { root.reload-config(); }
+                        open-profiles => { root.open-profiles(); }
+                    }
 
-            CorePerfCard {
-                horizontal-stretch: 1;
-                preferred-width: 0px;
-                min-width: 0px;
-                core-running: root.core-running;
-                pid-text: root.core-pid-text;
-                cpu-text: root.core-cpu-text;
-                cpu-ratio: root.core-cpu-ratio;
-                memory-text: root.core-memory-text;
-                clear-cache => { root.clear-cache(); }
-            }
-        }
+                    DashboardTrafficCard {
+                        horizontal-stretch: 1.15; preferred-width: 0px; min-width: 0px;
+                        compact: !root.is-4col-tiles;
+                        core-running: root.core-running; active-sessions: root.active-sessions;
+                        down-speed-value: root.down-speed-value; down-speed-unit: root.down-speed-unit;
+                        up-speed-value: root.up-speed-value; up-speed-unit: root.up-speed-unit;
+                        download-total: root.download-total; upload-total: root.upload-total;
+                        open-connections => { root.open-connections(); }
+                    }
 
-        // Row 3 (min 174px, 1fr x 4): Service Health | Routing Rules | Outbound Mode | Policy Groups
-        HorizontalLayout {
-            vertical-stretch: 1;
-            min-height: 174px;
-            spacing: Theme.space-sm;
+                    DashboardInboundCard {
+                        horizontal-stretch: 1.0; preferred-width: 0px; min-width: 0px;
+                        core-running: root.core-running; tun-enabled: root.tun-enabled;
+                        mixed-proxy-enabled: root.mixed-proxy-enabled; mixed-proxy-host: root.mixed-proxy-host; mixed-proxy-port: root.mixed-proxy-port;
+                        socks-proxy-enabled: root.socks-proxy-enabled; socks-proxy-port: root.socks-proxy-port;
+                        http-proxy-enabled: root.http-proxy-enabled; http-proxy-port: root.http-proxy-port;
+                        active-routing-name: root.active-routing-name; active-rule-count: root.active-rule-count;
+                        conn-probe-busy: root.conn-probe-busy;
+                        conn-google-ms: root.conn-google-ms; conn-cf-ms: root.conn-cf-ms;
+                        conn-github-ms: root.conn-github-ms; conn-youtube-ms: root.conn-youtube-ms;
+                        toggle-mixed-port(v) => { root.toggle-mixed-port(v); }
+                        toggle-http-port(v) => { root.toggle-http-port(v); }
+                        toggle-socks-port(v) => { root.toggle-socks-port(v); }
+                        probe-connectivity => { root.probe-connectivity(); }
+                        clear-cache => { root.clear-cache(); }
+                        open-routing => { root.open-routing(); }
+                        open-dns-host => { root.open-host-settings(); }
+                    }
+                }
 
-            ServiceHealthCard {
-                horizontal-stretch: 1;
-                preferred-width: 0px;
-                min-width: 0px;
-                core-running: root.core-running;
-                probe-busy: root.conn-probe-busy;
-                google-ms: root.conn-google-ms;
-                cf-ms: root.conn-cf-ms;
-                github-ms: root.conn-github-ms;
-                youtube-ms: root.conn-youtube-ms;
-                probe-connectivity => { root.probe-connectivity(); }
-            }
-
-            RoutingSummaryCard {
-                horizontal-stretch: 1;
-                preferred-width: 0px;
-                min-width: 0px;
-                routing-name: root.active-routing-name;
-                rule-count: root.active-rule-count;
-                outbound-mode: root.outbound-mode;
-                open-rules => { root.open-rules(); }
+                DashboardServersCard {
+                    vertical-stretch: 1;
+                    core-running: root.core-running;
+                    groups: root.groups; members: root.members;
+                    selected-group: root.selected-group; groups-probing: root.groups-probing;
+                    choose-group(g) => { root.choose-group(g); }
+                    select-member(g, m) => { root.select-member(g, m); }
+                    probe-group(g) => { root.probe-group(g); }
+                    import-clipboard => { root.import-clipboard(); }
+                    open-profiles => { root.open-profiles(); }
+                    open-groups => { root.open-groups(); }
+                }
             }
 
-            OutboundModeCard {
-                horizontal-stretch: 1;
-                preferred-width: 0px;
-                min-width: 0px;
-                outbound-mode: root.outbound-mode;
-                switch-outbound-mode(m) => { root.switch-outbound-mode(m); }
+            // Tier B: Standard & Compact Desktop (640px..1319px content width, including 780px min window!) -> Balanced 2-Column Bento Grid
+            if root.is-2col-cards : VerticalLayout {
+                vertical-stretch: 1;
+                spacing: 14px;
+
+                HorizontalLayout {
+                    vertical-stretch: 1;
+                    spacing: 14px;
+
+                    DashboardTunnelCard {
+                        horizontal-stretch: 1.0; preferred-width: 0px; min-width: 0px;
+                        compact: !root.is-4col-tiles;
+                        core-running: root.core-running; core-toggling: root.core-toggling; core-uptime: root.core-uptime;
+                        outbound-mode: root.outbound-mode;
+                        active-profile: root.active-profile; active-node: root.active-node; active-node-latency-ms: root.active-node-latency-ms;
+                        core-memory-text: root.core-memory-text; app-memory-text: root.app-memory-text;
+                        diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok; hero-state-override: root.hero-state-override;
+                        toggle-core => { root.toggle-core(); }
+                        switch-outbound-mode(m) => { root.switch-outbound-mode(m); }
+                        copy-proxy-env => { root.copy-proxy-env(); }
+                        reload-config => { root.reload-config(); }
+                        open-profiles => { root.open-profiles(); }
+                    }
+
+                    DashboardTrafficCard {
+                        horizontal-stretch: 1.0; preferred-width: 0px; min-width: 0px;
+                        compact: !root.is-4col-tiles;
+                        core-running: root.core-running; active-sessions: root.active-sessions;
+                        down-speed-value: root.down-speed-value; down-speed-unit: root.down-speed-unit;
+                        up-speed-value: root.up-speed-value; up-speed-unit: root.up-speed-unit;
+                        download-total: root.download-total; upload-total: root.upload-total;
+                        open-connections => { root.open-connections(); }
+                    }
+                }
+
+                HorizontalLayout {
+                    vertical-stretch: 1.0;
+                    spacing: 14px;
+
+                    DashboardServersCard {
+                        horizontal-stretch: 1.0; preferred-width: 0px; min-width: 0px;
+                        compact: !root.is-4col-tiles;
+                        core-running: root.core-running;
+                        groups: root.groups; members: root.members;
+                        selected-group: root.selected-group; groups-probing: root.groups-probing;
+                        choose-group(g) => { root.choose-group(g); }
+                        select-member(g, m) => { root.select-member(g, m); }
+                        probe-group(g) => { root.probe-group(g); }
+                        import-clipboard => { root.import-clipboard(); }
+                        open-profiles => { root.open-profiles(); }
+                        open-groups => { root.open-groups(); }
+                    }
+
+                    DashboardInboundCard {
+                        horizontal-stretch: 1.0; preferred-width: 0px; min-width: 0px;
+                        compact: !root.is-4col-tiles;
+                        core-running: root.core-running; tun-enabled: root.tun-enabled;
+                        mixed-proxy-enabled: root.mixed-proxy-enabled; mixed-proxy-host: root.mixed-proxy-host; mixed-proxy-port: root.mixed-proxy-port;
+                        socks-proxy-enabled: root.socks-proxy-enabled; socks-proxy-port: root.socks-proxy-port;
+                        http-proxy-enabled: root.http-proxy-enabled; http-proxy-port: root.http-proxy-port;
+                        active-routing-name: root.active-routing-name; active-rule-count: root.active-rule-count;
+                        conn-probe-busy: root.conn-probe-busy;
+                        conn-google-ms: root.conn-google-ms; conn-cf-ms: root.conn-cf-ms;
+                        conn-github-ms: root.conn-github-ms; conn-youtube-ms: root.conn-youtube-ms;
+                        toggle-mixed-port(v) => { root.toggle-mixed-port(v); }
+                        toggle-http-port(v) => { root.toggle-http-port(v); }
+                        toggle-socks-port(v) => { root.toggle-socks-port(v); }
+                        probe-connectivity => { root.probe-connectivity(); }
+                        clear-cache => { root.clear-cache(); }
+                        open-routing => { root.open-routing(); }
+                        open-dns-host => { root.open-host-settings(); }
+                    }
+                }
             }
 
-            PolicyGroupsCard {
-                horizontal-stretch: 1;
-                preferred-width: 0px;
-                min-width: 0px;
-                groups: root.groups;
-                selected-group: root.selected-group;
-                choose-group(t) => { root.choose-group(t); }
-                open-groups => { root.open-groups(); }
+            if root.is-narrow-cards : VerticalLayout {
+                spacing: 12px;
+                DashboardTunnelCard {
+                    core-running: root.core-running; core-toggling: root.core-toggling; core-uptime: root.core-uptime;
+                    outbound-mode: root.outbound-mode;
+                    active-profile: root.active-profile; active-node: root.active-node; active-node-latency-ms: root.active-node-latency-ms;
+                    core-memory-text: root.core-memory-text; app-memory-text: root.app-memory-text;
+                    diagnostic-message: root.diagnostic-message; diagnostic-ok: root.diagnostic-ok; hero-state-override: root.hero-state-override;
+                    toggle-core => { root.toggle-core(); }
+                    switch-outbound-mode(m) => { root.switch-outbound-mode(m); }
+                    copy-proxy-env => { root.copy-proxy-env(); }
+                    reload-config => { root.reload-config(); }
+                    open-profiles => { root.open-profiles(); }
+                }
+                DashboardTrafficCard {
+                    core-running: root.core-running; active-sessions: root.active-sessions;
+                    down-speed-value: root.down-speed-value; down-speed-unit: root.down-speed-unit;
+                    up-speed-value: root.up-speed-value; up-speed-unit: root.up-speed-unit;
+                    download-total: root.download-total; upload-total: root.upload-total;
+                    open-connections => { root.open-connections(); }
+                }
+                DashboardServersCard {
+                    core-running: root.core-running;
+                    groups: root.groups; members: root.members;
+                    selected-group: root.selected-group; groups-probing: root.groups-probing;
+                    choose-group(g) => { root.choose-group(g); }
+                    select-member(g, m) => { root.select-member(g, m); }
+                    probe-group(g) => { root.probe-group(g); }
+                    import-clipboard => { root.import-clipboard(); }
+                    open-profiles => { root.open-profiles(); }
+                    open-groups => { root.open-groups(); }
+                }
+                DashboardInboundCard {
+                    core-running: root.core-running; tun-enabled: root.tun-enabled;
+                    mixed-proxy-enabled: root.mixed-proxy-enabled; mixed-proxy-host: root.mixed-proxy-host; mixed-proxy-port: root.mixed-proxy-port;
+                    socks-proxy-enabled: root.socks-proxy-enabled; socks-proxy-port: root.socks-proxy-port;
+                    http-proxy-enabled: root.http-proxy-enabled; http-proxy-port: root.http-proxy-port;
+                    active-routing-name: root.active-routing-name; active-rule-count: root.active-rule-count;
+                    conn-probe-busy: root.conn-probe-busy;
+                    conn-google-ms: root.conn-google-ms; conn-cf-ms: root.conn-cf-ms;
+                    conn-github-ms: root.conn-github-ms; conn-youtube-ms: root.conn-youtube-ms;
+                    toggle-mixed-port(v) => { root.toggle-mixed-port(v); }
+                    toggle-http-port(v) => { root.toggle-http-port(v); }
+                    toggle-socks-port(v) => { root.toggle-socks-port(v); }
+                    probe-connectivity => { root.probe-connectivity(); }
+                    clear-cache => { root.clear-cache(); }
+                    open-routing => { root.open-routing(); }
+                    open-dns-host => { root.open-host-settings(); }
+                }
             }
-        }
-
-        // Row 4 (56px, 1fr x 4): Port Proxy | LAN Proxy | System Proxy | TUN Mode
-        QuickSwitchRow {
-            mixed-enabled: root.mixed-proxy-enabled;
-            mixed-port: root.mixed-proxy-port;
-            lan-enabled: root.lan-share-enabled;
-            lan-subtitle: root.lan-share-subtitle;
-            sys-proxy-supported: root.system-proxy-supported;
-            sys-proxy-enabled: root.system-proxy-enabled;
-            tun-enabled: root.tun-enabled;
-            toggle-mixed-port(on) => { root.toggle-mixed-port(on); }
-            toggle-lan-share(on) => { root.toggle-lan-share(on); }
-            toggle-system-proxy(on) => { root.toggle-system-proxy(on); }
-            toggle-tun(on) => { root.toggle-tun(on); }
         }
     }
 
-    // Compact Stacked Layout (< 960px, e.g. 780x560)
-    if !root.is-desktop-grid : VerticalLayout {
-        spacing: Theme.space-sm;
-        alignment: start;
-
-        RouteTransitStrip {
-            compact: true;
-            core-running: root.core-running;
-            tun-enabled: root.tun-enabled;
-            mixed-proxy-enabled: root.mixed-proxy-enabled;
-            mixed-proxy-port: root.mixed-proxy-port;
-            outbound-mode: root.outbound-mode;
-            active-rule-count: root.active-rule-count;
-            selected-group: root.selected-group;
-            active-node: root.active-node;
-            active-node-latency-ms: root.active-node-latency-ms;
-            download-rate: root.download-rate;
-            upload-rate: root.upload-rate;
-            active-sessions: root.active-sessions;
-            open-host-settings => { root.open-host-settings(); }
-            open-rules => { root.open-rules(); }
-            open-groups => { root.open-groups(); }
-            open-connections => { root.open-connections(); }
-        }
-
-        HeroStatusCard {
-            height: 140px;
-            core-running: root.core-running;
-            core-toggling: root.core-toggling;
-            core-uptime: root.core-uptime;
-            active-profile: root.active-profile;
-            active-node: root.active-node;
-            active-node-latency-ms: root.active-node-latency-ms;
-            outbound-mode: root.outbound-mode;
-            tun-enabled: root.tun-enabled;
-            diagnostic-message: root.diagnostic-message;
-            diagnostic-ok: root.diagnostic-ok;
-            hero-state-override: root.hero-state-override;
-            toggle-core => { root.toggle-core(); }
-            open-groups => { root.open-groups(); }
-        }
-
-        DualTrackSpeedCard {
-            height: 146px;
-            down-value: root.down-speed-value;
-            down-unit: root.down-speed-unit;
-            down-total: root.download-total;
-            up-value: root.up-speed-value;
-            up-unit: root.up-speed-unit;
-            up-total: root.upload-total;
-        }
-
-        QuickSwitchRow {
-            compact: true;
-            mixed-enabled: root.mixed-proxy-enabled;
-            mixed-port: root.mixed-proxy-port;
-            lan-enabled: root.lan-share-enabled;
-            lan-subtitle: root.lan-share-subtitle;
-            sys-proxy-supported: root.system-proxy-supported;
-            sys-proxy-enabled: root.system-proxy-enabled;
-            tun-enabled: root.tun-enabled;
-            toggle-mixed-port(on) => { root.toggle-mixed-port(on); }
-            toggle-lan-share(on) => { root.toggle-lan-share(on); }
-            toggle-system-proxy(on) => { root.toggle-system-proxy(on); }
-            toggle-tun(on) => { root.toggle-tun(on); }
-        }
-
-        HorizontalLayout {
-            height: 186px;
-            spacing: Theme.space-sm;
-            AppPerfCard {
-                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                pid-text: root.app-pid-text; cpu-text: root.app-cpu-text; cpu-ratio: root.app-cpu-ratio; memory-text: root.app-memory-text;
-            }
-            CorePerfCard {
-                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                core-running: root.core-running; pid-text: root.core-pid-text; cpu-text: root.core-cpu-text; cpu-ratio: root.core-cpu-ratio; memory-text: root.core-memory-text;
-                clear-cache => { root.clear-cache(); }
-            }
-        }
-
-        HorizontalLayout {
-            height: 180px;
-            spacing: Theme.space-sm;
-            ServiceHealthCard {
-                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                core-running: root.core-running; probe-busy: root.conn-probe-busy;
-                google-ms: root.conn-google-ms; cf-ms: root.conn-cf-ms; github-ms: root.conn-github-ms; youtube-ms: root.conn-youtube-ms;
-                probe-connectivity => { root.probe-connectivity(); }
-            }
-            OutboundModeCard {
-                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                outbound-mode: root.outbound-mode;
-                switch-outbound-mode(m) => { root.switch-outbound-mode(m); }
-            }
-        }
-
-        HorizontalLayout {
-            height: 164px;
-            spacing: Theme.space-sm;
-            RoutingSummaryCard {
-                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                routing-name: root.active-routing-name; rule-count: root.active-rule-count; outbound-mode: root.outbound-mode;
-                open-rules => { root.open-rules(); }
-            }
-            PolicyGroupsCard {
-                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
-                groups: root.groups; selected-group: root.selected-group;
-                choose-group(t) => { root.choose-group(t); }
-                open-groups => { root.open-groups(); }
-            }
-        }
+    NexusVScrollBar {
+        x: parent.width - self.width - 4px;
+        y: 8px;
+        height: max(0px, parent.height - 16px);
+        viewport-size: dash-sv.visible-height;
+        content-size: dash-sv.content-height;
+        scroll-pos <=> dash-sv.content-y;
     }
 }

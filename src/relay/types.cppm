@@ -66,7 +66,7 @@ export namespace relay {
         std::uint16_t high = 299;
     };
     struct OutboundProbe {
-        rules::RouteMatcher route;
+        rules::RouteProgram route;
         socks5::Request target;
         std::string request;
         OutboundProbeMode mode = OutboundProbeMode::http;

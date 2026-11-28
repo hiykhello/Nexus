@@ -69,7 +69,7 @@ internal fun GroupChipRow(
                 modifier = Modifier
                     .minimumInteractiveComponentSize()
                     .heightIn(min = 40.dp)
-                    .liquidPress(chipInteraction, pressedScale = 0.97f),
+                    .tactilePress(chipInteraction, pressedScale = 0.97f),
                 shape = RoundedCornerShape(999.dp),
                 color = if (isSel) primary else ext.wellSurface,
                 border = BorderStroke(

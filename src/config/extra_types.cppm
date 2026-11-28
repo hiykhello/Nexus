@@ -5,6 +5,7 @@ import platform.socket_options;
 import rules;
 export import config.service_types;
 export import config.provider_types;
+export import utility.tls_fingerprint;
 
 export namespace config {
     struct CertificateConfig {
@@ -38,36 +39,12 @@ export namespace config {
         std::uint32_t fallback_delay_ms = 500;
         auto operator==(OutboundTlsFragment const&) const -> bool = default;
     };
-    enum class TlsFingerprint : std::uint8_t {
-        native, tls13_grease, tls13_randomized,
-        chrome, firefox, safari, ios, android, edge, random, tls12
-    };
-    namespace detail {
-        struct FingerprintEntry { std::string_view name; TlsFingerprint value; };
-        inline constexpr auto fingerprint_table = std::to_array<FingerprintEntry>({
-            {"native", TlsFingerprint::native},
-            {"tls13-grease", TlsFingerprint::tls13_grease},
-            {"tls13-randomized", TlsFingerprint::tls13_randomized},
-            {"chrome", TlsFingerprint::chrome},
-            {"chrome-133", TlsFingerprint::chrome},
-            {"firefox", TlsFingerprint::firefox},
-            {"firefox-135", TlsFingerprint::firefox},
-            {"safari", TlsFingerprint::safari},
-            {"safari-18", TlsFingerprint::safari},
-            {"ios", TlsFingerprint::ios},
-            {"android", TlsFingerprint::android},
-            {"edge", TlsFingerprint::edge},
-            {"random", TlsFingerprint::random},
-            {"tls12", TlsFingerprint::tls12},
-        });
-    }
+    using TlsFingerprint = utility::TlsFingerprintId;
     [[nodiscard]] inline auto parse_tls_fingerprint(std::string_view value) noexcept -> std::optional<TlsFingerprint> {
-        for (auto const& entry : detail::fingerprint_table) if (entry.name == value) return entry.value;
-        return std::nullopt;
+        return utility::parse_tls_fingerprint_id(value);
     }
     [[nodiscard]] inline auto tls_fingerprint_name(TlsFingerprint value) noexcept -> std::string_view {
-        for (auto const& entry : detail::fingerprint_table) if (entry.value == value) return entry.name;
-        return {};
+        return utility::tls_fingerprint_id_name(value);
     }
 
     enum class NaiveProtocol : std::uint8_t { h2, h3, both };

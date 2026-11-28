@@ -1,111 +1,406 @@
+import { ScrollView } from "std-widgets.slint";
+import { ControlInspectState } from "../control_inspect_state.slint";
 import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
-import { NexusInput } from "glass_primitives.slint";
-import { NexusButton } from "nexus_buttons.slint";
+import { NexusInput, NexusVScrollBar } from "nexus_primitives.slint";
+import { NexusButton, NexusChip } from "nexus_buttons.slint";
 import { NexusSwitch } from "nexus_controls.slint";
+import { NexusSelect } from "nexus_select.slint";
 import { WorkspaceSyncCard, WorkspaceUdpProbeCard } from "workspace_sync_cards.slint";
 
-export component WorkspaceHostPortableView inherits VerticalLayout {
-    in property <length> grid-w: 600px;
-    spacing: Theme.space-sm;
+component InboundListenerBox inherits Rectangle {
+    in property <string> title;
+    in property <string> hint;
+    in property <string> placeholder;
+    in-out property <bool> checked: false;
+    in-out property <string> listen-text: "";
+    in property <bool> switch-enabled: true;
 
-    // Isolated Layer 3 Desktop Host Card
-    Rectangle {
-        width: root.grid-w; border-radius: Theme.radius-card; border-width: 1px;
-        border-color: Theme.card-border; background: Theme.card-surface;
-        VerticalLayout {
-            padding: Theme.space-md; spacing: Theme.space-sm;
-            HorizontalLayout {
-                spacing: 8px;
+    border-radius: Theme.radius-md;
+    border-width: root.checked ? 1px : 0px;
+    border-color: Theme.selected-border;
+    background: root.checked ? Theme.selected-bg : Theme.well-bg;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        HorizontalLayout {
+            alignment: space-between;
+            spacing: 8px;
+            VerticalLayout {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                spacing: 2px;
                 Text {
-                    horizontal-stretch: 1; min-width: 0px;
-                    text: I18n.t("本机设置（仅存本机）", "Local Settings (Device Only)");
-                    font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; overflow: elide;
+                    text: root.title;
+                    font-size: 13px;
+                    font-weight: 800;
+                    color: root.checked ? Theme.nav-active-fg : Theme.text-primary;
+                    overflow: elide;
                 }
-                NexusButton { btn-height: 30px; has-icon: true; icon: @image-url("../icons/check.svg"); label: I18n.t("保存设置", "Save Settings"); primary: true; clicked => { WorkspaceState.apply-host-config(); } }
+                Text {
+                    text: root.hint;
+                    font-size: 11px;
+                    color: Theme.text-secondary;
+                    overflow: elide;
+                }
             }
-
-            // Row 1: Mixed inbound + listen endpoint
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: I18n.t("混合入站", "Mixed"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+            VerticalLayout {
+                alignment: center;
                 NexusSwitch {
-                    checked <=> WorkspaceState.host-enable-mixed;
-                    enabled: !(WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route);
-                }
-                NexusInput { horizontal-stretch: 1; preferred-width: 0px; min-width: 120px; mono: true; text <=> WorkspaceState.host-mixed-listen; placeholder-text: "127.0.0.1:7890"; }
-            }
-
-            // Row 2: TUN inbound + MTU + Strict Route
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: "TUN"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                NexusSwitch {
-                    checked <=> WorkspaceState.host-enable-tun;
-                    toggled => {
-                        if (WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route) {
-                            WorkspaceState.host-enable-mixed = false;
-                        }
-                        WorkspaceState.apply-host-config();
-                    }
-                }
-                Text { text: "MTU"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                NexusInput { width: 72px; mono: true; text <=> WorkspaceState.host-tun-mtu; placeholder-text: "1400"; }
-                Rectangle { horizontal-stretch: 1; }
-                NexusSwitch {
-                    text: I18n.t("严格路由", "Strict Route");
-                    checked <=> WorkspaceState.host-tun-strict-route;
-                    toggled => {
-                        if (WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route) {
-                            WorkspaceState.host-enable-mixed = false;
-                        }
-                        WorkspaceState.apply-host-config();
-                    }
-                }
-            }
-
-            // Row 3: Dynamic Workers Controls
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: I18n.t("工作线程", "Workers"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                NexusInput { width: 58px; mono: true; text <=> WorkspaceState.host-workers; placeholder-text: "1"; }
-                Text { text: I18n.t("动态策略", "Spec"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                NexusInput { horizontal-stretch: 1; preferred-width: 0px; min-width: 84px; mono: true; text <=> WorkspaceState.host-workers-spec; placeholder-text: "auto / max / max-2"; }
-                Text { text: I18n.t("上限", "Max"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
-                NexusInput { width: 58px; mono: true; text <=> WorkspaceState.host-workers-max; placeholder-text: "0"; }
-            }
-
-            if WorkspaceState.host-strict-route-notice != "" : Rectangle {
-                border-radius: Theme.radius-md; border-width: 1px; border-color: Theme.warn-border; background: Theme.warn-bg;
-                HorizontalLayout {
-                    padding: Theme.space-sm;
-                    Text { text: WorkspaceState.host-strict-route-notice; font-size: 11px; font-weight: 600; color: Theme.warn-fg; wrap: word-wrap; }
+                    checked <=> root.checked;
+                    enabled: root.switch-enabled;
                 }
             }
         }
-    }
 
-    // Portable Layer 1 Workspace Export / Import Card
-    Rectangle {
-        width: root.grid-w; border-radius: Theme.radius-card; border-width: 1px;
-        border-color: Theme.card-border; background: Theme.card-surface;
-        VerticalLayout {
-            padding: Theme.space-md; spacing: Theme.space-sm;
-            Text { text: I18n.t("工作区备份与迁移", "Workspace Backup & Transfer"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
-            Text { text: I18n.t("仅含节点、策略组、代理链、订阅、路由与 DNS；自动剥离本机端口、系统代理与测速遥测。", "Contains only Profiles, Subscriptions, Routing & DNS; automatically strips host ports, OS proxy & telemetry."); font-size: 11px; color: Theme.text-muted; wrap: word-wrap; }
-            FlexboxLayout {
-                spacing: 8px;
-                NexusButton { btn-height: 30px; has-icon: true; icon: @image-url("../icons/external-link.svg"); label: I18n.t("导出工作区", "Export Workspace"); primary: true; clicked => { WorkspaceState.export-portable-workspace(); } }
-                NexusButton { btn-height: 30px; has-icon: true; icon: @image-url("../icons/download.svg"); label: I18n.t("导入工作区", "Import Workspace"); clicked => { WorkspaceState.import-portable-workspace(); } }
+        NexusInput {
+            mono: true;
+            enabled: root.switch-enabled;
+            text <=> root.listen-text;
+            placeholder-text: root.placeholder;
+        }
+    }
+}
+
+export component WorkspaceHostPortableView inherits Rectangle {
+    in property <length> window-width: 1280px;
+    property <bool> compact-layout: root.window-width < 1040px;
+
+    clip: true;
+
+    sv := ScrollView {
+        width: 100%;
+        height: 100%;
+        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, col.preferred-height);
+
+        col := VerticalLayout {
+            x: 0px;
+            y: 0px;
+            width: max(0px, sv.visible-width - 14px);
+            padding-bottom: 14px;
+            spacing: 14px;
+            alignment: start;
+
+            // Card 1: Full DNS Engine Configuration (SimpleDNS + FakeIP + Hosts + Advanced Custom)
+            Rectangle {
+                border-radius: Theme.radius-card;
+                border-width: 1px;
+                border-color: Theme.card-border;
+                background: Theme.card-surface;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        height: 28px;
+                        spacing: 8px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: I18n.t("DNS 与 FakeIP", "DNS & FakeIP");
+                            font-size: 16px;
+                            font-weight: 800;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                        NexusChip { label: I18n.t("标准", "Simple"); active: WorkspaceState.dns-mode == "simple"; clicked => { WorkspaceState.dns-mode = "simple"; } }
+                        NexusChip { label: I18n.t("高级", "Advanced"); active: WorkspaceState.dns-mode == "raw_kdl"; clicked => { WorkspaceState.dns-mode = "raw_kdl"; } }
+                        NexusButton {
+                            btn-height: 28px; has-icon: true; icon: @image-url("../icons/check.svg");
+                            label: I18n.t("应用 DNS", "Apply DNS"); primary: true;
+                            clicked => { WorkspaceState.apply-dns-config(WorkspaceState.dns-mode, WorkspaceState.dns-direct, WorkspaceState.dns-remote, WorkspaceState.dns-fakeip, WorkspaceState.dns-raw-kdl); }
+                        }
+                    }
+
+                    if WorkspaceState.dns-mode == "simple" : VerticalLayout {
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 84px; text: "Bootstrap"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusInput { width: 150px; mono: true; text <=> WorkspaceState.dns-bootstrap; placeholder-text: "223.5.5.5"; }
+                            Text { text: I18n.t("直连 DNS", "Direct"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.dns-direct; placeholder-text: "https://223.5.5.5/dns-query"; }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 84px; text: I18n.t("远程 DNS", "Remote"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.dns-remote; placeholder-text: "https://1.1.1.1/dns-query"; }
+                            Text { text: I18n.t("策略", "Strategy"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusSelect { width: 132px; options: ["prefer_ipv4", "prefer_ipv6", "ipv4_only", "ipv6_only"]; current-value <=> WorkspaceState.dns-strategy; }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 84px; text: "FakeIP"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusSwitch { checked <=> WorkspaceState.dns-fakeip; }
+                            NexusInput { horizontal-stretch: 1; mono: true; enabled: WorkspaceState.dns-fakeip; text <=> WorkspaceState.dns-fakeip-v4; placeholder-text: "198.18.0.0/16"; }
+                            NexusInput { horizontal-stretch: 1; mono: true; enabled: WorkspaceState.dns-fakeip; text <=> WorkspaceState.dns-fakeip-v6; placeholder-text: "fc00::/18"; }
+                            NexusSwitch { text: I18n.t("全局", "Global"); enabled: WorkspaceState.dns-fakeip; checked <=> WorkspaceState.dns-fakeip-global; }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 84px; text: I18n.t("选项", "Options"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            FlexboxLayout {
+                                horizontal-stretch: 1;
+                                spacing: 16px;
+                                NexusSwitch { text: I18n.t("并发查询", "Parallel"); checked <=> WorkspaceState.dns-parallel; }
+                                NexusSwitch { text: I18n.t("屏蔽 AAAA", "Block AAAA"); checked <=> WorkspaceState.dns-block-aaaa; }
+                                NexusSwitch { text: I18n.t("屏蔽 SVCB", "Block SVCB"); checked <=> WorkspaceState.dns-block-svcb; }
+                                NexusSwitch { text: I18n.t("系统 Hosts", "System Hosts"); checked <=> WorkspaceState.dns-use-system-hosts; }
+                            }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 84px; text: "Hosts"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.dns-hosts-text; placeholder-text: I18n.t("router.local=192.168.1.1, nas.lan=10.0.0.5", "domain=ip, ..."); }
+                        }
+                    }
+
+                    if WorkspaceState.dns-mode == "raw_kdl" : NexusInput {
+                        input-height: 44px; mono: true; text <=> WorkspaceState.dns-raw-kdl;
+                        placeholder-text: I18n.t("粘贴自定义 DNS 配置...", "Paste custom DNS config...");
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        NexusButton {
+                            btn-height: 28px; has-icon: true; icon: @image-url("../icons/trash.svg");
+                            label: I18n.t("清空 FakeIP", "Flush FakeIP");
+                            enabled: !ControlInspectState.cache-action-busy;
+                            clicked => { ControlInspectState.flush-fakeip(); }
+                        }
+                        NexusButton {
+                            btn-height: 28px; has-icon: true; icon: @image-url("../icons/refresh.svg");
+                            label: I18n.t("清除 DNS 缓存", "Clear DNS");
+                            enabled: !ControlInspectState.cache-action-busy;
+                            clicked => { ControlInspectState.clear-dns-cache(); }
+                        }
+                        if ControlInspectState.cache-action-status != "" : Text {
+                            horizontal-stretch: 1; text: ControlInspectState.cache-action-status;
+                            font-size: 11px; font-family: Theme.mono-font;
+                            color: ControlInspectState.cache-action-ok ? Theme.success-fg : Theme.error-fg;
+                            vertical-alignment: center; overflow: elide;
+                        }
+                        if ControlInspectState.cache-action-status == "" : Rectangle { horizontal-stretch: 1; }
+                    }
+                }
             }
-            if WorkspaceState.portable-status != "" : Text {
-                text: WorkspaceState.portable-status; font-size: 11px; font-family: Theme.mono-font;
-                color: WorkspaceState.portable-status-ok ? Theme.success-fg : Theme.error-fg; overflow: elide;
+
+            // Card 2: Local Inbound Listeners, TUN & Core Parameters
+            Rectangle {
+                border-radius: Theme.radius-card;
+                border-width: 1px;
+                border-color: Theme.card-border;
+                background: Theme.card-surface;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        height: 28px;
+                        spacing: 8px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: I18n.t("入站与 TUN", "Inbounds & TUN");
+                            font-size: 16px;
+                            font-weight: 800;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                        NexusButton {
+                            btn-height: 28px; has-icon: true; icon: @image-url("../icons/check.svg");
+                            label: I18n.t("保存设置", "Save"); primary: true;
+                            clicked => { WorkspaceState.apply-host-config(); }
+                        }
+                    }
+
+                    // 3-Column Local Inbound Matrix (Mixed / HTTP / SOCKS5)
+                    HorizontalLayout {
+                        spacing: 10px;
+                        InboundListenerBox {
+                            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                            title: "Mixed";
+                            hint: "HTTP + SOCKS5";
+                            placeholder: "127.0.0.1:7890";
+                            checked <=> WorkspaceState.host-enable-mixed;
+                            listen-text <=> WorkspaceState.host-mixed-listen;
+                            switch-enabled: !(WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route);
+                        }
+                        InboundListenerBox {
+                            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                            title: "HTTP";
+                            hint: I18n.t("独立端口", "HTTP port");
+                            placeholder: "127.0.0.1:10809";
+                            checked <=> WorkspaceState.host-enable-http;
+                            listen-text <=> WorkspaceState.host-http-listen;
+                            switch-enabled: !(WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route);
+                        }
+                        InboundListenerBox {
+                            horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                            title: "SOCKS5";
+                            hint: I18n.t("独立端口", "SOCKS5 port");
+                            placeholder: "127.0.0.1:10808";
+                            checked <=> WorkspaceState.host-enable-socks;
+                            listen-text <=> WorkspaceState.host-socks-listen;
+                            switch-enabled: !(WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route);
+                        }
+                    }
+
+                    if !root.compact-layout : HorizontalLayout {
+                        spacing: 8px;
+                        Text { width: 84px; text: I18n.t("局域网", "Allow LAN"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusSwitch {
+                            checked <=> WorkspaceState.host-allow-lan;
+                            enabled: !(WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route);
+                        }
+                        NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.host-lan-listen; placeholder-text: I18n.t("额外端口，如 0.0.0.0:7891", "Extra listen (optional)"); }
+                        NexusInput { width: 116px; mono: true; text <=> WorkspaceState.host-lan-user; placeholder-text: I18n.t("用户名", "User"); }
+                        NexusInput { width: 116px; mono: true; password: true; text <=> WorkspaceState.host-lan-pass; placeholder-text: I18n.t("密码", "Pass"); }
+                    }
+
+                    if root.compact-layout : VerticalLayout {
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 84px; text: I18n.t("局域网", "Allow LAN"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusSwitch {
+                                checked <=> WorkspaceState.host-allow-lan;
+                                enabled: !(WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route);
+                            }
+                            NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.host-lan-listen; placeholder-text: I18n.t("额外端口，如 0.0.0.0:7891", "Extra listen"); }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { width: 84px; text: I18n.t("局域网认证", "LAN Auth"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.host-lan-user; placeholder-text: I18n.t("用户名", "User"); }
+                            NexusInput { horizontal-stretch: 1; mono: true; password: true; text <=> WorkspaceState.host-lan-pass; placeholder-text: I18n.t("密码", "Pass"); }
+                        }
+                    }
+
+                    Rectangle { height: 1px; background: Theme.hairline-subtle; }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { width: 84px; text: "TUN"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusSwitch { checked <=> WorkspaceState.host-enable-tun; }
+                        NexusInput { width: 128px; mono: true; text <=> WorkspaceState.host-tun-name; placeholder-text: "nexus-tun0"; }
+                        Text { text: "MTU"; font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusInput { width: 74px; mono: true; text <=> WorkspaceState.host-tun-mtu; placeholder-text: "1400"; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: I18n.t("绑定网卡", "Bind NIC"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusInput { width: 128px; mono: true; text <=> WorkspaceState.host-bind-iface; placeholder-text: "eth0 / wlan0"; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { width: 84px; text: I18n.t("TUN 网段", "TUN CIDR"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.host-tun-inet4; placeholder-text: "172.19.0.1/30"; }
+                        NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.host-tun-inet6; placeholder-text: "fdfe:dcba:9876::1/126"; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { width: 84px; text: I18n.t("TUN 选项", "Options"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        FlexboxLayout {
+                            horizontal-stretch: 1;
+                            spacing: 16px;
+                            NexusSwitch { text: I18n.t("自动路由", "Auto Route"); checked <=> WorkspaceState.host-tun-auto-route; }
+                            NexusSwitch { text: I18n.t("严格路由", "Strict Route"); checked <=> WorkspaceState.host-tun-strict-route; }
+                            NexusSwitch { text: I18n.t("绕过局域网", "Bypass LAN"); checked <=> WorkspaceState.host-tun-exclude-private; }
+                            NexusSwitch { text: I18n.t("合并同组选择器", "Include Siblings"); checked <=> WorkspaceState.host-include-siblings; }
+                        }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { width: 84px; text: I18n.t("排除网段", "Exclude"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.host-tun-exclude-cidr; placeholder-text: "192.168.50.0/24, 10.8.0.0/16"; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { width: 84px; text: I18n.t("工作线程", "Workers"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusInput { width: 68px; mono: true; text <=> WorkspaceState.host-workers; placeholder-text: "1"; }
+                        Text { text: I18n.t("策略", "Spec"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.host-workers-spec; placeholder-text: "auto / max-2"; }
+                        Text { text: I18n.t("上限", "Max"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusInput { width: 72px; mono: true; text <=> WorkspaceState.host-workers-max; placeholder-text: "0"; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { width: 84px; text: I18n.t("出口 IP", "Bind IP"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.host-bind-inet4; placeholder-text: I18n.t("IPv4 (可选)", "IPv4 (optional)"); }
+                        NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.host-bind-inet6; placeholder-text: I18n.t("IPv6 (可选)", "IPv6 (optional)"); }
+                    }
+
+                    if WorkspaceState.host-strict-route-notice != "" : Text {
+                        text: WorkspaceState.host-strict-route-notice;
+                        font-size: 11px; font-weight: 600; color: Theme.warn-fg; wrap: word-wrap;
+                    }
+                }
             }
+
+            // Card 3: FullTemplate Wrapper & Portable Workspace Backup
+            Rectangle {
+                border-radius: Theme.radius-card;
+                border-width: 1px;
+                border-color: Theme.card-border;
+                background: Theme.card-surface;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    HorizontalLayout {
+                        height: 28px;
+                        spacing: 8px;
+                        Text { horizontal-stretch: 1; text: I18n.t("模板与备份", "Template & Backup"); font-size: 15px; font-weight: 800; color: Theme.text-primary; vertical-alignment: center; }
+                        NexusButton { btn-height: 28px; label: I18n.t("保存模板", "Save"); clicked => { WorkspaceState.apply-full-template(); } }
+                        NexusButton { btn-height: 28px; label: I18n.t("导出备份", "Export"); primary: true; clicked => { WorkspaceState.export-portable-workspace(); } }
+                        NexusButton { btn-height: 28px; label: I18n.t("导入备份", "Import"); clicked => { WorkspaceState.import-portable-workspace(); } }
+                    }
+
+                    FlexboxLayout {
+                        spacing: 16px;
+                        NexusSwitch { text: I18n.t("启用全局配置模板覆写", "Enable Global Template"); checked <=> WorkspaceState.tpl-enabled; }
+                        NexusSwitch { text: I18n.t("仅向模板追加节点", "Append Proxies Only"); enabled: WorkspaceState.tpl-enabled; checked <=> WorkspaceState.tpl-append-only; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { width: 84px; text: I18n.t("模板锚点", "Detour Tag"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusInput { width: 150px; mono: true; enabled: WorkspaceState.tpl-enabled; text <=> WorkspaceState.tpl-proxy-detour; placeholder-text: "proxy_detour tag"; }
+                        NexusInput { horizontal-stretch: 1; mono: true; enabled: WorkspaceState.tpl-enabled; text <=> WorkspaceState.tpl-kdl; placeholder-text: I18n.t("自定义全局模板内容...", "Custom template content..."); }
+                    }
+
+                    if WorkspaceState.portable-status != "" : Text {
+                        text: WorkspaceState.portable-status; font-size: 11px; font-family: Theme.mono-font;
+                        color: WorkspaceState.portable-status-ok ? Theme.success-fg : Theme.error-fg; overflow: elide;
+                    }
+                }
+            }
+
+            WorkspaceSyncCard { grid-w: col.width; }
+            WorkspaceUdpProbeCard { grid-w: col.width; }
         }
     }
 
-    WorkspaceSyncCard { grid-w: root.grid-w; }
-    WorkspaceUdpProbeCard { grid-w: root.grid-w; }
+    NexusVScrollBar {
+        x: parent.width - self.width - 2px;
+        y: 2px;
+        height: max(0px, parent.height - 4px);
+        viewport-size: sv.visible-height;
+        content-size: sv.content-height;
+        scroll-pos <=> sv.content-y;
+    }
 }

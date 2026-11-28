@@ -55,7 +55,7 @@ inbounds {{
 }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rulesets {{ "rules" path="rules.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="rules" outbound="reject"; }}; final "direct"; }}
+routing {{ rulesets {{ "rules" path="rules.kdl" format="kdl"; }}; rules {{ - rule-set="rules" to="reject"; }}; final "direct"; }}
 ''')
     stop=threading.Event(); errors=[]; received=[]
     def origin():

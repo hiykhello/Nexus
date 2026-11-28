@@ -382,7 +382,7 @@ outbound "direct" type="direct"
 outbound "block" type="block"
 routing {
     rulesets { local path="rel-rules.kdl" format="kdl"; }
-    rules { - kind="rule-set" value="local" outbound="block"; }
+    rules { - rule-set="local" to="block"; }
     final "direct"
 }
 ''')

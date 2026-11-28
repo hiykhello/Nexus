@@ -2,31 +2,31 @@
   <defs>
     <linearGradient id="p-left" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#38bdf8"/>
-      <stop offset="55%" stop-color="#3b82f6"/>
-      <stop offset="100%" stop-color="#6366f1"/>
+      <stop offset="55%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#1d4ed8"/>
     </linearGradient>
     <linearGradient id="p-right" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0%" stop-color="#60a5fa"/>
-      <stop offset="50%" stop-color="#818cf8"/>
-      <stop offset="100%" stop-color="#a855f7"/>
+      <stop offset="52%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
     </linearGradient>
     <linearGradient id="p-base" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.88"/>
-      <stop offset="50%" stop-color="#3b82f6" stop-opacity="0.92"/>
-      <stop offset="100%" stop-color="#8b5cf6" stop-opacity="0.88"/>
+      <stop offset="0%" stop-color="#2563eb" stop-opacity="0.90"/>
+      <stop offset="50%" stop-color="#0ea5e9" stop-opacity="0.92"/>
+      <stop offset="100%" stop-color="#10b981" stop-opacity="0.90"/>
     </linearGradient>
     <linearGradient id="p-rim" x1="0.5" y1="0" x2="0.5" y2="1">
       <stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"/>
       <stop offset="60%" stop-color="#93c5fd" stop-opacity="0.65"/>
-      <stop offset="100%" stop-color="#c084fc" stop-opacity="0.75"/>
+      <stop offset="100%" stop-color="#6ee7b7" stop-opacity="0.75"/>
     </linearGradient>
   </defs>
-  <polygon points="16,3 4.2,24.8 16,20.2" fill="url(#p-left)" fill-opacity="0.88"/>
-  <polygon points="16,3 27.8,24.8 16,20.2" fill="url(#p-right)" fill-opacity="0.82"/>
-  <polygon points="4.2,24.8 16,20.2 27.8,24.8 16,28.8" fill="url(#p-base)" fill-opacity="0.74"/>
+  <polygon points="16,3 4.2,24.8 16,20.2" fill="url(#p-left)" fill-opacity="0.90"/>
+  <polygon points="16,3 27.8,24.8 16,20.2" fill="url(#p-right)" fill-opacity="0.86"/>
+  <polygon points="4.2,24.8 16,20.2 27.8,24.8 16,28.8" fill="url(#p-base)" fill-opacity="0.78"/>
   <polygon points="16,8.2 10.2,21.2 16,18.8 21.8,21.2" fill="#ffffff" fill-opacity="0.22"/>
   <polyline points="16,3 4.2,24.8 16,28.8 27.8,24.8 16,3" fill="none" stroke="url(#p-rim)" stroke-width="1.35" stroke-linejoin="round"/>
   <line x1="16" y1="3" x2="16" y2="20.2" stroke="#ffffff" stroke-opacity="0.78" stroke-width="1.15" stroke-linecap="round"/>
   <line x1="4.2" y1="24.8" x2="16" y2="20.2" stroke="#e0f2fe" stroke-opacity="0.55" stroke-width="0.95"/>
-  <line x1="27.8" y1="24.8" x2="16" y2="20.2" stroke="#e9d5ff" stroke-opacity="0.55" stroke-width="0.95"/>
+  <line x1="27.8" y1="24.8" x2="16" y2="20.2" stroke="#d1fae5" stroke-opacity="0.55" stroke-width="0.95"/>
 </svg>

@@ -59,8 +59,7 @@ static auto fetch_once(int argc,char** argv,WatchState* watch=nullptr) -> int {
     std::optional<::state::RulesetKey> key;
     ::state::RulesetLookup cached{};
     if (options->cache) {
-        if (std::ranges::any_of(std::array<std::filesystem::path,5>{argv[1],argv[5],config->selector_state_directory,
-            config->dns ? config->dns->message_cache_directory : std::string{},
+        if (std::ranges::any_of(std::array<std::filesystem::path,4>{argv[1],argv[5],config->selector_state_directory,
             config->dns && config->dns->fakeip ? config->dns->fakeip->state_directory : std::string{}},
             [&](auto const& path) { return cache_path_conflict(options->cache_root,path); })) {
             std::cerr << "rule cache overlaps configuration, destination or authoritative state\n";

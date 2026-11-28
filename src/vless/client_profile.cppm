@@ -88,7 +88,7 @@ export namespace vless::detail {
                     shape_config.group_count=2;
                     shape_config.group_order={hybrid[0],hybrid[1]};
                     shape_config.key_share_count=2;
-                    shape_config.key_share_groups=hybrid;
+                    shape_config.key_share_groups={hybrid[0],hybrid[1],0};
                 }
                 // Reality authenticates the peer with an Ed25519 credential.
                 constexpr std::uint16_t ed25519=0x0807;

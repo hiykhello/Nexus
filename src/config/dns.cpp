@@ -266,11 +266,6 @@ namespace config {
                 if (result.optimistic_cache_seconds || !seconds || !*seconds || *seconds>3600)
                     return error("DNS optimistic-cache-seconds requires one integer from 1 through 3600");
                 result.optimistic_cache_seconds=static_cast<std::uint32_t>(*seconds);
-            } else if (child.name=="message-cache-directory") {
-                auto path=scalar(child);
-                if (!result.message_cache_directory.empty() || !path || !path->starts_with('/') || path->contains('\0') || path->ends_with('/'))
-                    return error("message-cache-directory requires one absolute directory path");
-                result.message_cache_directory=*path;
             } else if (child.name=="disable-cache") {
                 if (cache_seen || child.tag || !child.properties.empty() || !child.children.empty() ||
                     child.arguments.size()!=1 || child.arguments[0].tag || !std::holds_alternative<bool>(child.arguments[0].data))
@@ -353,15 +348,9 @@ namespace config {
                 edges.push_back({i,*result.servers[i].upstream->resolver});
         if (!policy::dependency_order(result.servers.size(),edges))
             return error("circular DNS domain-resolver dependency");
-        if (!result.message_cache_directory.empty()) {
-            if (!result.listen || result.disable_cache || result.fakeip)
-                return error("message-cache-directory requires a DNS listener with cache enabled and without fake-ip");
-        }
         if (result.listen && (!result.disable_cache || result.fakeip)) {
             auto policy=node;
-            std::erase_if(policy.children,[](auto const& field) {
-                return field.name=="listen" || field.name=="message-cache-directory";
-            });
+            std::erase_if(policy.children,[](auto const& field) { return field.name=="listen"; });
             auto encoded=g::write_kdl(g::KdlDocument{std::move(policy)});
             if (!encoded) return error("cannot encode the DNS message cache policy");
             result.message_cache_policy=std::move(*encoded);

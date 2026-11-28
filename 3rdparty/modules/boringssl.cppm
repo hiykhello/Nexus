@@ -247,6 +247,9 @@ export namespace boringssl {
     inline constexpr auto evp_aead_default_tag_length = EVP_AEAD_DEFAULT_TAG_LENGTH;
     inline constexpr auto evp_pkey_ec = EVP_PKEY_EC;
     inline constexpr auto evp_pkey_ed25519 = EVP_PKEY_ED25519;
+    inline constexpr auto evp_pkey_ml_dsa_44 = EVP_PKEY_ML_DSA_44;
+    inline constexpr auto evp_pkey_ml_dsa_65 = EVP_PKEY_ML_DSA_65;
+    inline constexpr auto evp_pkey_ml_dsa_87 = EVP_PKEY_ML_DSA_87;
     inline constexpr auto evp_pkey_rsa = EVP_PKEY_RSA;
     inline constexpr auto nid_x9_62_prime256v1 = NID_X9_62_prime256v1;
     inline constexpr auto nid_secp384r1 = NID_secp384r1;

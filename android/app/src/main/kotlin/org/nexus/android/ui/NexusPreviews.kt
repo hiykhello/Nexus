@@ -43,26 +43,26 @@ internal val PREVIEW_SAMPLE_GROUPS = listOf(
     OutboundGroupSnapshot(
         tag = "Auto",
         mode = "url-test",
-        active = "HK-01 香港",
+        active = "HK-01 香港 [示例]",
         manualOverride = false,
         members = listOf(
-            OutboundMemberSnapshot("HK-01 香港", "healthy", 42, selected = true, overridden = false),
-            OutboundMemberSnapshot("SG-02 狮城", "healthy", 118, selected = false, overridden = false),
-            OutboundMemberSnapshot("JP-03 东京", "healthy", 245, selected = false, overridden = false),
-            OutboundMemberSnapshot("UK-06 伦敦", "degraded", 388, selected = false, overridden = false),
-            OutboundMemberSnapshot("US-04 硅谷", "timeout", 0, selected = false, overridden = true),
-            OutboundMemberSnapshot("DE-05 德国", "unknown", -1, selected = false, overridden = false),
+            OutboundMemberSnapshot("HK-01 香港 [示例]", "healthy", 42, selected = true, overridden = false),
+            OutboundMemberSnapshot("SG-02 狮城 [示例]", "healthy", 118, selected = false, overridden = false),
+            OutboundMemberSnapshot("JP-03 东京 [示例]", "healthy", 245, selected = false, overridden = false),
+            OutboundMemberSnapshot("UK-06 伦敦 [示例]", "degraded", 388, selected = false, overridden = false),
+            OutboundMemberSnapshot("US-04 硅谷 [示例]", "timeout", 0, selected = false, overridden = true),
+            OutboundMemberSnapshot("DE-05 德国 [示例]", "unknown", -1, selected = false, overridden = false),
         ),
     ),
     OutboundGroupSnapshot(
         tag = "Streaming",
         mode = "selector",
-        active = "SG-02",
+        active = "SG-02 [示例]",
         manualOverride = true,
         members = listOf(
-            OutboundMemberSnapshot("SG-02", "healthy", 94, selected = true, overridden = true),
-            OutboundMemberSnapshot("JP-03", "healthy", 162, selected = false, overridden = false),
-            OutboundMemberSnapshot("TW-07", "healthy", 58, selected = false, overridden = false),
+            OutboundMemberSnapshot("SG-02 [示例]", "healthy", 94, selected = true, overridden = true),
+            OutboundMemberSnapshot("JP-03 [示例]", "healthy", 162, selected = false, overridden = false),
+            OutboundMemberSnapshot("TW-07 [示例]", "healthy", 58, selected = false, overridden = false),
         ),
     ),
 )
@@ -163,30 +163,40 @@ internal val PREVIEW_SAMPLE_UL = listOf(
 
 internal val PREVIEW_SAMPLE_EXIT = ActiveExitSummary(
     groupTag = "Auto",
-    memberName = "HK-01",
+    memberName = "HK-01 [示例]",
     latencyMs = 42L,
     state = "healthy",
+)
+
+internal val PREVIEW_SAMPLE_LATENCIES = mapOf(
+    "hk-01" to 38L,
+    "sg-hy2" to 64L,
+    "jp-wg" to 52L,
+    "auto-grp" to 38L,
+    "chain-01" to 91L,
 )
 
 internal val PREVIEW_SAMPLE_WORKSPACE = WorkspaceUiState(
     document = WorkspaceDocument(
         profiles = listOf(
-            ProfileItem(id = "hk-01", remarks = "HK-01 香港高速", kind = ProfileKind.NODE, node = NodeConfig(protocol = "vless", server = "hk.example.com", port = 443)),
-            ProfileItem(id = "auto-grp", remarks = "Auto 测速策略组", kind = ProfileKind.POLICY_GROUP, policyGroup = PolicyGroupConfig(strategy = "url-test", memberIds = listOf("hk-01"), interruptExistConnections = true)),
-            ProfileItem(id = "chain-01", remarks = "双跳中继链", kind = ProfileKind.PROXY_CHAIN, proxyChain = ProxyChainConfig(hopIds = listOf("hk-01"))),
-            ProfileItem(id = "custom-corp", remarks = "Corp-Split", kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = PREVIEW_SAMPLE_CUSTOM_CONFIG),
+            ProfileItem(id = "hk-01", remarks = "HK-01 香港高速 [示例]", subscriptionId = "main-sub", kind = ProfileKind.NODE, node = NodeConfig(protocol = "vless", server = "hk.example.com", port = 443, flow = "xtls-rprx-vision")),
+            ProfileItem(id = "sg-hy2", remarks = "SG-02 狮城 Hysteria2 [示例]", subscriptionId = "main-sub", kind = ProfileKind.NODE, node = NodeConfig(protocol = "hysteria2", server = "sg.example.com", port = 8443)),
+            ProfileItem(id = "jp-wg", remarks = "JP-03 东京 WireGuard [示例]", kind = ProfileKind.NODE, node = NodeConfig(protocol = "wireguard", server = "jp.example.com", port = 51820)),
+            ProfileItem(id = "auto-grp", remarks = "Auto 测速策略组 [示例]", kind = ProfileKind.POLICY_GROUP, policyGroup = PolicyGroupConfig(strategy = "url-test", memberIds = listOf("hk-01", "sg-hy2"), interruptExistConnections = true)),
+            ProfileItem(id = "chain-01", remarks = "双跳中继链 [示例]", kind = ProfileKind.PROXY_CHAIN, proxyChain = ProxyChainConfig(hopIds = listOf("hk-01", "jp-wg"))),
+            ProfileItem(id = "custom-corp", remarks = "Corp-Split [示例]", kind = ProfileKind.FULL_CUSTOM_KDL, fullCustomKdl = PREVIEW_SAMPLE_CUSTOM_CONFIG),
         ),
         subscriptions = listOf(
             SubscriptionItem(
                 id = "main-sub",
-                remarks = "Tokyo-Core",
+                remarks = "Tokyo-Core [示例]",
                 url = "https://sub.example.com/nexus",
                 usage = SubscriptionUsage(
                     uploadBytes = 12L * 1024 * 1024 * 1024,
                     downloadBytes = 68L * 1024 * 1024 * 1024,
                     totalBytes = 200L * 1024 * 1024 * 1024,
                     expireUnixSec = 1_800_000_000L,
-                    profileTitle = "Tokyo-Core 专线",
+                    profileTitle = "Tokyo-Core 专线 [示例]",
                 ),
             ),
         ),
@@ -220,7 +230,6 @@ internal fun SampleRootPreview(
     themePreset: AndroidThemePreset = if (dark) AndroidThemePreset.OBSIDIAN else AndroidThemePreset.PAPER,
     tunnelState: VpnTunnelState = if (running) VpnTunnelState.RUNNING else VpnTunnelState.STOPPED,
     lastError: String = "",
-    dashEditing: Boolean = false,
 ) {
     NexusTheme(darkTheme = dark, themePreset = themePreset) {
         NexusRootScreen(
@@ -230,7 +239,7 @@ internal fun SampleRootPreview(
             lastError = lastError,
             powerSave = false,
             localLogs = if (running) PREVIEW_SAMPLE_LOGS else emptyList(),
-            activeProfileName = "Tokyo-Core",
+            activeProfileName = "Tokyo-Core [示例]",
             excludedPackages = setOf("com.android.chrome", "com.google.android.projection.gearhead"),
             workspaceState = PREVIEW_SAMPLE_WORKSPACE,
             onToggleExcluded = { _, _ -> },
@@ -259,7 +268,6 @@ internal fun SampleRootPreview(
             previewActiveExit = if (running) PREVIEW_SAMPLE_EXIT else ActiveExitSummary(),
             previewQuickNodes = if (running) PREVIEW_SAMPLE_GROUPS.first().members else emptyList(),
             previewMemoryText = if (running) "9.4 MB" else "6.2 MB",
-            previewDashEditing = dashEditing,
             previewOnsetMarkers = if (running) listOf(SparklineOnset(sampleIndex = 14, label = "HK-01")) else emptyList(),
             previewCachedGroups = if (running) PREVIEW_SAMPLE_GROUPS else emptyList(),
         )
@@ -315,13 +323,17 @@ private fun QuickCommandDiagnosticPreview() {
 @Composable
 private fun OverviewPhoneDarkPreview() = SampleRootPreview(dark = true, running = true)
 
-@Preview(name = "Phone Dark Customize Reorder", showBackground = true, widthDp = 412, heightDp = 915, uiMode = Configuration.UI_MODE_NIGHT_YES)
-@Composable
-private fun OverviewCustomizeDarkPreview() = SampleRootPreview(dark = true, running = true, dashEditing = true)
-
 @Preview(name = "Phone Light Running", showBackground = true, widthDp = 412, heightDp = 915)
 @Composable
 private fun OverviewPhoneLightPreview() = SampleRootPreview(dark = false, running = true)
+
+@Preview(name = "Phone Light Standby", showBackground = true, widthDp = 412, heightDp = 915)
+@Composable
+private fun OverviewPhoneLightStandbyPreview() = SampleRootPreview(dark = false, running = false)
+
+@Preview(name = "Phone Dark Standby", showBackground = true, widthDp = 412, heightDp = 915, uiMode = Configuration.UI_MODE_NIGHT_YES)
+@Composable
+private fun OverviewPhoneDarkStandbyPreview() = SampleRootPreview(dark = true, running = false)
 
 @Preview(name = "Foldable Medium 674dp Rail", showBackground = true, widthDp = 674, heightDp = 841, uiMode = Configuration.UI_MODE_NIGHT_YES)
 @Composable
@@ -385,6 +397,7 @@ private fun ConfigPhoneDarkPreview() {
             contentPadding = PaddingValues(16.dp),
             onOpenSplitTunnel = {},
             onOpenDiagnostics = {},
+            profileLatencies = PREVIEW_SAMPLE_LATENCIES,
             workspaceState = PREVIEW_SAMPLE_WORKSPACE,
         )
     }

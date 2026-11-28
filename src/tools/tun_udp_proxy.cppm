@@ -260,7 +260,7 @@ export namespace cli::tun_enabled {
         // Evaluate network=icmp routing policy on a raw IPv4/IPv6 ICMP Echo packet entering TUN.
         template<class Ordered = decltype(relay::RouteSnapshot::ordered)::value_type>
         [[nodiscard]] static auto route_tun_icmp(std::span<std::uint8_t const> raw_ip_packet,
-            rules::RouteMatcher const& policy, Ordered const* ordered,
+            rules::RouteProgram const& policy, Ordered const* ordered,
             std::string_view source_interface = {}, rules::IngressMetadata ingress = {})
             -> std::optional<TunIcmpDecision> {
             std::string dst_text;

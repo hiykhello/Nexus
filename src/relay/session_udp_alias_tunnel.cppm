@@ -309,10 +309,10 @@ namespace relay::session_udp_detail {
     auto udp_fakeip_domain(socks5::UdpDatagram packet, socks5::Request const& request) -> socks5::UdpDatagram;
     auto udp_send_alias(Session& session, socks5::UdpIngress& ingress, UdpResolution& resolution,
         socks5::UdpDatagram const& domain, std::span<io::endpoint const> endpoints,
-        std::shared_ptr<UdpFakeIpLease> const& lease, rules::RouteMatcher const* policy, socks5::UdpPeer const& source,
+        std::shared_ptr<UdpFakeIpLease> const& lease, rules::RouteProgram const* policy, socks5::UdpPeer const& source,
         std::optional<std::size_t> rule = {}, std::size_t outbound = 0) -> capy::task<void>;
     auto udp_resolve_alias(Session& session, io::io_context& context, socks5::UdpIngress& ingress,
-        UdpResolution& resolution, rules::RouteMatcher const& policy) -> capy::task<void>;
+        UdpResolution& resolution, rules::RouteProgram const& policy) -> capy::task<void>;
 #endif
 
     struct UotState {

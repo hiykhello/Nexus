@@ -430,20 +430,10 @@ export namespace config::desugar_detail {
             if (rules_seen || child.tag || !child.arguments.empty())
                 return error("invalid or duplicate rules block");
             rules_seen = true;
-            for (auto const& r : child.children)
+            for (auto const& r : child.children) {
                 if (r.name != "-") return error("rules accepts only - nodes");
-            bool ergonomic = !sub_rules.empty() || !child.properties.empty() || std::ranges::any_of(child.children,
-                [](Node const& r) {
-                    return !r.arguments.empty() || !r.children.empty() ||
-                           property(r, "to") || property(r, "action") ||
-                           property(r, "invert") || property(r, "sub-rule");
-                });
-            if (!ergonomic) {
-                for (auto& r : child.children) {
-                    r.name = "rule";
-                    out_children.push_back(std::move(r));
-                }
-                continue;
+                if (property(r, "kind"))
+                    return error("legacy kind=\"rule-set\" routing rule is removed; use - rule-set=\"<name>\" to=\"<outbound>\"");
             }
             if (has_tcp_program) return error("cannot mix rules block and tcp-program node");
             Value const* p_timeout = property(child, "sniff-timeout-ms");
@@ -457,7 +447,7 @@ export namespace config::desugar_detail {
                 p_timeout ? *p_timeout : Value{std::int64_t{300}, {}}});
             prog.properties.push_back({"unknown",
                 p_unknown ? *p_unknown : Value{std::string("skip"), {}}});
-            if (p_udp) prog.properties.push_back({"udp", *p_udp});
+            prog.properties.push_back({"udp", p_udp ? *p_udp : Value{true, {}}});
             std::vector<Node> lifted_defaults;
             std::vector<std::string_view> visiting;
             for (auto& r : child.children) {

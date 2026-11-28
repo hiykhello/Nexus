@@ -46,7 +46,7 @@ outbound "short" type="shadowsocks" {{ server host="short-node.test" port={upstr
 outbound "short2" type="shadowsocks" {{ server host="other-node.test" port={upstream.getsockname()[1]}; bootstrap-resolver "dns"; connect-timeout-ms 400; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={upstream.getsockname()[1]}; connect-timeout-ms 2500; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
 outbound "dead" type="shadowsocks" {{ server host="127.0.0.1" port={dead.getsockname()[1]}; connect-timeout-ms 2500; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
-routing {{ rulesets {{ "short" path="short.kdl" format="kdl"; "short2" path="short2.kdl" format="kdl"; "by-ip" path="rules.kdl" format="kdl"; "dead" path="dead.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="short" outbound="short"; - kind="rule-set" value="short2" outbound="short2"; - kind="rule-set" value="by-ip" outbound="edge"; - kind="rule-set" value="dead" outbound="dead"; }}; final "direct"; }}
+routing {{ rulesets {{ "short" path="short.kdl" format="kdl"; "short2" path="short2.kdl" format="kdl"; "by-ip" path="rules.kdl" format="kdl"; "dead" path="dead.kdl" format="kdl"; }}; rules {{ - rule-set="short" to="short"; - rule-set="short2" to="short2"; - rule-set="by-ip" to="edge"; - rule-set="dead" to="dead"; }}; final "direct"; }}
 ''')
     process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:

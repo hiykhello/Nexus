@@ -20,7 +20,7 @@ role "server"
 inbound "ss" type="shadowsocks" {{ listen host="127.0.0.1" port={port}; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rulesets {{ "users" path="rules.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="users" outbound="reject"; }}; final "direct"; }}
+routing {{ rulesets {{ "users" path="rules.kdl" format="kdl"; }}; rules {{ - rule-set="users" to="reject"; }}; final "direct"; }}
 ''')
     server=subprocess.Popen(['stdbuf','-oL',binary,'run','--config',root/'config.kdl'],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
     try:

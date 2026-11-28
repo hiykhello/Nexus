@@ -23,7 +23,6 @@ import state.fakeip;
 import rulefile;
 import state.dns_cache;
 import state.serde;
-import cli.dns_cache_state;
 import cli.dns_cache_unified;
 import cli.dns_live_query;
 
@@ -47,11 +46,9 @@ namespace cli {
             std::vector<dns::MessageUpstream> upstreams;
             std::shared_ptr<dns::MessageCache> cache;
             std::shared_ptr<dns::ReverseCache> reverse_cache;
-            std::shared_ptr<DnsCacheState> cache_state;
-            std::optional<DnsCacheState::Scope> cache_scope;
             std::optional<UnifiedDnsCache> unified_cache;
             bool restored=false;
-            std::optional<std::uint64_t> observed_view, cache_state_view;
+            std::optional<std::uint64_t> observed_view;
             dns::MessageRuleSource rules;
             dns::MessageUpstreamSnapshot resolver{};
             bool proxy_routes=false;
@@ -62,21 +59,10 @@ namespace cli {
 
 #ifdef NEXUS_ENABLE_FAKEIP
             auto initialize_fakeip(config::DnsFakeIp const& spec) -> std::expected<void,std::string> {
-                auto mode=spec.initialize ? dns::FakeIpHistoryStoreMode::create_new : dns::FakeIpHistoryStoreMode::open_existing;
                 std::optional<dns::FakeIpIpv6Range> ipv6;
                 if (spec.ipv6) ipv6.emplace(spec.ipv6->first,spec.ipv6->second);
-                if (spec.unified) {
-                    auto owner=unified_fakeip(spec,ipv6);
-                    if (!owner) return std::unexpected(std::move(owner.error()));
-                    fakeip=std::move(*owner); return {};
-                }
-                auto store=dns::FakeIpHistoryStore::open_with_credentials(spec.state_directory,mode,ipv6);
-                if (!store) return std::unexpected("cannot open FakeIP history ("+std::to_string(static_cast<int>(store.error()))+")");
-                auto first=spec.first, last=spec.last;
-                if (last-first>=3) {++first;--last;}
-                auto grace=std::chrono::seconds(5);
-                auto owner=dns::start_fakeip(std::move(*store),{spec.first,spec.last,first,last,std::chrono::seconds(spec.ttl_seconds),grace,ipv6},grace);
-                if (!owner) return std::unexpected("cannot prepare FakeIP history");
+                auto owner=unified_fakeip(spec,ipv6);
+                if (!owner) return std::unexpected(std::move(owner.error()));
                 fakeip=std::move(*owner); return {};
             }
 
@@ -87,7 +73,7 @@ namespace cli {
                     auto const& active=*running->routing.fakeip;
                     if (active.first!=spec.first || active.last!=spec.last || active.ipv6!=spec.ipv6 ||
                         active.ttl_seconds!=spec.ttl_seconds || active.state_directory!=spec.state_directory ||
-                        active.unified!=spec.unified || active.per_mapping!=spec.per_mapping)
+                        active.per_mapping!=spec.per_mapping)
                         return std::unexpected("changing the FakeIP pool or history requires restart");
                     fakeip=running->fakeip;
                 } else if (auto initialized=initialize_fakeip(spec); !initialized) return initialized;
@@ -204,12 +190,10 @@ namespace cli {
                 resolver_view_.reset();
                 snapshot.resolver={program,&program->resolver};
             }
-            if (program->cache_state || program->unified_cache) {
+            if (program->unified_cache) {
                 auto view=snapshot.view.value_or(0); program->observed_view=view;
                 if (!std::exchange(program->restored,true)) {
-                    if (program->cache_state) program->cache_state_view=view;
-                    auto restored=program->unified_cache ? program->unified_cache->restore(*program->cache,view)
-                        : program->cache_state->restore(*program->cache,*program->cache_scope,view);
+                    auto restored=program->unified_cache->restore(*program->cache,view);
                     if (!restored) logs_.emit(logging::Level::warn,logging::Domain::dns,120,{},"DNS message cache restore failed: {}",logs_.private_text(restored.error()));
                 }
             }
@@ -276,23 +260,6 @@ namespace cli {
             if (!routing.unified_cache_root.empty()) {
                 try {program->unified_cache.emplace(routing,program->upstreams);}
                 catch (std::runtime_error const& error) {return std::unexpected(error.what());}
-            } else if (!routing.message_cache_directory.empty()) {
-                auto const& path=routing.message_cache_directory;
-                program->cache_scope.emplace(routing,program->upstreams);
-                if (previous && previous->program_ && previous->program_->routing.message_cache_directory==path) {
-                    auto const& running=*previous->program_;
-                    program->cache_state=running.cache_state;
-                    if (endpoint(*running.routing.listen)==endpoint(*routing.listen) && program->cache_scope->identity==running.cache_scope->identity) {
-                        program->cache=running.cache;
-                        program->restored=running.restored;
-                        program->observed_view=running.observed_view;
-                        program->cache_state_view=running.cache_state_view;
-                    }
-                } else {
-                    auto opened=DnsCacheState::open(path);
-                    if (!opened) return std::unexpected(std::move(opened.error()));
-                    program->cache_state=std::move(*opened);
-                }
             }
             program->reverse_cache=std::move(reverse);
             program->resolver={program->upstreams,routing.final,program->cache.get(),routing.disable_cache,program->reverse_cache.get(),routing.independent_cache};
@@ -358,11 +325,6 @@ namespace cli {
                 if (program_->unified_cache) {
                     if (auto p = program_->unified_cache->prepare_save(*program_->cache, *program_->observed_view))
                         checkpointer_.submit([pr = program_, item = std::move(*p), log_err] { if (auto s = pr->unified_cache->commit_save(item); !s) log_err(s.error()); });
-                } else if (program_->cache_state && program_->cache_state_view && *program_->observed_view == *program_->cache_state_view) {
-                    if (auto wire = program_->cache_state->prepare_save(*program_->cache, *program_->cache_scope, *program_->observed_view); !wire)
-                        log_err(wire.error());
-                    else
-                        checkpointer_.submit([pr = program_, data = std::move(*wire), log_err] { if (auto s = pr->cache_state->commit_save(data); !s) log_err(s.error()); });
                 }
             } catch (std::bad_alloc const&) {
                 logs_.emit(logging::Level::error, logging::Domain::dns, 121, {}, "DNS message cache checkpoint: out of memory");

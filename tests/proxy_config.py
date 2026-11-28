@@ -47,7 +47,7 @@ outbound "direct" type="direct"
 outbound "reject" type="block"
 routing {{
   rulesets {{ "blocked" path="rules/blocked.{rule_format}" format="{rule_format}"; }}
-  rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}
+  rules {{ - rule-set="blocked" to="reject"; }}
   final "direct"
 }}
 '''

@@ -380,7 +380,7 @@ namespace {
 
         // 2. SS-2022 UDP Inbounds with dynamic base.
         relay::udp_runtime::UdpInbounds udp_in;
-        auto pol = rules::RouteMatcher::compile({}, 0, 2);
+        auto pol = rules::RouteProgram::compile_policy({}, 0, 2);
         require(pol.has_value(), "udp pol");
         std::uint16_t ss_udp_port = alloc_udp_port();
         require(udp_in.add_dynamic_base(i_psk, ss_udp_port, *pol, nullptr, dir).has_value(), "add_dynamic_base");

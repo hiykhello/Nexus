@@ -2,6 +2,7 @@ import { CommandPaletteState } from "../command_palette_state.slint";
 import { TooltipState } from "../feedback.slint";
 import { I18n } from "../i18n.slint";
 import { LayoutMetrics } from "../layout_metrics.slint";
+import { Motion } from "../motion.slint";
 import { Shortcuts } from "../shortcuts.slint";
 import { Theme } from "../theme.slint";
 
@@ -16,14 +17,29 @@ component NavRailItem inherits Rectangle {
     private property <bool> tip-armed: false;
 
     forward-focus: fs;
-    height: 36px;
+    height: 38px;
     border-radius: Theme.radius-md;
     border-width: fs.has-focus ? 2px : 0px;
     border-color: fs.has-focus ? Theme.accent : transparent;
     background:
-        root.active ? Theme.nav-active-bg
-        : ta.has-hover ? Theme.nav-hover-bg
+        root.active ? Theme.rail-active-bg
+        : ta.has-hover ? Theme.rail-hover-bg
         : transparent;
+    transform-scale: ta.pressed ? 0.97 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    Rectangle {
+        x: 2px;
+        width: 3px;
+        height: root.active ? 16px : 0px;
+        y: (parent.height - self.height) / 2;
+        border-radius: 1.5px;
+        background: Theme.accent;
+        opacity: root.active ? 1.0 : 0.0;
+        animate height { duration: Motion.normal; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+        animate opacity { duration: Motion.fast; }
+    }
 
     accessible-role: tab;
     accessible-label: root.label;
@@ -84,36 +100,27 @@ component NavRailItem inherits Rectangle {
         }
     }
 
-    if root.active : Rectangle {
-        x: 0px;
-        y: 8px;
-        width: 3px;
-        height: 20px;
-        border-radius: 1.5px;
-        background: Theme.accent;
-    }
-
     Image {
-        x: root.collapsed ? (parent.width - self.width) / 2 : 11px;
+        x: root.collapsed ? (parent.width - self.width) / 2 : 12px;
         y: (parent.height - self.height) / 2;
-        width: 17px;
-        height: 17px;
+        width: 18px;
+        height: 18px;
         source: root.icon;
         colorize:
-            root.active ? Theme.nav-active-fg
-            : ta.has-hover ? Theme.text-primary
-            : Theme.text-secondary;
+            root.active ? Theme.rail-active-fg
+            : ta.has-hover ? Theme.rail-fg
+            : Theme.rail-fg-muted;
     }
 
     if !root.collapsed : Text {
-        x: 36px;
+        x: 38px;
         y: 0px;
-        width: max(0px, parent.width - 44px);
+        width: max(0px, parent.width - 46px);
         height: 100%;
         text: root.label;
         font-size: 13px;
         font-weight: root.active ? 700 : 500;
-        color: root.active ? Theme.nav-active-fg : Theme.text-primary;
+        color: Theme.rail-fg;
         vertical-alignment: center;
         overflow: elide;
     }
@@ -130,11 +137,12 @@ component RailUtilityButton inherits Rectangle {
     private property <bool> tip-armed: false;
 
     forward-focus: fs;
-    height: 34px;
+    height: 36px;
     border-radius: Theme.radius-md;
     border-width: fs.has-focus ? 2px : 0px;
     border-color: fs.has-focus ? Theme.accent : transparent;
-    background: ta.pressed ? Theme.nav-active-bg : ta.has-hover ? Theme.nav-hover-bg : transparent;
+    background: ta.pressed ? Theme.rail-hover-bg.brighter(0.12) : ta.has-hover ? Theme.rail-hover-bg : transparent;
+    animate background { duration: Motion.fast; }
 
     accessible-role: button;
     accessible-label: root.label;
@@ -196,24 +204,24 @@ component RailUtilityButton inherits Rectangle {
     }
 
     Image {
-        x: root.collapsed ? (parent.width - self.width) / 2 : 11px;
+        x: root.collapsed ? (parent.width - self.width) / 2 : 12px;
         y: (parent.height - self.height) / 2;
         width: 16px;
         height: 16px;
         source: root.icon;
-        colorize: ta.has-hover ? Theme.accent : Theme.text-secondary;
+        colorize: ta.has-hover ? Theme.rail-fg : Theme.rail-fg-muted;
         transform-rotation: root.icon-rotation;
     }
 
     if !root.collapsed : Text {
-        x: 36px;
+        x: 38px;
         y: 0px;
-        width: max(0px, parent.width - 44px);
+        width: max(0px, parent.width - 46px);
         height: 100%;
         text: root.label;
         font-size: 12px;
         font-weight: 500;
-        color: ta.has-hover ? Theme.text-primary : Theme.text-secondary;
+        color: ta.has-hover ? Theme.rail-fg : Theme.rail-fg-muted;
         vertical-alignment: center;
         overflow: elide;
     }
@@ -221,7 +229,7 @@ component RailUtilityButton inherits Rectangle {
 
 export component Sidebar inherits Rectangle {
     in-out property <int> active-tab: 0;
-    in-out property <length> sidebar-width: 196px;
+    in-out property <length> sidebar-width: 192px;
     in-out property <bool> sidebar-collapsed: true;
     in property <length> window-width: 1280px;
 
@@ -234,26 +242,26 @@ export component Sidebar inherits Rectangle {
 
     property <bool> is-compact: LayoutMetrics.is-compact-w(root.window-width);
     property <bool> eff-collapsed: root.is-compact ? !LayoutMetrics.compact-override-expanded : root.sidebar-collapsed;
-    property <length> expanded-w: clamp(root.sidebar-width, 176px, 224px);
+    property <length> expanded-w: clamp(root.sidebar-width, 176px, 220px);
 
-    width: root.eff-collapsed ? 54px : root.expanded-w;
+    width: root.eff-collapsed ? 60px : root.expanded-w;
     horizontal-stretch: 0;
-    background: Theme.sidebar-card-bg;
+    background: Theme.rail-bg;
     clip: true;
+    animate width { duration: Motion.fluid; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
 
     VerticalLayout {
-        padding-left: 7px;
-        padding-right: 7px;
-        padding-top: 12px;
-        padding-bottom: 10px;
-        spacing: 4px;
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 16px;
+        padding-bottom: 12px;
+        spacing: 6px;
 
-        // Top Brand Mark
         Rectangle {
-            height: 36px;
+            height: 38px;
 
             Image {
-                x: root.eff-collapsed ? (parent.width - self.width) / 2 : 9px;
+                x: root.eff-collapsed ? (parent.width - self.width) / 2 : 10px;
                 y: (parent.height - self.height) / 2;
                 width: 22px;
                 height: 22px;
@@ -266,10 +274,10 @@ export component Sidebar inherits Rectangle {
                 width: max(0px, parent.width - 44px);
                 height: 100%;
                 text: "Nexus";
-                font-size: 16px;
+                font-size: 18px;
                 font-weight: 800;
-                letter-spacing: 0.3px;
-                color: Theme.text-primary;
+                letter-spacing: 0.2px;
+                color: Theme.nav-active-fg;
                 vertical-alignment: center;
                 overflow: elide;
             }
@@ -277,61 +285,75 @@ export component Sidebar inherits Rectangle {
 
         Rectangle { height: 6px; }
 
-        // 6 Primary Navigation Entries (zero section headers, zero persistent shortcut badges)
         NavRailItem {
             icon: @image-url("../icons/overview.svg");
-            label: I18n.t("概览", "Dashboard");
-            tip-text: I18n.t("概览", "Dashboard") + " (" + Shortcuts.format-full(Shortcuts.tab-overview) + ")";
+            label: I18n.t("仪表盘", "Dashboard");
+            tip-text: I18n.t("仪表盘", "Dashboard") + " (" + Shortcuts.format-full(Shortcuts.tab-overview) + ")";
             collapsed: root.eff-collapsed;
             active: root.active-tab == 0;
             triggered => { root.active-tab = 0; }
         }
         NavRailItem {
-            icon: @image-url("../icons/groups.svg");
-            label: I18n.t("代理", "Proxies");
-            tip-text: I18n.t("代理", "Proxies") + " (" + Shortcuts.format-full(Shortcuts.tab-groups) + ")";
+            icon: @image-url("../icons/profiles.svg");
+            label: I18n.t("配置文件", "Profiles");
+            tip-text: I18n.t("配置文件与订阅", "Profiles & Subscriptions") + " (" + Shortcuts.format-full(Shortcuts.tab-profiles) + ")";
             collapsed: root.eff-collapsed;
             active: root.active-tab == 1;
-            triggered => { root.active-tab = 1; root.refresh-groups(); }
+            triggered => { root.active-tab = 1; root.refresh-profiles(); }
         }
         NavRailItem {
-            icon: @image-url("../icons/connections.svg");
-            label: I18n.t("连接", "Connections");
-            tip-text: I18n.t("连接", "Connections") + " (" + Shortcuts.format-full(Shortcuts.tab-connections) + ")";
+            icon: @image-url("../icons/groups.svg");
+            label: I18n.t("代理组", "Proxy Groups");
+            tip-text: I18n.t("代理组", "Proxy Groups") + " (" + Shortcuts.format-full(Shortcuts.tab-groups) + ")";
             collapsed: root.eff-collapsed;
             active: root.active-tab == 2;
-            triggered => { root.active-tab = 2; root.refresh-connections(); }
+            triggered => { root.active-tab = 2; root.refresh-groups(); }
         }
         NavRailItem {
-            icon: @image-url("../icons/profiles.svg");
-            label: I18n.t("配置与订阅", "Profiles");
-            tip-text: I18n.t("配置与订阅", "Profiles") + " (" + Shortcuts.format-full(Shortcuts.tab-profiles) + ")";
+            icon: @image-url("../icons/rule-edit.svg");
+            label: I18n.t("路由与规则", "Routing");
+            tip-text: I18n.t("路由与规则集", "Routing & Rule-Sets") + " (" + Shortcuts.format-full(Shortcuts.tab-routing) + ")";
             collapsed: root.eff-collapsed;
             active: root.active-tab == 3;
             triggered => { root.active-tab = 3; root.refresh-profiles(); }
         }
         NavRailItem {
-            icon: @image-url("../icons/logs.svg");
-            label: I18n.t("日志", "Logs");
-            tip-text: I18n.t("日志", "Logs") + " (" + Shortcuts.format-full(Shortcuts.tab-logs) + ")";
+            icon: @image-url("../icons/config.svg");
+            label: I18n.t("DNS 与入站", "DNS & Inbounds");
+            tip-text: I18n.t("DNS 与核心入站参数", "DNS & Core Inbounds") + " (" + Shortcuts.format-full(Shortcuts.tab-dns-host) + ")";
             collapsed: root.eff-collapsed;
             active: root.active-tab == 4;
-            triggered => { root.active-tab = 4; root.refresh-logs(); }
+            triggered => { root.active-tab = 4; root.refresh-profiles(); }
+        }
+        NavRailItem {
+            icon: @image-url("../icons/connections.svg");
+            label: I18n.t("连接", "Connections");
+            tip-text: I18n.t("实时连接", "Connections") + " (" + Shortcuts.format-full(Shortcuts.tab-connections) + ")";
+            collapsed: root.eff-collapsed;
+            active: root.active-tab == 5;
+            triggered => { root.active-tab = 5; root.refresh-connections(); }
+        }
+        NavRailItem {
+            icon: @image-url("../icons/logs.svg");
+            label: I18n.t("日志", "Logs");
+            tip-text: I18n.t("运行日志", "Logs") + " (" + Shortcuts.format-full(Shortcuts.tab-logs) + ")";
+            collapsed: root.eff-collapsed;
+            active: root.active-tab == 6;
+            triggered => { root.active-tab = 6; root.refresh-logs(); }
         }
         NavRailItem {
             icon: @image-url("../icons/settings.svg");
             label: I18n.t("设置", "Settings");
-            tip-text: I18n.t("设置", "Settings") + " (" + Shortcuts.format-full(Shortcuts.tab-settings) + ")";
+            tip-text: I18n.t("软件设置", "Settings") + " (" + Shortcuts.format-full(Shortcuts.tab-settings) + ")";
             collapsed: root.eff-collapsed;
-            active: root.active-tab == 5;
-            triggered => { root.active-tab = 5; }
+            active: root.active-tab == 7;
+            triggered => { root.active-tab = 7; }
         }
 
-        Rectangle { vertical-stretch: 1; min-height: 8px; }
+        Rectangle { vertical-stretch: 1; min-height: 6px; }
 
-        Rectangle { height: 1px; background: Theme.hairline-subtle; }
+        Rectangle { height: 1px; background: Theme.rail-border; }
 
-        // Bottom Utility Controls: Command Palette, Light/Dark toggle & Expand/Collapse toggle
         RailUtilityButton {
             icon: @image-url("../icons/search.svg");
             label: I18n.t("命令面板", "Command");
@@ -342,7 +364,7 @@ export component Sidebar inherits Rectangle {
 
         RailUtilityButton {
             icon: Theme.dark ? @image-url("../icons/sun.svg") : @image-url("../icons/moon.svg");
-            label: Theme.dark ? I18n.t("切换浅色", "Light Mode") : I18n.t("切换深色", "Dark Mode");
+            label: Theme.dark ? I18n.t("浅色模式", "Light Mode") : I18n.t("深色模式", "Dark Mode");
             collapsed: root.eff-collapsed;
             clicked => {
                 Theme.toggle-light-dark();
@@ -353,20 +375,19 @@ export component Sidebar inherits Rectangle {
         RailUtilityButton {
             icon: @image-url("../icons/chevron-left.svg");
             icon-rotation: root.eff-collapsed ? 180deg : 0deg;
-            label: root.eff-collapsed ? I18n.t("展开侧栏", "Expand") : I18n.t("收起侧栏", "Collapse");
-            tip-text: (root.eff-collapsed ? I18n.t("展开侧栏", "Expand Sidebar") : I18n.t("收起侧栏", "Collapse Sidebar"))
+            label: root.eff-collapsed ? I18n.t("展开导航", "Expand") : I18n.t("收起导航", "Collapse");
+            tip-text: (root.eff-collapsed ? I18n.t("展开导航", "Expand Sidebar") : I18n.t("收起导航", "Collapse Sidebar"))
                 + " (" + Shortcuts.format-full(Shortcuts.toggle-sidebar) + ")";
             collapsed: root.eff-collapsed;
             clicked => { root.toggle-sidebar-requested(); }
         }
     }
 
-    // Crisp 1px structural right divider
     Rectangle {
         x: parent.width - 1px;
         y: 0px;
         width: 1px;
         height: 100%;
-        background: Theme.sidebar-border;
+        background: Theme.rail-border;
     }
 }

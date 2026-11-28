@@ -57,13 +57,12 @@ import :xhttp_http3_listener;
 
 namespace relay {
     namespace vless_xhttp {
-        auto serve(Session& session,corosio::io_context& context,rules::RouteMatcher const& policy,
+        auto serve(Session& session,corosio::io_context& context,rules::RouteProgram const& policy,
             InboundProfile& profile) -> capy::task<> {
             struct Done {
                 Session& session;
                 ~Done(){session.close();session.done=true;}
             } done{session};
-            if (session.ordered_tcp) co_return;
             std::optional<tls::detail::ApplicationConnection<Socket>> connection;
             Lower lower(session.client);
             if (profile.secure) {
@@ -159,7 +158,7 @@ namespace relay {
         -> std::expected<InboundFactory,std::string> {
         auto profile=load_xhttp_inbound(certificate,key,users,names,std::move(transport),std::move(reality),tls_rt);
         if (!profile) return std::unexpected(profile.error());
-        return InboundFactory{[profile=std::move(*profile)](Session& session,corosio::io_context& context,rules::RouteMatcher const& policy) {
+        return InboundFactory{[profile=std::move(*profile)](Session& session,corosio::io_context& context,rules::RouteProgram const& policy) {
             return vless_xhttp::serve(session,context,policy,*profile);
         }};
     }
@@ -182,7 +181,7 @@ namespace relay {
     }
 
     auto Server::start_xhttp3(corosio::endpoint endpoint) -> std::expected<std::uint16_t,std::error_code> {
-        if (ordered_tcp || admission) return std::unexpected(std::make_error_code(std::errc::operation_not_supported));
+        if (admission) return std::unexpected(std::make_error_code(std::errc::operation_not_supported));
         if (auto active=activate_context();!active) {stop();return std::unexpected(active.error());}
         try {
             if (auto owner=xhttp3_inbound->restart_owner()) xhttp3_inbound=std::move(owner);

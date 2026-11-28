@@ -101,7 +101,7 @@ public struct RouteTransitStripView: View {
                 }
             }
         }
-        .bentoCard(padding: 10, cornerRadius: 14)
+        .bentoCard(padding: 10)
     }
 
     private var stageConnector: some View {

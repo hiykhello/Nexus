@@ -55,7 +55,7 @@ namespace relay {
             co_return false;
         }
 
-        auto serve_shadowtls(Session& session, io::io_context& context, rules::RouteMatcher const&,
+        auto serve_shadowtls(Session& session, io::io_context& context, rules::RouteProgram const&,
                              StlsInboundProfile const& profile) -> capy::task<> {
             auto finish = [&] { session.close(); session.done = true; };
             auto deadline = session.started + std::chrono::seconds(15);
@@ -174,7 +174,7 @@ namespace relay {
             if (!p || p->empty()) return std::unexpected("invalid ShadowTLS password file");
             profile->passwords.push_back(std::move(*p));
         }
-        return InboundFactory{[profile = std::move(profile)](Session& s, io::io_context& ctx, rules::RouteMatcher const& policy) {
+        return InboundFactory{[profile = std::move(profile)](Session& s, io::io_context& ctx, rules::RouteProgram const& policy) {
             return serve_shadowtls(s, ctx, policy, *profile);
         }};
     }

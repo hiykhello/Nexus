@@ -16,6 +16,8 @@ import relay.stream_relay;
 import relay.dns_state;
 import net.stream_datagrams;
 import rules;
+import sniff.tcp;
+import sniff.route_tcp;
 import socks5;
 import capy;
 import corosio;
@@ -94,7 +96,7 @@ namespace relay {
             else {if(host.find(':')!=host.npos||host.find('[')!=host.npos||host.find(']')!=host.npos)return {};result.address_type=3;result.address_length=host.size();std::ranges::copy(host,result.address.begin());}
             return result;
         }
-        auto serve(Session& session,corosio::io_context& context,rules::RouteMatcher const& policy,Profile& profile)->capy::task<> {
+        auto serve(Session& session,corosio::io_context& context,rules::RouteProgram const& policy,Profile& profile)->capy::task<> {
             auto fail=[&]{session.close();session.done=true;};auto deadline=session.started+10s;
             Socket socket(session.client,profile.http_obfs,true);
             auto start=co_await profile.owner.start(socket,deadline);
@@ -105,7 +107,24 @@ namespace relay {
                 if(request.command==5){
                     auto destination=target(request.host,request.port);if(!destination){fail();co_return;}
                     session.begin_traffic(TrafficProtocol::snell,destination->port);
-                    auto dialed=co_await dial(session,context,policy,*destination,deadline);if(dialed||session.closed){fail();co_return;}
+                    if (session.ordered_tcp) {
+                        OrderedTcpRequest route; if (!route.prepare(session, *destination)) { fail(); co_return; }
+                        std::array<std::uint8_t, 16640> wire{}, scratch{};
+                        sniff::TcpSniffer sniffer(wire, scratch); rules::ProgramCursor cursor;
+                        if (!early.empty()) (void)sniffer.feed(std::span<std::uint8_t const>(early.data(), std::min(early.size(), sniffer.remaining())));
+                        auto const& ordered = *session.ordered_tcp;
+                        auto no_read = +[](void*, sniff::TcpSniffer& sn, Clock::time_point) -> capy::task<sniff::TcpReadResult> {
+                            co_return {sniff::TcpReadStop::eof, sn.finish(), {}};
+                        };
+                        auto res = co_await execute_ordered_tcp(session, context, ordered.program, cursor, route.input, sniffer,
+                            route.candidates, route.endpoints, ordered.fallback,
+                            std::min(deadline, Clock::now() + ordered.sniff_timeout), deadline, ordered.unknown_policy,
+                            nullptr, no_read, early.empty() ? std::nullopt : std::optional<std::span<std::uint8_t const>>(early));
+                        if (session.closed || res.stop != sniff::RouteTcpStop::terminal || res.code) { fail(); co_return; }
+                        if (res.first_sent) early.clear();
+                    } else {
+                        auto dialed=co_await dial(session,context,policy,*destination,deadline);if(dialed||session.closed){fail();co_return;}
+                    }
                     if(!writer){auto initial=co_await snell::server_reply(socket,profile.owner.psk(),deadline);if(!initial||session.closed){fail();co_return;}writer.emplace(std::move(*initial));}
                     else {snell::Bytes ack{0};if(!co_await snell::send_record(socket,*writer,ack,{},deadline)||session.closed){fail();co_return;}}
                     Stream incoming(socket,std::move(*reader),std::move(*writer),std::move(early));reader.reset();writer.reset();
@@ -137,7 +156,9 @@ namespace relay {
                     session.begin_traffic(TrafficProtocol::snell_udp,0);
                     session.select_traffic_path(ConnectPath::datagrams);
                     auto resolver=[&](std::string name,std::uint16_t port,Clock::time_point limit){return resolve_udp_domain(session,context,std::move(name),port,limit);};
-                    net::stream_datagrams::Server state(session,context,incoming,policy,resolver,net::DatagramFraming{},net::ProxyAddress{},source_endpoint(session,policy));
+                    auto source=source_endpoint(session,session.ordered_tcp || policy.needs_source() || session.dns_requirements().source);
+                    auto router=session.ordered_tcp ? ordered_datagram_router(session,context,source) : net::stream_datagrams::OrderedRouter{};
+                    net::stream_datagrams::Server state(session,context,incoming,policy,resolver,net::DatagramFraming{},net::ProxyAddress{},source,std::move(router));
                     try {(void)co_await capy::when_all(net::stream_datagrams::tasks(state));}
                     catch(...){fail();state.cancel();throw;}fail();co_return;
                 }
@@ -151,6 +172,6 @@ namespace relay {
         if(!registry)return std::unexpected("Snell replay registry is required");
         auto replay=registry->acquire(credential->psk(),window);if(!replay)return std::unexpected(replay.error());
         auto profile=std::make_unique<Profile>(std::move(*credential),window,std::move(*replay),http_obfs);
-        return InboundFactory{[profile=std::move(profile)](Session& session,corosio::io_context& context,rules::RouteMatcher const& policy){return serve(session,context,policy,*profile);}};
+        return InboundFactory{[profile=std::move(profile)](Session& session,corosio::io_context& context,rules::RouteProgram const& policy){return serve(session,context,policy,*profile);}};
     }
 }

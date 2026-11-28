@@ -20,9 +20,14 @@ export namespace desktop {
         bool include_sibling_nodes_in_selector = true;
         std::int64_t max_selector_members = 128;
 
-        // Desktop-specific runtime adapter fields
+        // Desktop-specific runtime adapter fields (arbitrary Mixed / HTTP / SOCKS5 combinations)
         bool enable_mixed = true;
         std::string mixed_listen = "127.0.0.1:7890";
+        bool enable_socks = false;
+        std::string socks_listen = "127.0.0.1:10808";
+        bool enable_http = false;
+        std::string http_listen = "127.0.0.1:10809";
+        bool allow_lan = false;
         std::string second_local_listen;
         std::string lan_listen;
         std::string lan_username;

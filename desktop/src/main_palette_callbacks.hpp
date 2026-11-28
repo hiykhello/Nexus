@@ -86,21 +86,23 @@ namespace desktop_ui_helpers {
             consider_action("open:outbound", "action", cmd_tag, tr(en, "新增出站节点向导", "New Outbound Node"),
                             "", "+ Node", "accent", false, "add outbound node 新增 节点", 20);
 
-            consider_action("theme:obsidian", "theme", thm_tag, tr(en, "主题：曜石仪表", "Theme: Obsidian Chassis"),
+            consider_action("theme:obsidian", "theme", thm_tag, tr(en, "主题：曜石深色", "Theme: Dark Card"),
                             "obsidian", tr(en, "深色", "Dark"), "muted", cur_theme == nexus_ui::ThemePreference::Obsidian, "theme obsidian dark 曜石 深色", 10);
-            consider_action("theme:paper", "theme", thm_tag, tr(en, "主题：暖纸日光", "Theme: Paper Daylight"),
-                            "paper", tr(en, "浅色", "Light"), "muted", cur_theme == nexus_ui::ThemePreference::Paper, "theme paper daylight light 暖纸 浅色", 9);
-            consider_action("theme:amber", "theme", thm_tag, tr(en, "主题：精密琥珀", "Theme: Studio Amber"),
+            consider_action("theme:paper", "theme", thm_tag, tr(en, "主题：雾白卡片", "Theme: Light Card"),
+                            "paper", tr(en, "浅色", "Light"), "muted", cur_theme == nexus_ui::ThemePreference::Paper, "theme paper daylight light 雾白 浅色", 9);
+            consider_action("theme:amber", "theme", thm_tag, tr(en, "主题：暖金深色", "Theme: Warm Amber"),
                             "amber", tr(en, "琥珀", "Amber"), "mid", cur_theme == nexus_ui::ThemePreference::Amber, "theme amber studio 琥珀", 8);
             consider_action("theme:system", "theme", thm_tag, tr(en, "主题：跟随系统", "Theme: Follow System"),
                             "system", "Auto", "muted", cur_theme == nexus_ui::ThemePreference::System, "theme system auto 跟随系统", 7);
 
-            consider_action("tab:0", "nav", nav_tag, tr(en, "跳转：概览控制台", "Go to Dashboard"), "", "Ctrl+1", "muted", ui.get_active_tab() == 0, "overview dashboard 概览", 4);
-            consider_action("tab:1", "nav", nav_tag, tr(en, "跳转：代理策略组", "Go to Proxies"), "", "Ctrl+2", "muted", ui.get_active_tab() == 1, "proxies groups nodes 代理 策略组", 4);
-            consider_action("tab:2", "nav", nav_tag, tr(en, "跳转：活动连接", "Go to Connections"), "", "Ctrl+3", "muted", ui.get_active_tab() == 2, "connections sessions 连接", 4);
-            consider_action("tab:3", "nav", nav_tag, tr(en, "跳转：配置与订阅", "Go to Profiles"), "", "Ctrl+4", "muted", ui.get_active_tab() == 3, "profiles workspace subscriptions 配置 订阅", 4);
-            consider_action("tab:4", "nav", nav_tag, tr(en, "跳转：实时日志", "Go to Logs"), "", "Ctrl+5", "muted", ui.get_active_tab() == 4, "logs stream 日志", 4);
-            consider_action("tab:5", "nav", nav_tag, tr(en, "跳转：外观与设置", "Go to Settings"), "", "Ctrl+6", "muted", ui.get_active_tab() == 5, "settings appearance shortcuts 设置", 4);
+            consider_action("tab:0", "nav", nav_tag, tr(en, "跳转：仪表盘", "Go to Dashboard"), "", "Ctrl+1", "muted", ui.get_active_tab() == 0, "overview dashboard 仪表盘 概览", 5);
+            consider_action("tab:1", "nav", nav_tag, tr(en, "跳转：配置文件与订阅", "Go to Profiles & Subs"), "", "Ctrl+2", "muted", ui.get_active_tab() == 1, "profiles servers subscriptions 配置文件 服务器 订阅", 5);
+            consider_action("tab:2", "nav", nav_tag, tr(en, "跳转：代理策略组", "Go to Proxy Groups"), "", "Ctrl+3", "muted", ui.get_active_tab() == 2, "proxies groups nodes 代理组 策略组", 4);
+            consider_action("tab:3", "nav", nav_tag, tr(en, "跳转：路由与规则集", "Go to Routing & Rules"), "", "Ctrl+4", "muted", ui.get_active_tab() == 3, "routing rules ruleset 路由 规则集", 4);
+            consider_action("tab:4", "nav", nav_tag, tr(en, "跳转：DNS 与核心入站", "Go to DNS & Inbounds"), "", "Ctrl+5", "muted", ui.get_active_tab() == 4, "dns inbounds tun ports 入站 端口", 4);
+            consider_action("tab:5", "nav", nav_tag, tr(en, "跳转：实时连接", "Go to Connections"), "", "Ctrl+6", "muted", ui.get_active_tab() == 5, "connections sessions 连接", 4);
+            consider_action("tab:6", "nav", nav_tag, tr(en, "跳转：运行日志", "Go to Logs"), "", "Ctrl+7", "muted", ui.get_active_tab() == 6, "logs stream 日志", 4);
+            consider_action("tab:7", "nav", nav_tag, tr(en, "跳转：软件设置", "Go to Settings"), "", "Ctrl+8", "muted", ui.get_active_tab() == 7, "settings appearance shortcuts 设置", 4);
 
             // Fuzzy node matching across all cached groups (skipped when '>' command prefix active)
             if (!cmd_only) {
@@ -187,22 +189,17 @@ namespace desktop_ui_helpers {
                 auto draft = cfg_dir / ".palette-explain.kdl";
                 bool use_draft = false;
                 if (!doc_snap.profiles.empty()) {
-                    auto ws_tmp = make_temp_compose_workspace(cfg_dir, doc_snap);
-                    auto host_tmp = make_temp_compose_host(cfg_dir, host_snap);
-                    if (ws_tmp.ok && host_tmp.ok) {
-                        auto composed = desktop::compose_workspace_via_core(
-                            supervisor.binary_path(), ws_tmp.path, host_tmp.path, ws_ctx.secrets_dir, active_id, {});
-                        if (composed.ok && !composed.kdl.empty() && write_file_atomic(draft, composed.kdl)) use_draft = true;
-                    }
-                    ws_tmp.wipe_and_remove();
-                    host_tmp.wipe_and_remove();
+                    auto composed = compose_workspace_with_overlay(
+                        cfg_dir, supervisor.binary_path(), ws_ctx.secrets_dir, doc_snap, host_snap, active_id, en);
+                    if (composed && write_file_atomic(draft, composed->kdl)) use_draft = true;
                 }
                 if (diag_seq.load(std::memory_order_acquire) != seq) {
                     if (use_draft) { std::error_code ec; std::filesystem::remove(draft, ec); }
                     return;
                 }
+                auto const eff_inb = select_active_inbound_tag(host_snap);
                 auto target_cfg = use_draft ? draft : config_path;
-                auto explain = supervisor.explain_rule(target_cfg, "local-mixed", "tcp", domain + ":443", "");
+                auto explain = supervisor.explain_rule(target_cfg, eff_inb, "tcp", domain + ":443", "");
                 if (use_draft) { std::error_code ec; std::filesystem::remove(draft, ec); }
 
                 auto summary = explain.ok ? parse_explain_summary(explain.message) : ExplainSummary{};
@@ -286,10 +283,10 @@ namespace desktop_ui_helpers {
                 if (kind == "nav" && id.starts_with("tab:") && id.size() == 5) {
                     int tab = id[4] - '0';
                     ui.set_active_tab(tab);
-                    if (tab == 1) ui.invoke_refresh_groups();
-                    else if (tab == 2) ui.invoke_refresh_connections();
-                    else if (tab == 3) ui.invoke_refresh_profiles();
-                    else if (tab == 4) ui.invoke_refresh_logs();
+                    if (tab == 1 || tab == 3 || tab == 4) ui.invoke_refresh_profiles();
+                    else if (tab == 2) ui.invoke_refresh_groups();
+                    else if (tab == 5) ui.invoke_refresh_connections();
+                    else if (tab == 6) ui.invoke_refresh_logs();
                     return;
                 }
                 if (id == "mode:rule") ui.invoke_switch_outbound_mode(slint::SharedString("rule"));

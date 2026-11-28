@@ -80,7 +80,6 @@ export namespace cli::run_detail {
             auto resolved = resolve_local_ruleset_path(config_path, spec.path);
             if (!resolved.empty()) out.push_back(std::move(resolved));
         };
-        for (auto const& r : cfg.routes) add(r.file);
         if (cfg.ordered_tcp) {
             for (auto const& [tag, spec] : cfg.ordered_tcp->sets) add(spec);
             for (auto const& rule : cfg.ordered_tcp->rules)

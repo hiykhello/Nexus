@@ -81,16 +81,16 @@ int main() {
     auto overflow=limited.feed(bytes);
     if(overflow.status!=sniff::TcpStatus::too_large || overflow.consumed!=tiny.size() ||
         !std::ranges::equal(limited.wire(),bytes.first(tiny.size())))return 14;
-    std::vector<RouteRule> legacy_rules{
-        {RuleSet{{{"domain","special.example"},{"ip-cidr","10.0.0.0/8"}},2},1},
-        {RuleSet{{{"domain-suffix","example.org"}},2},2}
+    std::vector<ProgramRule> policy_rules{
+        {RuleSet{{{"domain","special.example"},{"ip-cidr","10.0.0.0/8"}},2},{ProgramActionKind::route,1}},
+        {RuleSet{{{"domain-suffix","example.org"}},2},{ProgramActionKind::route,2}}
     };
     std::vector<ProgramRule> prog_rules{
         {RuleSet{{{"domain","special.example"},{"ip-cidr","10.0.0.0/8"}},2},{ProgramActionKind::route,1}},
         {RuleSet{{{"domain-suffix","example.org"}},2},{ProgramActionKind::route,2}},
         {RuleSet{{},2},{ProgramActionKind::route,0}}
     };
-    auto old=RouteMatcher::compile(legacy_rules,0,3);
+    auto old=RouteProgram::compile_policy(policy_rules,0,3);
     auto unified=RouteProgram::compile(prog_rules,3);
     if(!old || !unified)return 17;
     for(auto domain:{"special.example","other.example","www.example.org"}) {

@@ -81,20 +81,17 @@ def configure(root, dns, marks=False, fakeip=False, enabled=True):
     # Use a private-origin reject rule. If the packet improperly reaches either proxy entry, it fails.
     mark_config = 'include-routing-mark 0x20 mask=0xf0\n    exclude-routing-mark 0x23' if marks else ""
     fake = ""
+    state_block = ""
     if fakeip:
-        pool = root / "fakeip"
-        pool.mkdir(mode=0o700,exist_ok=True)
-        for name, size in (("instance.id",16),("history.key",32)):
-            target=pool / name
-            if not target.exists():
-                target.touch(mode=0o600)
-                target.write_bytes(os.urandom(size))
-        fake = (f'fake-ip server="wire" ipv4-pool="198.18.0.0/29" ipv6-pool="fd15:4231::/96" '
-                f'ttl-seconds=2 state-directory="{pool}" initialize=#true')
+        pool = root / "state"
+        pool.mkdir(mode=0o700, exist_ok=True)
+        state_block = f'state {{ directory "{pool}"; }}'
+        fake = 'fake-ip server="wire" ipv4-pool="198.18.0.0/29" ipv6-pool="fd15:4231::/96" ttl-seconds=2'
     conf.write_text(f'''schema-version 1
 role "client"
 log {{ privacy "verbose"; }}
 control socket="{control}"
+{state_block}
 inbound "tun" type="tun" {{
     interface-name "nx-redirect"
     inet4-address "198.19.0.1/32"

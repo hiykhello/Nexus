@@ -299,7 +299,7 @@ fun ConnectionDetailContent(
                     },
                     enabled = perAppAction.enabled,
                     interactionSource = bypassInteraction,
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).liquidPress(bypassInteraction, pressedScale = 0.96f),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).tactilePress(bypassInteraction, pressedScale = 0.96f),
                     shape = RoundedCornerShape(999.dp),
                     color = ext.wellSurface,
                     border = BorderStroke(1.dp, ext.hairline),
@@ -351,7 +351,7 @@ fun ConnectionDetailContent(
                     onCloseConnection(detail.id)
                 },
                 interactionSource = closeInteraction,
-                modifier = Modifier.weight(1f).heightIn(min = 48.dp).liquidPress(closeInteraction, pressedScale = 0.96f),
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).tactilePress(closeInteraction, pressedScale = 0.96f),
                 shape = RoundedCornerShape(999.dp),
                 color = ext.dangerContainer,
                 border = BorderStroke(1.dp, ext.danger.copy(alpha = 0.45f)),

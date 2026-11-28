@@ -56,6 +56,10 @@ private val ROUTE_MATCH_OPTIONS = listOf(
     "domain-suffix" to "域名后缀",
     "domain" to "完整域名",
     "ip-cidr" to "IP CIDR",
+    "rule-set" to "规则集 (@tag)",
+    "port" to "目标端口",
+    "protocol" to "嗅探协议",
+    "network" to "传输层 (tcp/udp)",
     "android_packages" to "应用包名",
 )
 
@@ -152,6 +156,10 @@ internal fun RuleDnsModalSheet(
 
                 val hint = when (routeMatchType) {
                     "ip-cidr" -> "例如 192.168.1.0/24 或 1.1.1.1/32"
+                    "rule-set" -> "例如 geosite-cn, geoip-cn"
+                    "port" -> "例如 443, 80, 8000-9000"
+                    "protocol" -> "例如 tls, http, quic"
+                    "network" -> "例如 udp 或 tcp"
                     "android_packages" -> "例如 com.android.chrome, org.mozilla.firefox"
                     "domain" -> "例如 api.github.com"
                     else -> "例如 openai.com"
@@ -317,7 +325,7 @@ internal fun RuleDnsModalSheet(
                             val rule = RoutingRuleItem(
                                 id = WorkspaceStore.newProfileId("rule"),
                                 enabled = true,
-                                scope = if (routeMatchType == "android_packages") "routing_only" else "both",
+                                scope = if (routeMatchType in setOf("android_packages", "ip-cidr", "port", "protocol", "network")) "routing_only" else "both",
                                 targetType = routeTargetType,
                                 targetProfileId = if (routeTargetType == "profile_id") targetProfileId else "",
                                 domains = when (routeMatchType) {
@@ -326,6 +334,10 @@ internal fun RuleDnsModalSheet(
                                     else -> emptyList()
                                 },
                                 ips = if (routeMatchType == "ip-cidr") items else emptyList(),
+                                ruleSets = if (routeMatchType == "rule-set") items.map { it.removePrefix("@") } else emptyList(),
+                                ports = if (routeMatchType == "port") items else emptyList(),
+                                protocols = if (routeMatchType == "protocol") items else emptyList(),
+                                networks = if (routeMatchType == "network") items else emptyList(),
                                 androidPackages = if (routeMatchType == "android_packages") items else emptyList(),
                                 tlsFragment = routeTlsFragment,
                             )

@@ -46,7 +46,7 @@ namespace relay {
 #endif
         }
 
-        auto forward_tcp_destination(Session& session, io::io_context& context, rules::RouteMatcher const& policy,
+        auto forward_tcp_destination(Session& session, io::io_context& context, rules::RouteProgram const& policy,
             socks5::Request const& destination, TrafficProtocol protocol, bool redirect_dns = false,
             bool dns_hijack_only = false) -> capy::task<> {
             session.begin_traffic(protocol, destination.port);
@@ -70,13 +70,13 @@ namespace relay {
         }
     }
 
-    auto serve_fixed_tcp(Session& session, io::io_context& context, rules::RouteMatcher const& policy,
+    auto serve_fixed_tcp(Session& session, io::io_context& context, rules::RouteProgram const& policy,
         socks5::Request const& destination) -> capy::task<> {
         session.inspect_source_owner(policy);
         return forward_tcp_destination(session, context, policy, destination, TrafficProtocol::fixed_tcp);
     }
 
-    auto serve_transparent_tcp(Session& session, io::io_context& context, rules::RouteMatcher const& policy,
+    auto serve_transparent_tcp(Session& session, io::io_context& context, rules::RouteProgram const& policy,
         io::endpoint listener, bool tproxy, bool redirect_dns) -> capy::task<> {
         auto fail = [&] { session.close(); session.done = true; };
         // The epoll acceptor may retain its listening endpoint in the child

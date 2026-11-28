@@ -26,7 +26,7 @@ routing {
         blocked path="rules/blocked.kdl" format="kdl"
     }
     rules {
-        - kind="rule-set" value="blocked" outbound="reject"
+        - rule-set="blocked" to="reject"
     }
     final "direct"
 }
@@ -137,13 +137,14 @@ routing { final "edge"; }
         config::parse_kdl(replace(ss_boot, "edge.test", "127.0.0.1")) ||
         config::parse_kdl(replace(ss_boot, "bootstrap-resolver \"boot\";", "bootstrap-resolver \"boot\"; bootstrap-resolver \"boot\";"))) return 1;
 
-    if (!config || config->port != 1080 || !config->block_rules ||
-        config->block_rules->path != "rules/blocked.kdl" || config->block_rules->format != config::RuleFormat::kdl) {
+    if (!config || config->port != 1080 || !config->ordered_tcp || config->ordered_tcp->rules.empty() ||
+        !config->ordered_tcp->rules[0].file || config->ordered_tcp->rules[0].file->path != "rules/blocked.kdl" ||
+        config->ordered_tcp->rules[0].file->format != config::RuleFormat::kdl) {
         std::cerr << "valid configuration rejected\n"; return 1;
     }
     auto grouped_config = config::parse_kdl("dns { servers { server \"system\" type=\"local\"; server \"up\" type=\"udp\" host=\"127.0.0.1\"; }; final \"up\"; }\n" + complete);
     if (!grouped_config || !grouped_config->dns || grouped_config->dns->servers.size() != 2 || grouped_config->dns->final != 1 ||
-        grouped_config->port != 1080 || !grouped_config->block_rules) return 1;
+        grouped_config->port != 1080 || !grouped_config->ordered_tcp || grouped_config->ordered_tcp->rules.empty()) return 1;
     for (auto bad : {"inbounds {}\n", "outbounds {}\n", "inbounds { other; }\n", "outbounds { other; }\n",
                      "inbounds x=1 {}\n", "outbounds \"x\" {}\n", "inbound \"extra\" type=\"socks5\" {}\n",
                      "outbound \"extra\" type=\"direct\"\n"})
@@ -327,14 +328,15 @@ routing { final "edge"; }
     auto auth_mixed = config::parse_kdl(replace(authenticated, "type=\"socks5\"", "type=\"mixed\""));
     if (!auth_mixed || !auth_mixed->password_auth) return 1;
     auto binary = config::parse_kdl(replace(complete, "format=\"kdl\"", "format=\"beve\""));
-    if (!binary || !binary->block_rules || binary->block_rules->format != config::RuleFormat::beve) return 1;
+    if (!binary || !binary->ordered_tcp || binary->ordered_tcp->rules.empty() ||
+        !binary->ordered_tcp->rules[0].file || binary->ordered_tcp->rules[0].file->format != config::RuleFormat::beve) return 1;
     auto minimal = config::parse_kdl(R"(schema-version 1
 role "server"
 inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=65535; authentication "none"; }; }
 outbounds { outbound "direct" type="direct"; }
 routing { final "direct"; }
 )");
-    if (!minimal || minimal->port != 65535 || minimal->block_rules) { std::cerr << "direct-only rejected\n"; return 1; }
+    if (!minimal || minimal->port != 65535 || minimal->ordered_tcp) { std::cerr << "direct-only rejected\n"; return 1; }
 
     for (auto lan : {"0.0.0.0", "::", "192.168.1.10"}) {
         for (auto kind : {"socks5", "mixed", "http"}) {
@@ -354,11 +356,12 @@ inbounds { inbound "local" type="socks5" { listen host="127.0.0.1" port=1080; au
 outbounds { outbound "direct" type="direct"; outbound "lb" type="load-balance" { member "direct"; }; }
 routing { final "lb"; })")) return 1;
     auto ordered = replace(replace(complete, "rulesets {", "rulesets {\n        other path=\"other.beve\" format=\"beve\""),
-        "rules {", "rules {\n        - kind=\"rule-set\" value=\"other\" outbound=\"direct\"");
+        "rules {", "rules {\n        - rule-set=\"other\" to=\"direct\"");
     auto ordered_config = config::parse_kdl(ordered);
-    if (!ordered_config || ordered_config->routes.size() != 2 ||
-        ordered_config->routes[0].file.path != "other.beve" || ordered_config->routes[0].file.format != config::RuleFormat::beve ||
-        ordered_config->routes[0].action != config::RouteAction::direct || ordered_config->routes[1].action != config::RouteAction::block) return 1;
+    if (!ordered_config || !ordered_config->ordered_tcp || ordered_config->ordered_tcp->rules.size() != 2 ||
+        !ordered_config->ordered_tcp->rules[0].file || ordered_config->ordered_tcp->rules[0].file->path != "other.beve" ||
+        ordered_config->ordered_tcp->rules[0].file->format != config::RuleFormat::beve ||
+        ordered_config->ordered_tcp->rules[0].outbound != 0 || ordered_config->ordered_tcp->rules[1].outbound != 1) return 1;
     auto direct_net = replace(complete, "outbound \"direct\" type=\"direct\"",
         "outbound \"direct\" type=\"direct\" {\n    network strategy=\"require\" type=\"wifi\" { interface \"wlan0\" type=\"wifi\"; }\n}");
     if (!config::parse_kdl(direct_net)) return 1;
@@ -386,15 +389,16 @@ routing { final "lb"; })")) return 1;
         {replace(complete, "type=\"direct\"", "type=\"vless\""), "unsupported outbound"},
         {replace(complete, "outbound \"reject\"", "outbound \"direct\""), "duplicate names"},
         {replace(complete, "final \"direct\"", "final \"reject\""), "unsupported default"},
-        {replace(complete, "value=\"blocked\"", "value=\"missing\""), "missing rule set"},
-        {replace(complete, "outbound=\"reject\"", "outbound=\"missing\""), "unknown rule action"},
+        {replace(complete, "rule-set=\"blocked\"", "rule-set=\"missing\""), "missing rule set"},
+        {replace(complete, "to=\"reject\"", "to=\"missing\""), "unknown rule action"},
         {replace(complete, "format=\"kdl\"", "format=\"yaml\""), "unsupported format"},
         {replace(complete, "path=\"rules/blocked.kdl\"", "path=\"\""), "empty path"},
         {replace(complete, "path=\"rules/blocked.kdl\"", "path=\"rules\\u{0}x\""), "NUL path"},
         {replace(complete, "rulesets {", "rulesets {\n        blocked path=\"other.kdl\" format=\"kdl\""), "duplicate rule-set"},
         {replace(complete, "rulesets {", "rulesets {\n        unused path=\"other.kdl\" format=\"kdl\""), "unreferenced rule-set"},
         {replace(complete, "routing {", "routing {\n    sniff #true"), "unknown routing node"},
-        {replace(complete, "rules {\n        - kind=\"rule-set\" value=\"blocked\" outbound=\"reject\"\n    }", "rule kind=\"rule-set\" value=\"blocked\" outbound=\"reject\""), "legacy bare routing rule"},
+        {replace(complete, "rules {\n        - rule-set=\"blocked\" to=\"reject\"\n    }", "rule kind=\"rule-set\" value=\"blocked\" outbound=\"reject\""), "legacy bare routing rule"},
+        {replace(complete, "- rule-set=\"blocked\" to=\"reject\"", "- kind=\"rule-set\" value=\"blocked\" outbound=\"reject\""), "legacy kind=rule-set routing rule"},
         {complete + "dns {}\n", "unsupported top-level node"},
         {replace(complete, "role \"client\"", "role (x)\"client\""), "tagged role"},
         {std::string(config::max_config_bytes + 1, ' '), "oversized input"},

@@ -380,7 +380,7 @@ namespace {
             check(reopened && (*reopened)->visit_recovered([&](auto const&) { ++recovered; return true; }) && recovered == 400,
                 "all 400 compacted + WAL FakeIP rows recovered");
         }
-        auto inv_ov = state::inspect_fakeip(dir_ov / "fakeip", true);
+        auto inv_ov = state::inspect_fakeip(dir_ov / "fakeip");
         check(inv_ov.health == "ok" && inv_ov.entries == 400, "inspect_fakeip reports ok on compacted override store");
 
         // 3. > 65536-row /14 compacted checkpoint (> old 65536*267+4 = 17.5 MiB payload ceiling) inspected cleanly as ok!
@@ -408,7 +408,7 @@ namespace {
             }
         }
         auto ckpt_sz = std::filesystem::file_size(dir_big / "fakeip/fakeip.ckpt");
-        auto inv_big = state::inspect_fakeip(dir_big / "fakeip", true);
+        auto inv_big = state::inspect_fakeip(dir_big / "fakeip");
         check(ckpt_sz > 65536u * 267u + 4u && inv_big.health == "ok" && inv_big.entries == 85000,
             "inspect_fakeip accepts > 17.5 MiB (85000-row) /14 checkpoint as ok (not damaged)");
         std::cout << "  [PASS] FakeIP WAL auto-scaling (/14 8 MiB), explicit compaction override & >65k checkpoint inspect\n";

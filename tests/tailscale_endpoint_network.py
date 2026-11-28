@@ -397,7 +397,7 @@ outbound "direct" type="direct"
 outbound "mesh" type="tailscale" {{ endpoint-file "{outbound}"; }}
 routing {{
     rulesets {{ "mesh-hosts" format="kdl" path="mesh-routes.kdl"; }}
-    rules {{ - kind="rule-set" value="mesh-hosts" outbound="mesh"; }}
+    rules {{ - rule-set="mesh-hosts" to="mesh"; }}
     final "direct"
 }}
 ''')

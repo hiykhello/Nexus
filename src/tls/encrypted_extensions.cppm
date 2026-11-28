@@ -12,6 +12,7 @@ export namespace tls {
         std::optional<std::uint16_t> application_settings_code;
         std::vector<std::uint8_t> application_settings;
         std::vector<std::uint8_t> ech_retry_configs;
+        std::vector<std::vector<std::uint8_t>> peer_trust_anchors;
         bool server_name_acknowledged = false;
     };
     // One complete handshake message and the exact parsed ClientHello. Supports server_name,

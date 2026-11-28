@@ -202,7 +202,11 @@ export namespace vless::detail {
                 std::copy_n(buffer_.begin()+begin_,buffered,output.begin());begin_+=buffered;
                 guard.released=true;co_return buffered;
             }
-            auto result=co_await stream_.read(output,deadline,tls::detail::ReadTimeoutPolicy::preserve_connection);
+            std::expected<std::size_t,tls::detail::ByteStreamError> result=std::unexpected(tls::detail::ByteStreamError::io);
+            if constexpr (requires { stream_.read(output,deadline,tls::detail::ReadTimeoutPolicy::preserve_connection); })
+                result=co_await stream_.read(output,deadline,tls::detail::ReadTimeoutPolicy::preserve_connection);
+            else
+                result=co_await stream_.read(output,deadline);
             if(!result) {
                 if(result.error()==tls::detail::ByteStreamError::timeout){guard.released=true;co_return std::unexpected(TlsInboundError::timeout);}
                 co_return fail(TlsInboundError::io);

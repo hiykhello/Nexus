@@ -32,7 +32,7 @@ dns {{ server "dns" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; str
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={port}; authentication "none"; }}
 outbound "direct" type="direct" {{ connect-timeout-ms 800; }}
 outbound "edge" type="shadowsocks" {{ server host="127.0.0.1" port={upstream.getsockname()[1]}; connect-timeout-ms 2200; method "2022-blake3-aes-128-gcm"; key-file "{key}"; }}
-routing {{ rulesets {{ "by-ip" path="rules.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="by-ip" outbound="edge"; }}; final "direct"; }}
+routing {{ rulesets {{ "by-ip" path="rules.kdl" format="kdl"; }}; rules {{ - rule-set="by-ip" to="edge"; }}; final "direct"; }}
 ''')
     process=subprocess.Popen([binary,'run','--config',config],stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:

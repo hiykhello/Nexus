@@ -254,9 +254,60 @@ namespace {
         expect(!cfg.enable_mixed && mix_notices.size() == 1, "Linux strict_route auto-disables enable_mixed with notice");
 
         desktop::DesktopHostConfig none_cfg = cfg;
-        none_cfg.enable_mixed = false; none_cfg.enable_tun = false; none_cfg.lan_listen.clear(); none_cfg.second_local_listen.clear();
+        none_cfg.enable_mixed = false; none_cfg.enable_http = false; none_cfg.enable_socks = false;
+        none_cfg.enable_tun = false; none_cfg.lan_listen.clear(); none_cfg.second_local_listen.clear();
         auto none_notices = desktop::normalize_desktop_host_config(none_cfg, true);
-        expect(none_notices.size() == 1, "P2 #9: warns when both enable_mixed and enable_tun are disabled");
+        expect(none_notices.size() == 1, "P2 #9: warns when Mixed, HTTP, SOCKS5, and TUN are all disabled");
+
+        // Arbitrary Mixed / HTTP / SOCKS5 combinations: HTTP + SOCKS5 with Mixed=false produces zero no-inbound warning
+        desktop::DesktopHostConfig combo_cfg = none_cfg;
+        combo_cfg.enable_http = true;
+        combo_cfg.http_listen = "127.0.0.1:10809";
+        combo_cfg.enable_socks = true;
+        combo_cfg.socks_listen = "127.0.0.1:10808";
+        combo_cfg.allow_lan = true;
+        combo_cfg.lan_username = "alice";
+        combo_cfg.lan_password = "secret-pw";
+        auto combo_notices = desktop::normalize_desktop_host_config(combo_cfg, true);
+        expect(combo_notices.empty(), "HTTP + SOCKS5 without Mixed is a valid inbound combination");
+        auto combo_round = desktop::desktop_host_from_json(desktop::desktop_host_to_json(combo_cfg));
+        expect(combo_round.has_value() && !combo_round->enable_mixed &&
+               combo_round->enable_http && combo_round->http_listen == "127.0.0.1:10809" &&
+               combo_round->enable_socks && combo_round->socks_listen == "127.0.0.1:10808" &&
+               combo_round->allow_lan,
+            "Mixed/HTTP/SOCKS5/allow_lan round-trip cleanly in host.json");
+
+        std::string base_composed =
+            "schema-version 1\n"
+            "inbounds {\n"
+            "  inbound \"mixed-in\" type=\"mixed\" {\n"
+            "    listen host=\"127.0.0.1\" port=7890\n"
+            "    authentication \"none\"\n"
+            "  }\n"
+            "}\n"
+            "outbounds {\n  outbound \"direct\" type=\"direct\"\n}\n";
+        std::vector<std::string> sec_files;
+        auto overlaid = desktop::apply_desktop_inbounds_overlay(base_composed, combo_cfg, dir / "secrets", sec_files);
+        expect(overlaid.has_value() &&
+               !overlaid->contains("type=\"mixed\"") &&
+               overlaid->contains("inbound \"http-in\" type=\"http\"") &&
+               overlaid->contains("listen host=\"0.0.0.0\" port=10809") &&
+               overlaid->contains("inbound \"socks-in\" type=\"socks5\"") &&
+               overlaid->contains("listen host=\"0.0.0.0\" port=10808") &&
+               overlaid->contains("authentication \"password\" username=\"alice\"") &&
+               !sec_files.empty(),
+            "apply_desktop_inbounds_overlay emits arbitrary HTTP + SOCKS5 + Allow LAN + 0600 auth");
+
+        combo_cfg.enable_mixed = true;
+        combo_cfg.mixed_listen = "127.0.0.1:7890";
+        combo_cfg.allow_lan = false;
+        auto all_three = desktop::apply_desktop_inbounds_overlay(base_composed, combo_cfg, dir / "secrets", sec_files);
+        expect(all_three.has_value() &&
+               all_three->contains("inbound \"mixed-in\" type=\"mixed\"") &&
+               all_three->contains("inbound \"http-in\" type=\"http\"") &&
+               all_three->contains("inbound \"socks-in\" type=\"socks5\"") &&
+               all_three->contains("listen host=\"127.0.0.1\" port=7890"),
+            "apply_desktop_inbounds_overlay supports Mixed + HTTP + SOCKS5 simultaneously");
 
         auto host_path = dir / "host.json";
         expect(desktop::save_desktop_host_config(host_path, cfg), "save host.json succeeds");
@@ -402,6 +453,32 @@ namespace {
         expect(built_dr.has_value() && built_dr->scope == "dns_only" && built_dr->target_type == "direct" &&
                built_dr->domains.size() == 1 && built_dr->domains[0] == "internal.corp",
             "Wave 33D: structured DNS rule form builds dns_only Workspace rule");
+
+        // Full Nexus Protocol Coverage: WireGuard, MASQUE, Base64 Subscription Decode & Hosts CSV
+        desktop_ui_helpers::OutboundFormDraft wg_draft{};
+        wg_draft.proto = "wireguard"; wg_draft.tag = "SG-WG"; wg_draft.host = "wg.example.net"; wg_draft.port = "51820";
+        wg_draft.secret = "cHJpdmF0ZS1rZXk="; wg_draft.wg_peer_pbk = "cGVlci1wdWJrZXk=";
+        wg_draft.wg_local_cidr = "10.0.0.2/32, fd00::2/128"; wg_draft.wg_mtu = "1420";
+        auto built_wg = desktop_ui_helpers::build_workspace_node_from_form(wg_draft, ids, 2);
+        expect(built_wg.has_value() && built_wg->node.protocol == "wireguard" &&
+               built_wg->node.extra.wg_peer_public_key == "cGVlci1wdWJrZXk=" &&
+               built_wg->node.extra.wg_local_addresses.size() == 2 && built_wg->node.extra.wg_mtu == 1420,
+            "Form builder builds WireGuard node with peer pubkey, dual-stack CIDR, and MTU");
+
+        desktop_ui_helpers::OutboundFormDraft mq_draft{};
+        mq_draft.proto = "masque"; mq_draft.tag = "US-MASQUE"; mq_draft.host = "h3.example.net"; mq_draft.port = "443";
+        mq_draft.masque_mode = "connect-ip"; mq_draft.masque_local_cidr = "10.99.0.2/32"; mq_draft.key_exchange = "x25519-mlkem768";
+        auto built_mq = desktop_ui_helpers::build_workspace_node_from_form(mq_draft, ids, 3);
+        expect(built_mq.has_value() && built_mq->node.protocol == "masque" &&
+               built_mq->node.extra.masque_mode == "connect-ip" && built_mq->node.tls.key_exchange == "x25519-mlkem768",
+            "Form builder builds MASQUE node with connect-ip and post-quantum KEM");
+
+        auto sub_lines = desktop_ui_helpers::decode_subscription_lines("dmxlc3M6Ly9hQGIuY29tOjQ0MwpoeTI6Ly9jQGQubmV0OjQ0Mw==");
+        expect(sub_lines.size() == 2 && sub_lines[0] == "vless://a@b.com:443" && sub_lines[1] == "hy2://c@d.net:443",
+            "decode_subscription_lines decodes base64 multi-URI feed");
+        auto hosts_rt = desktop_ui_helpers::parse_hosts_csv("router.lan=192.168.1.1, nas.lan = 10.0.0.2");
+        expect(hosts_rt.size() == 2 && desktop_ui_helpers::format_hosts_csv(hosts_rt) == "router.lan=192.168.1.1, nas.lan=10.0.0.2",
+            "parse_hosts_csv and format_hosts_csv round-trip cleanly");
     }
 }
 

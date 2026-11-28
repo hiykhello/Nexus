@@ -21,7 +21,7 @@ static auto ipv6_test() -> bool {
     socklen_t length=sizeof(address);
     if (::getsockname(server.fd,reinterpret_cast<sockaddr*>(&address),&length)) return false;
     timeval timeout{2,0}; ::setsockopt(server.fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
-    auto policy=r::RouteMatcher::compile(std::span<r::RouteRule const>{},0,2);
+    auto policy=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},0,2);
     s::UdpPeer client{4,{0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1},3000};
     s::UdpPeer target=client; target.port=ntohs(address.sin6_port);
     auto association=s::UdpAssociation::create(client,{4,{},0});
@@ -54,7 +54,7 @@ int main() {
         ::bind(attacker.fd,reinterpret_cast<sockaddr*>(&addr),sizeof(addr))) return 1;
     socklen_t size=sizeof(addr); if (::getsockname(server.fd,reinterpret_cast<sockaddr*>(&addr),&size)) return 2;
     timeval timeout{2,0}; ::setsockopt(server.fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
-    auto policy=r::RouteMatcher::compile(std::span<r::RouteRule const>{},0,2);
+    auto policy=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},0,2);
     auto association=s::UdpAssociation::create({1,{127,0,0,1},1000},{1,{},0});
     if (!policy || !association) return 3;
     s::UdpDirect direct(*association,*policy);

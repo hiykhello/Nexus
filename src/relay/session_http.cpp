@@ -99,7 +99,7 @@ namespace relay::session_detail {
 
     namespace {
         [[gnu::noinline]] auto http_admit(Session& session, io::io_context& context,
-            rules::RouteMatcher const& policy, std::uint8_t first,
+            rules::RouteProgram const& policy, std::uint8_t first,
             std::optional<Credentials> const& credentials,
             std::span<std::uint8_t const> initial_tail) -> capy::task<bool> {
             auto fail = [&] { session.close(); session.done = true; };
@@ -207,7 +207,7 @@ namespace relay::session_detail {
     }
 
     auto http_handshake(Session& session, io::io_context& context,
-        rules::RouteMatcher const& policy, std::uint8_t first,
+        rules::RouteProgram const& policy, std::uint8_t first,
         std::optional<Credentials> const& credentials,
         std::span<std::uint8_t const> initial_tail) -> capy::task<> {
         // The 16 KiB CONNECT header buffer frame is destroyed before relay_pair begins.

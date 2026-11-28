@@ -1,0 +1,359 @@
+import { I18n } from "../i18n.slint";
+import { Motion } from "../motion.slint";
+import { Theme } from "../theme.slint";
+import { WorkspaceState } from "../workspace_state.slint";
+import { IconActionButton } from "icon_button.slint";
+import { NexusButton } from "nexus_buttons.slint";
+
+component InboundProtoTile inherits Rectangle {
+    in property <string> title;
+    in property <string> port;
+    in property <bool> active: false;
+    in property <bool> live: false;
+    in property <bool> enabled: true;
+    callback toggled(bool);
+
+    forward-focus: p-fs;
+    height: 52px;
+    border-radius: Theme.radius-md;
+    border-width: p-fs.has-focus ? 2px : (root.active || (p-ta.has-hover && root.enabled)) ? 1px : 0px;
+    border-color: p-fs.has-focus ? Theme.accent : root.active ? (root.live ? Theme.live-emerald-border : Theme.selected-border) : p-ta.has-hover && root.enabled ? Theme.hairline-strong : transparent;
+    background: root.active ? (root.live ? Theme.live-emerald-soft : Theme.selected-bg) : p-ta.has-hover && root.enabled ? Theme.row-hover-bg : Theme.well-bg;
+    opacity: root.enabled ? 1.0 : 0.45;
+    transform-scale: (p-ta.pressed && root.enabled) ? 0.97 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate border-color { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    accessible-role: switch;
+    accessible-label: root.title;
+    accessible-checked: root.active;
+    accessible-action-default => { if (root.enabled) { root.toggled(!root.active); } }
+
+    p-fs := FocusScope {
+        enabled: root.enabled;
+        key-pressed(ev) => {
+            if (root.enabled && (ev.text == Key.Return || ev.text == " ")) { root.toggled(!root.active); return accept; }
+            reject
+        }
+    }
+
+    p-ta := TouchArea {
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        clicked => { root.toggled(!root.active); }
+    }
+
+    VerticalLayout {
+        padding-left: 10px;
+        padding-right: 10px;
+        padding-top: 7px;
+        padding-bottom: 7px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            spacing: 5px;
+            Rectangle {
+                width: 7px;
+                height: 7px;
+                y: (parent.height - self.height) / 2;
+                border-radius: 3.5px;
+                background: !root.active ? Theme.offline-fg : root.live ? Theme.live-emerald : Theme.accent;
+                animate background { duration: Motion.fast; }
+            }
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: root.title;
+                font-size: 12px;
+                font-weight: 800;
+                color: !root.active ? Theme.text-primary : root.live ? Theme.live-emerald : Theme.nav-active-fg;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+        }
+
+        Text {
+            text: !root.active ? I18n.t("未启用", "Off")
+                : (":" + root.port);
+            font-size: 11.5px;
+            font-weight: 700;
+            font-family: Theme.mono-font;
+            color: !root.active ? Theme.text-muted : root.live ? Theme.live-emerald : Theme.nav-active-fg;
+            overflow: elide;
+        }
+    }
+}
+
+component InboundGridTile inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <color> value-color: Theme.text-primary;
+    in property <bool> mono: true;
+    callback clicked();
+
+    height: 50px;
+    border-radius: Theme.radius-md;
+    background: tile-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+    transform-scale: tile-ta.pressed ? 0.98 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    tile-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    VerticalLayout {
+        padding-left: 11px;
+        padding-right: 11px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+        alignment: space-between;
+
+        HorizontalLayout {
+            alignment: space-between;
+            Text {
+                text: root.label;
+                font-size: 11px;
+                font-weight: 600;
+                color: Theme.text-secondary;
+                overflow: elide;
+            }
+            Image {
+                width: 11px;
+                height: 11px;
+                y: (parent.height - self.height) / 2;
+                source: @image-url("../icons/chevron-right.svg");
+                colorize: Theme.text-muted;
+            }
+        }
+
+        Text {
+            text: root.value;
+            font-size: 12px;
+            font-weight: 700;
+            font-family: root.mono ? Theme.mono-font : "";
+            color: root.value-color;
+            overflow: elide;
+        }
+    }
+}
+
+component ProbeMatrixTile inherits Rectangle {
+    in property <string> name;
+    in property <string> host-hint;
+    in property <int> ms: -1;
+    callback clicked();
+
+    height: 48px;
+    border-radius: Theme.radius-md;
+    background: p-ta.has-hover ? Theme.row-hover-bg : Theme.well-bg;
+    transform-scale: p-ta.pressed ? 0.98 : 1.0;
+    animate background { duration: Motion.fast; }
+    animate transform-scale { duration: Motion.micro; easing: cubic-bezier(0.23, 1.0, 0.32, 1.0); }
+
+    p-ta := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding-left: 11px;
+        padding-right: 11px;
+        spacing: 8px;
+
+        VerticalLayout {
+            horizontal-stretch: 1;
+            min-width: 0px;
+            alignment: center;
+            spacing: 2px;
+            Text {
+                text: root.name;
+                font-size: 12px;
+                font-weight: 700;
+                color: Theme.text-primary;
+                overflow: elide;
+            }
+            Text {
+                text: root.host-hint;
+                font-size: 10px;
+                font-family: Theme.mono-font;
+                color: Theme.text-muted;
+                overflow: elide;
+            }
+        }
+
+        Text {
+            text: root.ms > 0 ? "\{root.ms} ms" : root.ms == 0 ? I18n.t("超时", "Err") : "--";
+            font-size: 12px;
+            font-weight: 800;
+            font-family: Theme.mono-font;
+            color: root.ms > 0 ? Theme.latency-fg(root.ms, "healthy") : root.ms == 0 ? Theme.error-fg : Theme.text-muted;
+            vertical-alignment: center;
+        }
+    }
+}
+
+export component DashboardInboundCard inherits Rectangle {
+    in property <bool> compact: false;
+    in property <bool> core-running: false;
+    in property <bool> tun-enabled: false;
+    in property <bool> mixed-proxy-enabled: true;
+    in property <string> mixed-proxy-host: "127.0.0.1";
+    in property <string> mixed-proxy-port: "7890";
+    in property <bool> socks-proxy-enabled: false;
+    in property <string> socks-proxy-port: "10808";
+    in property <bool> http-proxy-enabled: false;
+    in property <string> http-proxy-port: "10809";
+    in property <string> active-routing-name: "";
+    in property <int> active-rule-count: 0;
+    in property <bool> conn-probe-busy: false;
+    in property <int> conn-google-ms: -1;
+    in property <int> conn-cf-ms: -1;
+    in property <int> conn-github-ms: -1;
+    in property <int> conn-youtube-ms: -1;
+
+    callback toggle-mixed-port(bool);
+    callback toggle-http-port(bool);
+    callback toggle-socks-port(bool);
+    callback probe-connectivity();
+    callback clear-cache();
+    callback open-routing();
+    callback open-dns-host();
+
+    property <bool> strict-lock: WorkspaceState.host-is-linux && WorkspaceState.host-enable-tun && WorkspaceState.host-tun-strict-route;
+    property <string> dns-tun-summary:
+        (WorkspaceState.dns-fakeip ? "FakeIP" : "DoH")
+        + (WorkspaceState.host-allow-lan ? " · LAN" : "")
+        + (root.tun-enabled || WorkspaceState.host-enable-tun ? " · TUN" : "");
+
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-border;
+    background: Theme.card-surface;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        // Card Header
+        HorizontalLayout {
+            height: 28px;
+            spacing: 6px;
+            Text {
+                horizontal-stretch: 1;
+                min-width: 0px;
+                text: I18n.t("入站与连通性", "Inbounds & Probe");
+                font-size: 16px;
+                font-weight: 800;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                overflow: elide;
+            }
+            NexusButton {
+                btn-height: 28px;
+                has-icon: true;
+                icon: @image-url("../icons/bolt.svg");
+                label: root.conn-probe-busy ? I18n.t("检测中", "Testing") : I18n.t("测速", "Probe");
+                active: root.conn-probe-busy;
+                clicked => { root.probe-connectivity(); }
+            }
+            IconActionButton {
+                size: 28px;
+                icon: @image-url("../icons/refresh.svg");
+                label: I18n.t("清除 DNS 与 FakeIP 缓存", "Clear DNS & FakeIP Cache");
+                clicked => { root.clear-cache(); }
+            }
+            IconActionButton {
+                size: 28px;
+                icon: @image-url("../icons/settings.svg");
+                label: I18n.t("入站设置", "Inbound Settings");
+                clicked => { root.open-dns-host(); }
+            }
+        }
+
+        // 3-Column Arbitrary-Combination Local Inbound Toggles (Mixed / HTTP / SOCKS5)
+        HorizontalLayout {
+            spacing: 8px;
+            InboundProtoTile {
+                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                title: "Mixed";
+                port: root.mixed-proxy-port;
+                active: root.mixed-proxy-enabled;
+                live: root.core-running;
+                enabled: !root.strict-lock;
+                toggled(v) => { root.toggle-mixed-port(v); }
+            }
+            InboundProtoTile {
+                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                title: "HTTP";
+                port: root.http-proxy-port;
+                active: root.http-proxy-enabled;
+                live: root.core-running;
+                enabled: !root.strict-lock;
+                toggled(v) => { root.toggle-http-port(v); }
+            }
+            InboundProtoTile {
+                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                title: "SOCKS5";
+                port: root.socks-proxy-port;
+                active: root.socks-proxy-enabled;
+                live: root.core-running;
+                enabled: !root.strict-lock;
+                toggled(v) => { root.toggle-socks-port(v); }
+            }
+        }
+
+        // 2-Column Strategy & DNS/TUN Summary Row
+        HorizontalLayout {
+            spacing: 8px;
+            InboundGridTile {
+                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                label: I18n.t("路由规则", "Routing");
+                value: (root.active-routing-name != "" ? root.active-routing-name : I18n.t("默认", "Default"))
+                    + " · " + root.active-rule-count + I18n.t(" 条", "");
+                mono: false;
+                clicked => { root.open-routing(); }
+            }
+            InboundGridTile {
+                horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                label: I18n.t("DNS / 网卡", "DNS / NIC");
+                value: root.dns-tun-summary;
+                value-color: (WorkspaceState.dns-fakeip || root.tun-enabled) ? Theme.live-emerald : Theme.text-primary;
+                clicked => { root.open-dns-host(); }
+            }
+        }
+
+        // 2x2 Connectivity Probe Matrix
+        VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                spacing: 8px;
+                ProbeMatrixTile {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                    name: "Cloudflare"; host-hint: "cp.cloudflare.com"; ms: root.conn-cf-ms;
+                    clicked => { root.probe-connectivity(); }
+                }
+                ProbeMatrixTile {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                    name: "Google"; host-hint: "gstatic.com/204"; ms: root.conn-google-ms;
+                    clicked => { root.probe-connectivity(); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                ProbeMatrixTile {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                    name: "GitHub"; host-hint: "api.github.com"; ms: root.conn-github-ms;
+                    clicked => { root.probe-connectivity(); }
+                }
+                ProbeMatrixTile {
+                    horizontal-stretch: 1; preferred-width: 0px; min-width: 0px;
+                    name: "YouTube"; host-hint: "i.ytimg.com"; ms: root.conn-youtube-ms;
+                    clicked => { root.probe-connectivity(); }
+                }
+            }
+        }
+    }
+}

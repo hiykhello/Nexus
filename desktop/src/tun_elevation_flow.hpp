@@ -32,9 +32,10 @@ namespace desktop_ui_helpers {
         std::filesystem::path const& config_path,
         std::string composed_text,
         bool prefer_persistent_tun,
-        bool en) -> void {
+        bool en,
+        std::optional<std::pair<std::string, std::uint16_t>> sys_proxy_rebind = std::nullopt) -> void {
         bool posted = worker.post([&, weak_ui, en, prefer_persistent_tun, on_tray_sync = std::move(on_tray_sync),
-                                   composed_text = std::move(composed_text)]() mutable {
+                                   composed_text = std::move(composed_text), sys_proxy_rebind = std::move(sys_proxy_rebind)]() mutable {
             bool running = false;
             bool cancelled = false;
             std::optional<desktop::TunPrivilegeProbe> refreshed_probe;
@@ -72,6 +73,9 @@ namespace desktop_ui_helpers {
                     if (elev_ok) {
                         if (supervisor.start(config_path, start_opts)) {
                             running = true;
+                            if (sys_proxy_rebind) {
+                                (void)sys_proxy.enable(sys_proxy_rebind->first, sys_proxy_rebind->second);
+                            }
                             summary = start_opts.elevate_session ? tr(en, "已连接 (按次提权 TUN)", "Connected (Session TUN)")
                                     : start_opts.use_persistent_helper ? tr(en, "已连接 (持久服务 TUN)", "Connected (Helper TUN)")
                                                                        : tr(en, "已连接", "Connected");
@@ -142,6 +146,10 @@ namespace desktop_ui_helpers {
             }
             auto next_host = ws_ctx.host;
             next_host.enable_tun = on;
+            if (!on && !has_any_enabled_inbound(next_host)) {
+                next_host.enable_mixed = true;
+                if (next_host.mixed_listen.empty()) next_host.mixed_listen = "127.0.0.1:7890";
+            }
             auto notices = desktop::normalize_desktop_host_config(next_host, en);
             auto doc_snap = ws_ctx.doc;
             auto active_id = resolve_effective_active_profile_id(ws_ctx);
@@ -179,20 +187,13 @@ namespace desktop_ui_helpers {
                     });
                 };
 
-                auto ws_tmp = make_temp_compose_workspace(ws_ctx.cfg_dir, doc_snap);
-                auto host_tmp = make_temp_compose_host(ws_ctx.cfg_dir, next_host);
-                if (!ws_tmp.ok || !host_tmp.ok) {
-                    ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
-                    finish_err(tr(en, "准备 TUN 配置失败", "Failed to prepare TUN configuration"), "error");
+                auto composed_exp = compose_workspace_with_overlay(
+                    ws_ctx.cfg_dir, ws_ctx.supervisor.binary_path(), ws_ctx.secrets_dir, doc_snap, next_host, active_id, en);
+                if (!composed_exp) {
+                    finish_err(composed_exp.error(), "error");
                     return;
                 }
-                auto composed = desktop::compose_workspace_via_core(
-                    ws_ctx.supervisor.binary_path(), ws_tmp.path, host_tmp.path, ws_ctx.secrets_dir, active_id, {});
-                ws_tmp.wipe_and_remove(); host_tmp.wipe_and_remove();
-                if (!composed.ok || composed.kdl.empty()) {
-                    finish_err(composed.errors.empty() ? tr(en, "生成 TUN 配置失败", "Failed to build TUN configuration") : composed.errors.front(), "error");
-                    return;
-                }
+                auto composed = std::move(*composed_exp);
                 auto val = validate_draft_config(ws_ctx.cfg_dir, ws_ctx.supervisor, composed.kdl, en);
                 if (!val.ok) {
                     finish_err(tr(en, "TUN 配置校验未通过: ", "TUN config invalid: ") + val.message, "error");
@@ -244,6 +245,7 @@ namespace desktop_ui_helpers {
                         ws_ctx.last_secret_files = std::move(composed.secret_files);
                         apply_tun_probe_to_ui(*s, probe);
                         sync_workspace_to_ui(ws_ctx);
+                        sync_system_proxy_with_inbounds(ws_ctx, is_en_ui(*s));
                         s->template global<nexus_ui::WorkspaceState>().set_host_strict_route_notice(
                             slint::SharedString(notices.empty() ? "" : notices.front()));
                         if (was_running) {
@@ -309,6 +311,7 @@ namespace desktop_ui_helpers {
                     ws_ctx.last_secret_files = std::move(composed.secret_files);
                     apply_tun_probe_to_ui(*s, probe);
                     sync_workspace_to_ui(ws_ctx);
+                    sync_system_proxy_with_inbounds(ws_ctx, is_en_ui(*s));
                     s->template global<nexus_ui::WorkspaceState>().set_host_strict_route_notice(
                         slint::SharedString(notices.empty() ? "" : notices.front()));
                     s->set_core_running(running_after);

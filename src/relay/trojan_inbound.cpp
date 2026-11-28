@@ -28,7 +28,7 @@ namespace relay {
         using WsStream = websocket::VlessByteStream<corosio::tcp_socket>;
         using Incoming = trojan::detail::Inbound<corosio::tcp_socket, WsStream>;
 
-        auto serve(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+        auto serve(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
             trojan_in::TrojanInboundProfile const& profile) -> capy::task<> {
             auto fail = [&] { session.close(); session.done = true; };
             auto deadline = session.started + std::chrono::seconds(10);
@@ -183,7 +183,7 @@ namespace relay {
         profile->users = std::move(*table);
         profile->names.assign(names.begin(), names.end());
         return InboundFactory{[profile = std::move(profile)](Session& session, corosio::io_context& context,
-            rules::RouteMatcher const& policy) {
+            rules::RouteProgram const& policy) {
             return serve(session, context, policy, *profile);
         }};
     }

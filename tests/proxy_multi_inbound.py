@@ -47,7 +47,7 @@ inbounds {{
   socks5 "password" {{ listen host="127.0.0.1" port={ports[2]}; authentication "password" username="alice" password-file="{password}"; }}
 }}
 outbounds {{ direct "direct"; block "reject"; }}
-routing {{ rulesets {{ "blocked" path="blocked.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="blocked" outbound="reject"; }}; final "direct"; }}
+routing {{ rulesets {{ "blocked" path="blocked.kdl" format="kdl"; }}; rules {{ - rule-set="blocked" to="reject"; }}; final "direct"; }}
 ''')
         blocker = socket.socket()
         if occupied:

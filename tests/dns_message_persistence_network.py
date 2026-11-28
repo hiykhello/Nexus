@@ -62,30 +62,36 @@ def checkpoint_listener_port():
     raise RuntimeError("no available DNS checkpoint listener port")
 
 
+def shard_files(directory):
+    return sorted((directory / "dns").glob("[0-9a-f]" * 64 + ".state"))
+
+
 def check(binary, root, peer, alternate, transport, check_expiry):
     front, dns_port = free_port(), checkpoint_listener_port()
     directory = root / "cache"
     directory.mkdir(mode=0o700)
-    snapshot = directory / "messages.cache"
     config = root / "proxy.kdl"
     source = f'''schema-version 1
 role "client"
-inbound "main" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
-outbound "direct" type="direct"
+state {{ cache-directory "{directory}"; }}
+inbounds {{ inbound "main" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}; }}
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{ final "direct"; }}
 dns {{
    listen host="127.0.0.1" port={dns_port}
-   message-cache-directory "{directory}"
-   server "dns" type="{transport}" host="{peer.host}" port={peer.port}
+   servers {{ server "dns" type="{transport}" host="{peer.host}" port={peer.port}; }}
    final "dns"
 }}
 '''
     config.write_text(source)
     with nexus_process(binary, config):
         assert query(dns_port, 51) == 8
+    shards = shard_files(directory)
+    assert len(shards) == 1
+    snapshot = shards[0]
     assert snapshot.stat().st_mode & 0o777 == 0o600
     first_checkpoint = snapshot.read_bytes()
-    assert first_checkpoint.startswith(b"NXDNS2")
+    assert first_checkpoint.startswith(b"NXDN03")
     assert len(peer.seen) == 1
     time.sleep(1.1)
 
@@ -99,7 +105,8 @@ dns {{
         reload(process)
         assert query(dns_port, 54) == 8
         assert len(alternate.seen) == 1
-    assert snapshot.read_bytes().startswith(b"NXDNS2")
+    shards = shard_files(directory)
+    assert len(shards) >= 1 and all(p.read_bytes().startswith(b"NXDN03") for p in shards)
 
     snapshot.write_bytes(first_checkpoint[:-1])
     config.write_text(source)
@@ -129,15 +136,17 @@ def check_views(binary, root, first, second):
         # source, so restoring a row into the wrong resolver can leak a view.
         source = f'''schema-version 1
 role "client"
-inbound "main" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
-outbound "direct" type="direct"
+state {{ cache-directory "{directory}"; }}
+inbounds {{ inbound "main" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}; }}
+outbounds {{ outbound "direct" type="direct"; }}
 routing {{ final "direct"; }}
 dns {{
    listen host="127.0.0.1" port={dns_port}
-   message-cache-directory "{directory}"
-   server "first" type="udp" host="{first.host}" port={first.port}
-   server "second" type="tcp" host="{second.host}" port={second.port}
-   rule domain="persist.test" source-port={source_port} server="second"
+   servers {{
+      server "first" type="udp" host="{first.host}" port={first.port}
+      server "second" type="tcp" host="{second.host}" port={second.port}
+   }}
+   rules {{ - domain="persist.test" source-port={source_port} server="second"; }}
    final "first"
 }}
 '''
@@ -146,9 +155,11 @@ dns {{
             assert query_from(selected, dns_port, 61, second.answer) == 8
             assert query_from(fallback, dns_port, 62, first.answer) == 8
         assert len(first.seen) == len(second.seen) == 1
-        snapshot = directory / "messages.cache"
+        shards = shard_files(directory)
+        assert len(shards) == 1
+        snapshot = shards[0]
         original = snapshot.read_bytes()
-        assert original.startswith(b"NXDNS2")
+        assert original.startswith(b"NXDN03")
         with nexus_process(binary, config) as process:
             assert 0 < query_from(fallback, dns_port, 63, first.answer) < 8
             assert 0 < query_from(selected, dns_port, 64, second.answer) < 8
@@ -164,7 +175,9 @@ dns {{
             assert query_from(selected, dns_port, 66, first.answer) == 8
             assert query_from(fallback, dns_port, 67, second.answer) == 8
             assert len(first.seen) == len(second.seen) == 2
-        snapshot.write_bytes(original)
+        changed_shards = [p for p in shard_files(directory) if p != snapshot]
+        assert len(changed_shards) == 1
+        changed_shards[0].write_bytes(original)
         with nexus_process(binary, config):
             assert query_from(selected, dns_port, 68, first.answer) == 8
             assert query_from(fallback, dns_port, 69, second.answer) == 8

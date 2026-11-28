@@ -66,9 +66,8 @@ namespace config {
             }
         }
         if (!config.dns) return {};
-        if (auto& fake = config.dns->fakeip; fake && fake->state_directory.empty()) {
-            if (!options || options->directory.empty()) return error("fake-ip requires a state directory");
-            fake->unified = true;
+        if (auto& fake = config.dns->fakeip; fake) {
+            if (!options || options->directory.empty()) return error("fake-ip requires state { directory ... }");
             fake->per_mapping = options->fakeip_per_mapping;
             fake->state_directory = (std::filesystem::path(options->directory) / "fakeip").string();
         }

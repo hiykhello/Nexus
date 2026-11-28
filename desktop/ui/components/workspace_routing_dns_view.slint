@@ -1,158 +1,341 @@
-import { ControlInspectState } from "../control_inspect_state.slint";
+import { ScrollView } from "std-widgets.slint";
 import { I18n } from "../i18n.slint";
 import { Theme } from "../theme.slint";
 import { WorkspaceState } from "../workspace_state.slint";
-import { NexusInput } from "glass_primitives.slint";
+import { NexusInput, NexusVScrollBar } from "nexus_primitives.slint";
 import { IconActionButton } from "icon_button.slint";
 import { NexusButton, NexusChip } from "nexus_buttons.slint";
 import { NexusSwitch } from "nexus_controls.slint";
+import { NexusSelect } from "nexus_select.slint";
 
-export component WorkspaceRoutingDnsView inherits VerticalLayout {
-    in property <length> grid-w: 600px;
-    spacing: Theme.space-sm;
+export component WorkspaceRoutingDnsView inherits Rectangle {
+    in property <length> window-width: 1280px;
+    callback open-rule-simulator();
 
-    // Routing Profiles + Routing Options + Rule Adder
-    Rectangle {
-        width: root.grid-w; border-radius: Theme.radius-card; border-width: 1px;
-        border-color: Theme.card-border; background: Theme.card-surface;
-        VerticalLayout {
-            padding: Theme.space-md; spacing: Theme.space-sm;
+    property <bool> compact-layout: root.window-width < 1040px;
 
-            Text { text: I18n.t("路由方案", "Routing Profiles"); font-size: 13px; font-weight: 700; color: Theme.text-primary; }
+    clip: true;
 
-            if WorkspaceState.routing-profiles.length > 0 : FlexboxLayout {
-                spacing: 6px;
-                for rp in WorkspaceState.routing-profiles : NexusChip {
-                    chip-height: 26px;
-                    label: rp.name; active: rp.active;
-                    clicked => { WorkspaceState.select-routing-profile(rp.id); }
-                }
-            }
+    sv := ScrollView {
+        width: 100%;
+        height: 100%;
+        vertical-scrollbar-policy: ScrollBarPolicy.always-off;
+        horizontal-scrollbar-policy: ScrollBarPolicy.always-off;
+        content-width: self.visible-width;
+        content-height: max(self.visible-height, col.preferred-height);
 
-            HorizontalLayout {
-                spacing: Theme.space-lg;
-                NexusSwitch {
-                    text: I18n.t("自动探测网卡", "Auto-Detect Interface");
-                    checked <=> WorkspaceState.routing-auto-detect-interface;
-                    toggled => {
-                        WorkspaceState.apply-routing-options(
-                            WorkspaceState.routing-auto-detect-interface,
-                            WorkspaceState.routing-find-process,
-                        );
-                    }
-                }
-                NexusSwitch {
-                    text: I18n.t("进程识别", "Find Process");
-                    checked <=> WorkspaceState.routing-find-process;
-                    toggled => {
-                        WorkspaceState.apply-routing-options(
-                            WorkspaceState.routing-auto-detect-interface,
-                            WorkspaceState.routing-find-process,
-                        );
-                    }
-                }
-                Rectangle { horizontal-stretch: 1; }
-            }
+        col := VerticalLayout {
+            x: 0px;
+            y: 0px;
+            width: max(0px, sv.visible-width - 14px);
+            padding-bottom: 14px;
+            spacing: 14px;
+            alignment: start;
 
-            FlexboxLayout {
-                spacing: 6px;
-                NexusChip { chip-height: 26px; label: "proxy"; active: WorkspaceState.rule-target-type == "proxy"; clicked => { WorkspaceState.rule-target-type = "proxy"; } }
-                NexusChip { chip-height: 26px; label: "direct"; active: WorkspaceState.rule-target-type == "direct"; clicked => { WorkspaceState.rule-target-type = "direct"; } }
-                NexusChip { chip-height: 26px; label: "block"; active: WorkspaceState.rule-target-type == "block"; clicked => { WorkspaceState.rule-target-type = "block"; } }
-                NexusChip { chip-height: 26px; label: I18n.t("指定配置项", "Profile ID"); active: WorkspaceState.rule-target-type == "profile_id"; clicked => { WorkspaceState.rule-target-type = "profile_id"; } }
-                Rectangle {
-                    horizontal-stretch: 0; height: 26px;
+            // Card 1: Routing Presets, Domain Strategy & Global Options
+            Rectangle {
+                border-radius: Theme.radius-card;
+                border-width: 1px;
+                border-color: Theme.card-border;
+                background: Theme.card-surface;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 12px;
+
                     HorizontalLayout {
-                        padding-left: 8px;
+                        height: 28px;
+                        spacing: 8px;
+                        Text {
+                            horizontal-stretch: 1;
+                            text: I18n.t("路由方案", "Routing");
+                            font-size: 16px;
+                            font-weight: 800;
+                            color: Theme.text-primary;
+                            vertical-alignment: center;
+                        }
+                        NexusButton {
+                            btn-height: 28px;
+                            has-icon: true;
+                            icon: @image-url("../icons/wand.svg");
+                            label: I18n.t("规则模拟器", "Simulator");
+                            primary: true;
+                            clicked => { root.open-rule-simulator(); }
+                        }
+                    }
+
+                    if WorkspaceState.routing-profiles.length > 0 : FlexboxLayout {
+                        spacing: 6px;
+                        for rp in WorkspaceState.routing-profiles : NexusChip {
+                            label: rp.name + " (\{rp.rule-count})";
+                            active: rp.active;
+                            clicked => { WorkspaceState.select-routing-profile(rp.id); }
+                        }
+                    }
+
+                    if !root.compact-layout : HorizontalLayout {
+                        spacing: 8px;
+                        NexusInput {
+                            width: 200px;
+                            text <=> WorkspaceState.new-routing-name;
+                            placeholder-text: I18n.t("新建路由方案名称", "New routing set");
+                        }
+                        NexusButton {
+                            label: I18n.t("新建", "Create");
+                            clicked => {
+                                if (WorkspaceState.new-routing-name != "") {
+                                    WorkspaceState.create-routing-preset(WorkspaceState.new-routing-name);
+                                    WorkspaceState.new-routing-name = "";
+                                }
+                            }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: I18n.t("解析策略", "Domain"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusSelect {
+                            width: 148px;
+                            options: ["as-is", "ip-if-non-match", "ip-on-demand"];
+                            current-value <=> WorkspaceState.routing-domain-strategy;
+                            selected(v) => { WorkspaceState.apply-routing-strategy(v, WorkspaceState.routing-default-outbound); }
+                        }
+                        Text { text: I18n.t("默认出站", "Default"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                        NexusSelect {
+                            width: 102px;
+                            options: ["proxy", "direct", "block"];
+                            current-value <=> WorkspaceState.routing-default-outbound;
+                            selected(v) => { WorkspaceState.apply-routing-strategy(WorkspaceState.routing-domain-strategy, v); }
+                        }
+                    }
+
+                    if root.compact-layout : VerticalLayout {
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: I18n.t("解析策略", "Domain"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusSelect {
+                                width: 152px;
+                                options: ["as-is", "ip-if-non-match", "ip-on-demand"];
+                                current-value <=> WorkspaceState.routing-domain-strategy;
+                                selected(v) => { WorkspaceState.apply-routing-strategy(v, WorkspaceState.routing-default-outbound); }
+                            }
+                            Text { text: I18n.t("默认出站", "Default"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; }
+                            NexusSelect {
+                                width: 108px;
+                                options: ["proxy", "direct", "block"];
+                                current-value <=> WorkspaceState.routing-default-outbound;
+                                selected(v) => { WorkspaceState.apply-routing-strategy(WorkspaceState.routing-domain-strategy, v); }
+                            }
+                            Rectangle { horizontal-stretch: 1; }
+                        }
+                        HorizontalLayout {
+                            spacing: 8px;
+                            NexusInput {
+                                horizontal-stretch: 1;
+                                text <=> WorkspaceState.new-routing-name;
+                                placeholder-text: I18n.t("新建路由方案名称", "New routing set");
+                            }
+                            NexusButton {
+                                label: I18n.t("新建", "Create");
+                                clicked => {
+                                    if (WorkspaceState.new-routing-name != "") {
+                                        WorkspaceState.create-routing-preset(WorkspaceState.new-routing-name);
+                                        WorkspaceState.new-routing-name = "";
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    FlexboxLayout {
+                        spacing: 18px;
                         NexusSwitch {
-                            text: I18n.t("TLS 分片", "TLS Fragment");
-                            checked <=> WorkspaceState.rule-tls-fragment;
+                            text: I18n.t("自动探测网卡", "Auto-Detect NIC");
+                            checked <=> WorkspaceState.routing-auto-detect-interface;
+                            toggled => { WorkspaceState.apply-routing-options(WorkspaceState.routing-auto-detect-interface, WorkspaceState.routing-find-process); }
+                        }
+                        NexusSwitch {
+                            text: I18n.t("进程匹配", "Process Match");
+                            checked <=> WorkspaceState.routing-find-process;
+                            toggled => { WorkspaceState.apply-routing-options(WorkspaceState.routing-auto-detect-interface, WorkspaceState.routing-find-process); }
                         }
                     }
                 }
             }
 
-            HorizontalLayout {
-                spacing: 8px;
-                NexusInput { horizontal-stretch: 44; preferred-width: 0px; min-width: 96px; mono: true; text <=> WorkspaceState.rule-match-input; placeholder-text: I18n.t("域名 / CIDR (如 example.com)", "Domain / CIDR"); }
-                NexusInput { horizontal-stretch: 32; preferred-width: 0px; min-width: 84px; mono: true; text <=> WorkspaceState.rule-desktop-process; placeholder-text: I18n.t("桌面进程名（可选）", "Desktop process name"); }
-                if WorkspaceState.rule-target-type == "profile_id" : NexusInput { horizontal-stretch: 24; preferred-width: 0px; min-width: 72px; mono: true; text <=> WorkspaceState.rule-target-profile-id; placeholder-text: I18n.t("目标 ID", "Target ID"); }
-                IconActionButton {
-                    icon: @image-url("../icons/plus.svg"); label: I18n.t("加规则", "Add Rule"); primary: true;
-                    clicked => {
-                        WorkspaceState.add-routing-rule(WorkspaceState.rule-scope, WorkspaceState.rule-target-type, WorkspaceState.rule-target-profile-id, WorkspaceState.rule-match-input, WorkspaceState.rule-desktop-process);
-                        WorkspaceState.rule-match-input = ""; WorkspaceState.rule-desktop-process = "";
-                        WorkspaceState.rule-tls-fragment = false;
+            // Card 2: Active Routing Rules Table + Quick Adder
+            Rectangle {
+                border-radius: Theme.radius-card;
+                border-width: 1px;
+                border-color: Theme.card-border;
+                background: Theme.card-surface;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    Text {
+                        text: I18n.t("分流规则 (\{WorkspaceState.routing-rules.length})", "Rules (\{WorkspaceState.routing-rules.length})");
+                        font-size: 15px;
+                        font-weight: 800;
+                        color: Theme.text-primary;
+                    }
+
+                    HorizontalLayout {
+                        height: 28px;
+                        spacing: 6px;
+                        NexusChip { label: I18n.t("代理", "Proxy"); active: WorkspaceState.rule-target-type == "proxy"; clicked => { WorkspaceState.rule-target-type = "proxy"; } }
+                        NexusChip { label: I18n.t("直连", "Direct"); active: WorkspaceState.rule-target-type == "direct"; clicked => { WorkspaceState.rule-target-type = "direct"; } }
+                        NexusChip { label: I18n.t("阻断", "Block"); active: WorkspaceState.rule-target-type == "block"; clicked => { WorkspaceState.rule-target-type = "block"; } }
+                        NexusChip { label: I18n.t("指定出站", "Profile"); active: WorkspaceState.rule-target-type == "profile_id"; clicked => { WorkspaceState.rule-target-type = "profile_id"; } }
+                        Rectangle { width: 8px; }
+                        NexusSwitch { text: I18n.t("TLS 分片", "TLS Fragment"); checked <=> WorkspaceState.rule-tls-fragment; }
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    HorizontalLayout {
+                        spacing: 8px;
+                        NexusInput { horizontal-stretch: 44; preferred-width: 0px; mono: true; text <=> WorkspaceState.rule-match-input; placeholder-text: I18n.t("域名 / CIDR / @ruleset", "Domain / CIDR / @ruleset"); }
+                        NexusInput { horizontal-stretch: 30; preferred-width: 0px; mono: true; text <=> WorkspaceState.rule-desktop-process; placeholder-text: I18n.t("进程名 (可选，如 curl)", "Process (optional)"); }
+                        if WorkspaceState.rule-target-type == "profile_id" : NexusInput { width: 130px; mono: true; text <=> WorkspaceState.rule-target-profile-id; placeholder-text: I18n.t("目标 ID", "Profile ID"); }
+                        NexusButton {
+                            has-icon: true;
+                            icon: @image-url("../icons/plus.svg");
+                            label: I18n.t("添加", "Add");
+                            primary: true;
+                            clicked => {
+                                WorkspaceState.add-routing-rule(WorkspaceState.rule-scope, WorkspaceState.rule-target-type, WorkspaceState.rule-target-profile-id, WorkspaceState.rule-match-input, WorkspaceState.rule-desktop-process);
+                                WorkspaceState.rule-match-input = ""; WorkspaceState.rule-desktop-process = "";
+                                WorkspaceState.rule-tls-fragment = false;
+                            }
+                        }
+                    }
+
+                    for r in WorkspaceState.routing-rules : Rectangle {
+                        height: 38px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.well-bg;
+                        HorizontalLayout {
+                            padding-left: 12px;
+                            padding-right: 10px;
+                            spacing: 10px;
+                            NexusSwitch {
+                                checked: r.enabled;
+                                enabled: !r.locked;
+                                toggled => { WorkspaceState.toggle-routing-rule(r.id, self.checked); }
+                            }
+                            Text {
+                                width: 82px;
+                                text: r.target-label;
+                                font-size: 11px; font-weight: 800; font-family: Theme.mono-font;
+                                color: r.target-label == "block" ? Theme.error-fg : r.target-label == "direct" ? Theme.live-emerald : Theme.nav-active-fg;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                            Text {
+                                horizontal-stretch: 1; min-width: 0px;
+                                text: r.match-summary + (r.process-summary != "" ? "  [proc: " + r.process-summary + "]" : "");
+                                font-size: 12px; font-family: Theme.mono-font;
+                                color: r.enabled ? Theme.text-primary : Theme.text-muted;
+                                vertical-alignment: center; overflow: elide;
+                            }
+                            if r.tls-fragment : Text {
+                                text: "TLS-FRAG"; font-size: 10px; font-weight: 800; font-family: Theme.mono-font;
+                                color: Theme.warn-fg; vertical-alignment: center;
+                            }
+                            if !r.locked : IconActionButton {
+                                size: 26px; icon: @image-url("../icons/trash.svg"); label: I18n.t("删除规则", "Delete"); danger: true;
+                                clicked => { WorkspaceState.delete-routing-rule(r.id); }
+                            }
+                        }
                     }
                 }
             }
 
-            for r in WorkspaceState.routing-rules : HorizontalLayout {
-                spacing: 8px;
-                Text { text: "[\{r.target-label}]"; font-size: 11px; font-weight: 700; font-family: Theme.mono-font; color: Theme.nav-active-fg; }
-                Text { horizontal-stretch: 1; min-width: 0px; text: r.match-summary; font-size: 11px; font-family: Theme.mono-font; color: Theme.text-secondary; overflow: elide; }
-                if r.tls-fragment : Text { text: "TLS-FRAG"; font-size: 10px; font-weight: 700; font-family: Theme.mono-font; color: Theme.warn-fg; }
-                if r.process-summary != "" : Text { text: "proc:\{r.process-summary}"; font-size: 10px; font-family: Theme.mono-font; color: Theme.text-muted; }
+            // Card 3: RuleSet Assets (nxmm / srs / domain-list / ipcidr-list)
+            Rectangle {
+                border-radius: Theme.radius-card;
+                border-width: 1px;
+                border-color: Theme.card-border;
+                background: Theme.card-surface;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    Text {
+                        text: I18n.t("规则集 (nxmm / srs)", "Rule-Sets (nxmm / srs)");
+                        font-size: 15px;
+                        font-weight: 800;
+                        color: Theme.text-primary;
+                    }
+
+                    if !root.compact-layout : HorizontalLayout {
+                        spacing: 8px;
+                        NexusInput { width: 128px; mono: true; text <=> WorkspaceState.rs-tag; placeholder-text: "geosite-cn"; }
+                        NexusSelect { width: 92px; options: ["remote", "local"]; current-value <=> WorkspaceState.rs-source; }
+                        NexusSelect { width: 112px; options: ["srs", "nxmm", "domain-list", "ipcidr-list"]; current-value <=> WorkspaceState.rs-format; }
+                        NexusInput { horizontal-stretch: 1; mono: true; text <=> WorkspaceState.rs-locator; placeholder-text: WorkspaceState.rs-source == "remote" ? "https://.../geosite-cn.srs" : "/path/to/ruleset.nxmm"; }
+                        NexusInput { width: 76px; mono: true; text <=> WorkspaceState.rs-update-min; placeholder-text: "1440"; }
+                        NexusButton {
+                            label: I18n.t("添加", "Add"); primary: true;
+                            clicked => {
+                                if (WorkspaceState.rs-tag != "" && WorkspaceState.rs-locator != "") {
+                                    WorkspaceState.add-rule-set(WorkspaceState.rs-tag, WorkspaceState.rs-source, WorkspaceState.rs-format, WorkspaceState.rs-locator, WorkspaceState.rs-update-min);
+                                    WorkspaceState.rs-tag = ""; WorkspaceState.rs-locator = "";
+                                }
+                            }
+                        }
+                    }
+
+                    if root.compact-layout : VerticalLayout {
+                        spacing: 8px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            NexusInput { horizontal-stretch: 1; min-width: 110px; mono: true; text <=> WorkspaceState.rs-tag; placeholder-text: "geosite-cn"; }
+                            NexusSelect { width: 96px; options: ["remote", "local"]; current-value <=> WorkspaceState.rs-source; }
+                            NexusSelect { width: 118px; options: ["srs", "nxmm", "domain-list", "ipcidr-list"]; current-value <=> WorkspaceState.rs-format; }
+                            NexusInput { width: 78px; mono: true; text <=> WorkspaceState.rs-update-min; placeholder-text: "1440"; }
+                            NexusButton {
+                                label: I18n.t("添加", "Add"); primary: true;
+                                clicked => {
+                                    if (WorkspaceState.rs-tag != "" && WorkspaceState.rs-locator != "") {
+                                        WorkspaceState.add-rule-set(WorkspaceState.rs-tag, WorkspaceState.rs-source, WorkspaceState.rs-format, WorkspaceState.rs-locator, WorkspaceState.rs-update-min);
+                                        WorkspaceState.rs-tag = ""; WorkspaceState.rs-locator = "";
+                                    }
+                                }
+                            }
+                        }
+                        NexusInput {
+                            mono: true;
+                            text <=> WorkspaceState.rs-locator;
+                            placeholder-text: WorkspaceState.rs-source == "remote" ? "https://.../geosite-cn.srs" : "/path/to/ruleset.nxmm";
+                        }
+                    }
+
+                    for rs in WorkspaceState.rule-sets : Rectangle {
+                        height: 36px;
+                        border-radius: Theme.radius-md;
+                        background: Theme.well-bg;
+                        HorizontalLayout {
+                            padding-left: 12px; padding-right: 10px; spacing: 10px;
+                            Text { width: 110px; text: rs.tag; font-size: 12px; font-weight: 800; font-family: Theme.mono-font; color: Theme.nav-active-fg; vertical-alignment: center; overflow: elide; }
+                            Text { width: 96px; text: rs.source-type + " · " + rs.format; font-size: 11px; font-family: Theme.mono-font; color: Theme.text-secondary; vertical-alignment: center; }
+                            Text { horizontal-stretch: 1; min-width: 0px; text: rs.locator; font-size: 11px; font-family: Theme.mono-font; color: Theme.text-muted; vertical-alignment: center; overflow: elide; }
+                            IconActionButton {
+                                size: 26px; icon: @image-url("../icons/trash.svg"); label: I18n.t("删除规则集", "Delete"); danger: true;
+                                clicked => { WorkspaceState.delete-rule-set(rs.tag); }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
 
-    // DNS SimpleDNS / Custom DNS Card + Targeted FakeIP & DNS Cache Flush
-    Rectangle {
-        width: root.grid-w; border-radius: Theme.radius-card; border-width: 1px;
-        border-color: Theme.card-border; background: Theme.card-surface;
-        VerticalLayout {
-            padding: Theme.space-md; spacing: Theme.space-sm;
-            HorizontalLayout {
-                spacing: 8px;
-                Text { text: I18n.t("DNS 模式", "DNS Mode"); font-size: 13px; font-weight: 700; color: Theme.text-primary; vertical-alignment: center; }
-                VerticalLayout { alignment: center; NexusChip { chip-height: 26px; label: I18n.t("简易 DNS", "Simple DNS"); active: WorkspaceState.dns-mode == "simple"; clicked => { WorkspaceState.dns-mode = "simple"; } } }
-                VerticalLayout { alignment: center; NexusChip { chip-height: 26px; label: I18n.t("自定义 DNS", "Custom DNS"); active: WorkspaceState.dns-mode == "raw_kdl"; clicked => { WorkspaceState.dns-mode = "raw_kdl"; } } }
-                Rectangle { horizontal-stretch: 1; }
-                NexusButton {
-                    btn-height: 30px; has-icon: true;
-                    icon: @image-url("../icons/check.svg"); label: I18n.t("应用 DNS", "Apply DNS"); primary: true;
-                    clicked => { WorkspaceState.apply-dns-config(WorkspaceState.dns-mode, WorkspaceState.dns-direct, WorkspaceState.dns-remote, WorkspaceState.dns-fakeip, WorkspaceState.dns-raw-kdl); }
-                }
-            }
-            if WorkspaceState.dns-mode == "simple" : VerticalLayout {
-                spacing: 8px;
-                HorizontalLayout {
-                    spacing: 8px;
-                    NexusInput { horizontal-stretch: 50; preferred-width: 0px; mono: true; text <=> WorkspaceState.dns-direct; placeholder-text: I18n.t("直连 DNS (如 https://223.5.5.5/dns-query)", "Direct DNS"); }
-                    NexusInput { horizontal-stretch: 50; preferred-width: 0px; mono: true; text <=> WorkspaceState.dns-remote; placeholder-text: I18n.t("代理 DNS (如 https://1.1.1.1/dns-query)", "Remote DNS"); }
-                }
-                HorizontalLayout {
-                    spacing: Theme.space-md;
-                    Text { horizontal-stretch: 1; text: I18n.t("启用 FakeIP（198.18.0.0/16 · fc00::/18 · IPv4 优先）", "Enable FakeIP (198.18.0.0/16 · fc00::/18 · IPv4 preferred)"); font-size: 12px; color: Theme.text-secondary; vertical-alignment: center; overflow: elide; }
-                    NexusSwitch { checked <=> WorkspaceState.dns-fakeip; }
-                }
-            }
-            if WorkspaceState.dns-mode == "raw_kdl" : NexusInput {
-                mono: true; text <=> WorkspaceState.dns-raw-kdl;
-                placeholder-text: I18n.t("粘贴自定义 DNS 规则配置...", "Paste custom DNS configuration...");
-            }
-            FlexboxLayout {
-                spacing: 8px;
-                NexusButton {
-                    btn-height: 30px; has-icon: true;
-                    icon: @image-url("../icons/trash.svg");
-                    label: I18n.t("清空 FakeIP 映射", "Flush FakeIP");
-                    enabled: !ControlInspectState.cache-action-busy;
-                    clicked => { ControlInspectState.flush-fakeip(); }
-                }
-                NexusButton {
-                    btn-height: 30px; has-icon: true;
-                    icon: @image-url("../icons/refresh.svg");
-                    label: I18n.t("清除 DNS 缓存", "Clear DNS Cache");
-                    enabled: !ControlInspectState.cache-action-busy;
-                    clicked => { ControlInspectState.clear-dns-cache(); }
-                }
-            }
-            if ControlInspectState.cache-action-status != "" : Text {
-                text: ControlInspectState.cache-action-status; font-size: 11px; font-family: Theme.mono-font;
-                color: ControlInspectState.cache-action-ok ? Theme.success-fg : Theme.error-fg; overflow: elide;
-            }
-        }
+    NexusVScrollBar {
+        x: parent.width - self.width - 2px;
+        y: 2px;
+        height: max(0px, parent.height - 4px);
+        viewport-size: sv.visible-height;
+        content-size: sv.content-height;
+        scroll-pos <=> sv.content-y;
     }
 }

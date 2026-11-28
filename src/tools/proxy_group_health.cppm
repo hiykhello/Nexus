@@ -357,7 +357,7 @@ export namespace cli::run_detail {
             while (inflight_.size() < max_conc && next_member_ < group.members.size()) {
                 auto outbound = config::configured_outbound_index(config, group.members[next_member_]);
                 if (!outbound || *outbound == 1) { job.members[next_member_++] = {outbound, 1, 0, now, network_generation}; continue; }
-                auto matcher = rules::RouteMatcher::compile({}, *outbound, 2 + config.tunnel_count());
+                auto matcher = rules::RouteProgram::compile_policy({}, *outbound, 2 + config.tunnel_count());
                 if (!matcher) { job.members[next_member_++] = {outbound, 1, 0, now, network_generation}; continue; }
                 auto probe = std::make_shared<relay::OutboundProbe>();
                 probe->route = std::move(*matcher); probe->target = job.target; probe->request = job.request;
@@ -452,12 +452,12 @@ export namespace cli::run_detail {
         auto transports = prepare_dns_transport_snapshot(config, generation, previous, replace_dns_policy);
         if (!transports) return std::unexpected(std::move(transports.error()));
         if (config.dns && (!dns || replace_dns_policy || *transports != previous)) {
-            auto view = config.dns->fakeip && config.dns->fakeip->unified ? durable_fakeip_view(config) : generation;
+            auto view = config.dns->fakeip ? durable_fakeip_view(config) : generation;
             dns = std::make_shared<relay::DnsRuleSnapshot>(config.dns->rules, view);
         }
         auto group_tags = build_group_tag_map(config);
         for (std::size_t index = 0; index < listeners.size(); ++index) {
-            auto candidate = listeners[index].server->compile_route_snapshot(routes.indexed, routes.default_outbound,
+            auto candidate = listeners[index].server->compile_route_snapshot({}, routes.default_outbound,
                 config.inbounds[index].name, routes.program(config), routes.distribution);
             if (!candidate) return std::unexpected(std::move(candidate.error()));
             candidate->dns = dns; candidate->dns_transports = *transports; candidate->dns_runtime = dns_runtime;

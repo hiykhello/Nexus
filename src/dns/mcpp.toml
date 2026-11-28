@@ -25,19 +25,12 @@ fakeip = { defines = ["NEXUS_DNS_FAKEIP"], sources = [
     "fakeip_target.cppm", "fakeip_target.cpp", "fakeip_registry.cppm", "fakeip_registry.cpp",
     "fakeip_shared.cppm", "fakeip_request.cppm", "fakeip_request.cpp", "message_fakeip.cppm", "!message_fakeip_disabled.cppm",
 ] }
-fakeip-history = { implies = ["fakeip"], sources = [
-    "fakeip_recovery.cppm", "fakeip_recovery.cpp", "fakeip_history.cppm", "fakeip_history.cpp",
-    "fakeip_history_store.cppm", "fakeip_history_store.cpp",
-] }
 # Test-only callbacks are compiled into the query module itself. Consumers
 # requesting either hook must supply its matching external function.
 test-dns-lifetime = { defines = ["NEXUS_TEST_DNS_RECEIVE"] }
 test-fakeip = { defines = ["NEXUS_TEST_FAKEIP"] }
 dhcp = { sources = ["dhcp_upstream.cppm", "dhcp_upstream.cpp"] }
 mdns = { sources = ["mdns.cppm", "mdns.cpp"] }
-
-[feature-deps.fakeip-history]
-crypto = { path = "../crypto" }
 
 [build]
 sources = [

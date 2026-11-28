@@ -69,7 +69,7 @@ dns {{ server "dns" type="udp" host="127.0.0.1" port={dns.getsockname()[1]}; str
 inbound "local" type="socks5" {{ listen host="127.0.0.1" port={front}; authentication "none"; }}
 outbound "direct" type="direct"
 outbound "reject" type="block"
-routing {{ rulesets {{ "block" path="block.kdl" format="kdl"; }}; rules {{ - kind="rule-set" value="block" outbound="reject"; }}; final "direct"; }}
+routing {{ rulesets {{ "block" path="block.kdl" format="kdl"; }}; rules {{ - rule-set="block" to="reject"; }}; final "direct"; }}
 ''')
     stop = threading.Event(); queries = []; errors = []; packets = []
     def dns_loop():

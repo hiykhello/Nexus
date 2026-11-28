@@ -6,7 +6,7 @@ namespace shadowsocks {
         last_=now; return true;
     }
     auto UdpDispatcher::begin(std::span<std::uint8_t const> psk,std::span<std::uint8_t const> wire,UdpPeer peer,
-        Clock::time_point now,std::uint64_t wall,Clock::time_point deadline,rules::RouteMatcher const* policy,UdpListenerAdmission admission,bool allow_tunnel)
+        Clock::time_point now,std::uint64_t wall,Clock::time_point deadline,rules::RouteProgram const* policy,UdpListenerAdmission admission,bool allow_tunnel)
         -> std::expected<UdpPending,UdpDispatchError> {
         return begin_impl(psk,wire,peer,now,wall,deadline,policy,true,admission,allow_tunnel);
     }
@@ -15,7 +15,7 @@ namespace shadowsocks {
         return begin_impl(psk,wire,peer,now,wall,deadline,nullptr,false,admission,false);
     }
     auto UdpDispatcher::begin_impl(std::span<std::uint8_t const> psk,std::span<std::uint8_t const> wire,UdpPeer peer,
-        Clock::time_point now,std::uint64_t wall,Clock::time_point deadline,rules::RouteMatcher const* policy,bool preflight,UdpListenerAdmission admission,bool allow_tunnel)
+        Clock::time_point now,std::uint64_t wall,Clock::time_point deadline,rules::RouteProgram const* policy,bool preflight,UdpListenerAdmission admission,bool allow_tunnel)
         -> std::expected<UdpPending,UdpDispatchError> {
         if (!advance(now)) return std::unexpected(UdpDispatchError::time_reversed);
         if (deadline<=now) return std::unexpected(UdpDispatchError::timeout);

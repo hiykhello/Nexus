@@ -24,11 +24,11 @@ export namespace shadowsocks {
     };
     class UdpDispatcher {
         using Clock=std::chrono::steady_clock;
-        struct Entry { UdpAccepted packet; Clock::time_point deadline; std::size_t bytes; rules::RouteMatcher const* policy; bool selected; };
+        struct Entry { UdpAccepted packet; Clock::time_point deadline; std::size_t bytes; rules::RouteProgram const* policy; bool selected; };
         UdpRoutedServer server_;
         UdpTrafficObserver traffic_;
         auto begin_impl(std::span<std::uint8_t const>,std::span<std::uint8_t const>,UdpPeer,
-            Clock::time_point,std::uint64_t,Clock::time_point,rules::RouteMatcher const*,bool,UdpListenerAdmission,bool)
+            Clock::time_point,std::uint64_t,Clock::time_point,rules::RouteProgram const*,bool,UdpListenerAdmission,bool)
             -> std::expected<UdpPending,UdpDispatchError>;
         std::map<std::uint64_t,Entry> pending_;
         std::size_t count_limit_,byte_limit_,bytes_=0;
@@ -40,7 +40,7 @@ export namespace shadowsocks {
         UdpDispatcher(rules::Matcher policy,std::size_t sessions,std::size_t targets,std::size_t pending,std::size_t bytes,platform::SocketBinding const* binding=nullptr,
             UdpListenerReplay replay={})
             : server_(std::move(policy),sessions,targets,binding,std::move(replay)),count_limit_(pending),byte_limit_(bytes) {}
-        UdpDispatcher(rules::RouteMatcher policy,std::size_t sessions,std::size_t targets,std::size_t pending,std::size_t bytes,platform::SocketBinding const* binding=nullptr,
+        UdpDispatcher(rules::RouteProgram policy,std::size_t sessions,std::size_t targets,std::size_t pending,std::size_t bytes,platform::SocketBinding const* binding=nullptr,
             UdpListenerReplay replay={})
             : server_(std::move(policy),sessions,targets,binding,std::move(replay)),count_limit_(pending),byte_limit_(bytes) {}
         // Set by the serialized listener before starting receive tasks and
@@ -53,7 +53,7 @@ export namespace shadowsocks {
         // any asynchronous resolution and cancellation.
         [[nodiscard]] auto begin(std::span<std::uint8_t const> psk,std::span<std::uint8_t const> wire,UdpPeer peer,
             Clock::time_point now,std::uint64_t wall,Clock::time_point deadline,
-            rules::RouteMatcher const* policy=nullptr,UdpListenerAdmission admission={},bool allow_tunnel=false) -> std::expected<UdpPending,UdpDispatchError>;
+            rules::RouteProgram const* policy=nullptr,UdpListenerAdmission admission={},bool allow_tunnel=false) -> std::expected<UdpPending,UdpDispatchError>;
         // Authenticate and retain the packet without executing an indexed rule.
         // The caller must route it and consume or cancel the returned token.
         [[nodiscard]] auto begin_ordered(std::span<std::uint8_t const> psk,std::span<std::uint8_t const> wire,UdpPeer peer,
@@ -103,7 +103,7 @@ export namespace shadowsocks {
         }
         // Reconfiguration is safe only after external operations are drained.
         // Existing sessions and replay records survive the policy replacement.
-        template<class Policy> requires (std::same_as<Policy,rules::Matcher> || std::same_as<Policy,rules::RouteMatcher>)
+        template<class Policy> requires (std::same_as<Policy,rules::Matcher> || std::same_as<Policy,rules::RouteProgram>)
         [[nodiscard]] auto replace_policy(Policy policy) noexcept -> bool {
             if (!pending_.empty() || server_.sockets()!=0) return false;
             server_.replace_policy(std::move(policy)); return true;

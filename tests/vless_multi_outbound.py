@@ -35,7 +35,7 @@ inbounds {{ mixed "local" {{ listen host="127.0.0.1" port={port}; authentication
 outbounds {{ direct "direct"; {outbound("good", upstream_port)}; {outbound("closed", closed_port)}; }}
 routing {{
  rulesets {{ "selected" path="multi-rules.kdl" format="kdl"; }}
- rules {{ - kind="rule-set" value="selected" outbound="{first}"; }}
+ rules {{ - rule-set="selected" to="{first}"; }}
  final "{fallback}"
 }}
 ''')

@@ -177,13 +177,26 @@ namespace provider::ws_detail {
         auto const& h = ctx.host;
         std::ostringstream ins;
         std::size_t count = 0;
-        auto emit_mixed = [&](std::string_view name, std::string_view spec, std::string_view user, std::string_view pass)
-            -> std::expected<void, std::string> {
+        auto is_loopback_ip = [](platform::IpAddress const& ip) noexcept -> bool {
+            return ip.size == 4
+                ? (ip.bytes[0] == 127)
+                : (std::ranges::all_of(std::span(ip.bytes).first(15), [](auto b) { return b == 0; }) && ip.bytes[15] == 1);
+        };
+        auto emit_proxy_in = [&](std::string_view name, std::string_view proto_type, std::string_view spec,
+                                 bool allow_lan_bind, std::string_view user, std::string_view pass) -> std::expected<void, std::string> {
             auto hp = platform::split_host_port(spec, true);
-            if (!hp || !platform::parse_ip_address(hp->host))
+            auto parsed_ip = hp ? platform::parse_ip_address(hp->host) : std::nullopt;
+            if (!hp || !parsed_ip)
                 return std::unexpected("invalid listen endpoint '" + std::string(spec) + "' for " + std::string(name));
-            ins << "  inbound " << kdl_quote(name) << " type=\"mixed\" {\n    listen host=" << kdl_quote(hp->host) << " port=" << hp->port << '\n';
-            if (!user.empty() && !pass.empty()) {
+            std::string eff_host(hp->host);
+            bool non_loopback = !is_loopback_ip(*parsed_ip);
+            if (allow_lan_bind && !non_loopback) {
+                eff_host = (parsed_ip->size == 16) ? "::" : "0.0.0.0";
+                non_loopback = true;
+            }
+            ins << "  inbound " << kdl_quote(name) << " type=" << kdl_quote(proto_type)
+                << " {\n    listen host=" << kdl_quote(eff_host) << " port=" << hp->port << '\n';
+            if (!user.empty() && !pass.empty() && (non_loopback || name == "lan-in")) {
                 auto pf = ctx.write_hashed_secret("in-pass", pass);
                 if (!pf) return std::unexpected(pf.error());
                 ins << "    authentication \"password\" username=" << kdl_quote(user) << " password-file=" << kdl_quote(*pf) << '\n';
@@ -196,18 +209,24 @@ namespace provider::ws_detail {
         };
 
         if (h.platform == "android") {
-            auto mode = lower_ascii(h.android.run_mode);
+            auto const& a = h.android;
+            auto mode = lower_ascii(a.run_mode);
             if (mode.empty()) mode = "vpn";
             if (mode == "vpn") {
-                auto mtu = std::clamp<std::uint16_t>(h.android.tun_mtu ? h.android.tun_mtu : 1500, 68, 65535);
+                auto mtu = std::clamp<std::uint16_t>(a.tun_mtu ? a.tun_mtu : 1500, 68, 65535);
                 ins << "  inbound \"tun-in\" type=\"tun\" {\n    stack \"system\"\n    mtu " << mtu
                     << "\n    endpoint-independent-nat #false\n  }\n";
                 ++count;
             }
-            if (h.android.enable_local_proxy || mode == "proxy_only") {
-                auto listen = h.android.local_listen.empty() ? std::string_view("127.0.0.1:7890") : std::string_view(h.android.local_listen);
-                if (auto ok = emit_mixed("local-mixed", listen, {}, {}); !ok) return ok;
+            bool const any_local = a.enable_local_proxy || a.enable_http || a.enable_socks;
+            if (a.enable_local_proxy || (mode == "proxy_only" && !any_local)) {
+                auto listen = a.local_listen.empty() ? std::string_view("127.0.0.1:7890") : std::string_view(a.local_listen);
+                if (auto ok = emit_proxy_in("local-mixed", "mixed", listen, a.allow_lan, a.lan_username, a.lan_password); !ok) return ok;
             }
+            if (a.enable_http && !a.http_listen.empty())
+                if (auto ok = emit_proxy_in("local-http", "http", a.http_listen, a.allow_lan, a.lan_username, a.lan_password); !ok) return ok;
+            if (a.enable_socks && !a.socks_listen.empty())
+                if (auto ok = emit_proxy_in("local-socks", "socks5", a.socks_listen, a.allow_lan, a.lan_username, a.lan_password); !ok) return ok;
         } else if (h.platform == "ios") {
             ins << "  inbound \"tun-in\" type=\"tun\" {\n    device-mode \"bridge\"\n    stack \"system\"\n"
                 << "    mtu 1500\n    endpoint-independent-nat #false\n  }\n";
@@ -216,15 +235,13 @@ namespace provider::ws_detail {
             auto const& d = h.desktop;
             bool is_linux = (h.platform == "desktop-linux");
             bool linux_strict = is_linux && d.enable_tun && d.tun_strict_route;
-            auto emit_desktop_mixed = [&](std::string_view name, std::string_view label, std::string_view spec,
-                                          std::string_view user, std::string_view pass) -> std::expected<void, std::string> {
+            auto emit_desktop_in = [&](std::string_view name, std::string_view proto_type, std::string_view label,
+                                       std::string_view spec, bool allow_lan_bind, std::string_view user, std::string_view pass)
+                -> std::expected<void, std::string> {
                 if (linux_strict) {
                     if (auto hp = platform::split_host_port(spec, true)) {
                         if (auto ip = platform::parse_ip_address(hp->host)) {
-                            bool loopback = ip->size == 4
-                                ? (ip->bytes[0] == 127)
-                                : (std::ranges::all_of(std::span(ip->bytes).first(15), [](auto b) { return b == 0; }) && ip->bytes[15] == 1);
-                            if (!loopback) {
+                            if (allow_lan_bind || !is_loopback_ip(*ip)) {
                                 ctx.warnings.push_back("desktop-linux TUN strict-route permits only loopback coexisting listeners; non-loopback " +
                                                        std::string(label) + " omitted");
                                 return {};
@@ -232,14 +249,18 @@ namespace provider::ws_detail {
                         }
                     }
                 }
-                return emit_mixed(name, spec, user, pass);
+                return emit_proxy_in(name, proto_type, spec, allow_lan_bind, user, pass);
             };
             if (d.enable_mixed && !d.mixed_listen.empty())
-                if (auto ok = emit_desktop_mixed("mixed-in", "mixed_listen", d.mixed_listen, {}, {}); !ok) return ok;
-            if (!d.second_local_listen.empty())
-                if (auto ok = emit_desktop_mixed("local-in-2", "second_local_listen", d.second_local_listen, {}, {}); !ok) return ok;
+                if (auto ok = emit_desktop_in("mixed-in", "mixed", "mixed_listen", d.mixed_listen, d.allow_lan, d.lan_username, d.lan_password); !ok) return ok;
+            if (d.enable_http && !d.http_listen.empty())
+                if (auto ok = emit_desktop_in("http-in", "http", "http_listen", d.http_listen, d.allow_lan, d.lan_username, d.lan_password); !ok) return ok;
+            if (d.enable_socks && !d.socks_listen.empty())
+                if (auto ok = emit_desktop_in("socks-in", "socks5", "socks_listen", d.socks_listen, d.allow_lan, d.lan_username, d.lan_password); !ok) return ok;
+            if (!d.enable_socks && !d.second_local_listen.empty())
+                if (auto ok = emit_desktop_in("local-in-2", "mixed", "second_local_listen", d.second_local_listen, false, {}, {}); !ok) return ok;
             if (!d.lan_listen.empty())
-                if (auto ok = emit_desktop_mixed("lan-in", "lan_listen", d.lan_listen, d.lan_username, d.lan_password); !ok) return ok;
+                if (auto ok = emit_desktop_in("lan-in", "mixed", "lan_listen", d.lan_listen, false, d.lan_username, d.lan_password); !ok) return ok;
             if (d.enable_tun) {
                 auto mtu = std::clamp<std::uint16_t>(d.tun_mtu ? d.tun_mtu : 1500, 68, 65535);
                 ins << "  inbound \"tun-in\" type=\"tun\" {\n    stack \"system\"\n";

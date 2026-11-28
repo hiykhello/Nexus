@@ -60,7 +60,7 @@ test('i18n toggles locales and interpolates parameters cleanly', () => {
 
   toggleLocale();
   assert.equal(getLocale(), 'zh');
-  assert.equal(t('overview.flushedFakeip', { count: 7 }), '已清理 7 条未固定 FakeIP 映射。');
+  assert.equal(t('overview.flushedFakeip', { count: 7 }), '已清理 7 条 FakeIP 映射。');
   setLocale('en');
 });
 

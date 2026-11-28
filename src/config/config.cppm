@@ -27,7 +27,6 @@ export namespace config {
     using FlatNameMap = std::unordered_map<std::string, V, TransparentStringHash, TransparentStringEq>;
     using TcpSocketOptions=platform::TcpSocketOptions;
     enum class RuleFormat { kdl, beve, srs, nxmm, json, domain_list, ipcidr_list, classical, adguard };
-    enum class RouteAction { direct, block, vless };
     struct BlockRules {
         std::string path;
         RuleFormat format = RuleFormat::kdl;
@@ -36,7 +35,6 @@ export namespace config {
         std::string inline_kdl{}, url{}, http_client{}, sha256{};
         std::uint32_t update_interval_ms = 0;
     };
-    struct RouteRule { BlockRules file; RouteAction action; std::size_t outbound = 0; std::string outbound_name{}; };
     enum class OrderedTcpAction { sniff,resolve,route,reject,route_options,hijack_dns,bypass };
     enum class OrderedTcpDomain { explicit_target,fakeip,reverse_dns,sniffed };
     struct OrderedTcpRule { std::optional<BlockRules> file; OrderedTcpAction action; OrderedTcpDomain domain; std::size_t outbound=0; std::uint32_t connect_timeout_ms=0; std::optional<std::string> outbound_name{}; bool route_only=false; rules::RuleSet predicates{}; std::optional<std::string> set_tag{}; rules::RejectMethod reject_method=rules::RejectMethod::default_rst; bool reject_no_drop=false, tls_record_fragment=false; std::uint16_t tls_fragment_min=0, tls_fragment_max=0; std::array<std::uint8_t,64> tcp_prefix{}; std::uint8_t tcp_prefix_len=0; std::uint32_t udp_timeout_ms=0; bool udp_adaptive_timeout=false; std::optional<std::string> override_address{}; std::uint16_t override_port=0; std::uint32_t tls_fragment_fallback_delay_ms=0; OrderedTcpActionExtra extra{}; };
@@ -235,8 +233,7 @@ export namespace config {
         std::uint32_t first, last, ttl_seconds;
         std::string state_directory;
         std::size_t upstream;
-        bool initialize;
-        bool unified=false, per_mapping=false;
+        bool per_mapping=false;
         std::optional<std::pair<std::array<std::uint8_t,12>,std::uint8_t>> ipv6{};
     };
     struct DnsPolicyView { std::string name; std::size_t final; };
@@ -252,7 +249,7 @@ export namespace config {
         bool edns = false;
         bool reverse_mapping = false;
         std::uint32_t cache_flush_interval_ms = 60000;
-        std::string message_cache_directory, message_cache_policy, unified_cache_root;
+        std::string message_cache_policy, unified_cache_root;
         std::size_t unified_cache_bytes=0;
         std::string cache_rule_fingerprints;
         std::uint32_t optimistic_cache_seconds=0;
@@ -305,11 +302,7 @@ export namespace config {
         std::string selector_state_directory;
         std::optional<ControlHttpConfig> control_http;
         Inbound inbound = Inbound::socks5;
-        std::optional<BlockRules> block_rules;
-        std::vector<RouteRule> routes;
         std::optional<OrderedTcpConfig> ordered_tcp;
-        RouteAction rule_action = RouteAction::block;
-        RouteAction default_action = RouteAction::direct;
         std::size_t default_outbound = 0;
         std::string default_outbound_name, direct_outbound_name;
         std::optional<std::string> block_outbound_name;

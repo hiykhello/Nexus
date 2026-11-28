@@ -142,7 +142,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         ntp_config=config->ntp; services_config=config->services; if (services_config.acme) acme_credential=cli::make_atomic_credential_erased();
         auto observe_neighbors=std::ranges::any_of(config->inbounds,uses_transparent_metadata);
         if (config->direct_network || config->defaults.auto_detect_interface || config->defaults.default_network_strategy ||
-            !control_socket.empty() || control_http_config || observe_neighbors || !config->routes.empty() ||
+            !control_socket.empty() || control_http_config || observe_neighbors ||
             config->ordered_tcp.has_value() || config->dns.has_value() || !config->selectors.empty())
             network=std::make_shared<::platform::network::Monitor>(observe_neighbors);
         if (!config->selectors.empty()) group_hooks=std::make_shared<relay::GroupRuntimeHooks>(&notify_proxy_wakeup);
@@ -168,7 +168,6 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
         if (auto pipes=config->tcp_splice_pipes.value_or(default_tcp_splice_pipes()); pipes && !configure_splice(listeners,pipes)) return log_failure(logs,logging::Domain::core,"cannot configure TCP splice");
         auto route_files=cli::load_route_files(*config,rule_input);
         if(!route_files) {return log_failure(logs,logging::Domain::core,"routing rules",route_files.error());}
-        auto indexed_routes=route_files->indexed(*config);
         udp->resize(listeners.size(),std::ranges::any_of(config->inbounds,[](auto const& entry) { return entry.shadowsocks.has_value(); }));
         auto configure=[&](relay::Server& server, std::size_t index) -> int {
             auto const& entry=config->inbounds[index];
@@ -178,7 +177,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
             auto remember=[&](std::span<std::uint8_t const> key,std::span<relay::ShadowsocksUserKey const> users) {
                 udp->remember(index,key,users);
             };
-            if (auto result=configure_listener(server,*config,entry,*dns_transports,*route_files,indexed_routes,
+            if (auto result=configure_listener(server,*config,entry,*dns_transports,*route_files,
                     snell_replay,remember,listener_reload.principals,acme_credential,&cert_reloaders,&logs); !result)
                 return log_failure(logs,logging::Domain::proxy,"listener configuration failed",result.error());
             if(auto configured=hy2.configure(index,entry,acme_credential,&cert_reloaders,&logs);!configured){return log_failure(logs,logging::Domain::core,"Hysteria2 configuration",configured.error());}
@@ -222,8 +221,7 @@ auto nexus_run_proxy(int argc, char** argv, bool install_signals = true) -> int 
                 dns_generation->seal();
             } catch (std::bad_alloc const&) { return log_failure(logs,logging::Domain::core,"DNS shared setup: out of memory"); } catch (std::out_of_range const& e) { return log_failure(logs,logging::Domain::core,"DNS shared setup",e.what()); }
         }
-        bool has_route_files=!config->routes.empty() || (config->ordered_tcp &&
-            !config->ordered_tcp->sets.empty());
+        bool has_route_files=config->ordered_tcp && !config->ordered_tcp->sets.empty();
         bool has_dns_rule_files=config->dns && !config->dns->rule_files.empty();
         bool specialized_listener=has_udp || std::ranges::any_of(listeners,[](auto const& item) {
             return item.masque || (item.tun && !item.routed_tun);

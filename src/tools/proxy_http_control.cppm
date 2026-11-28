@@ -79,17 +79,7 @@ export namespace cli::run_detail {
                 cfg.default_outbound == 1 ? "reject" : "route", default_target, "default-outbound"});
             return out;
         }
-        out.reserve(cfg.routes.size() + 1);
-        for (std::size_t i = 0; i < cfg.routes.size(); ++i) {
-            auto const& r = cfg.routes[i];
-            auto target = r.outbound_name.empty()
-                ? (r.outbound == 1 ? std::string("block") : cfg.direct_outbound_name)
-                : r.outbound_name;
-            auto summary = !r.file.path.empty() ? r.file.path
-                : (!r.file.url.empty() ? r.file.url : std::string("inline"));
-            out.push_back({i + 1, "rule-set", r.outbound == 1 ? "reject" : "route", std::move(target), std::move(summary)});
-        }
-        out.push_back({cfg.routes.size() + 1, "final",
+        out.push_back({1, "final",
             cfg.default_outbound == 1 ? "reject" : "route", std::move(default_target), "default-outbound"});
         return out;
     }

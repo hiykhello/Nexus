@@ -188,6 +188,10 @@ namespace relay::http_modern_detail {
                               : "HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 10\r\n\r\nForbidden\n";
         case 407: return head ? "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Nexus\"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
                               : "HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"Nexus\"\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 30\r\n\r\nProxy Authentication Required\n";
+        case 431: return head ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                              : "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 32\r\n\r\nRequest Header Fields Too Large\n";
+        case 501: return head ? "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                              : "HTTP/1.1 501 Not Implemented\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 16\r\n\r\nNot Implemented\n";
         case 502: return head ? "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
                               : "HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 12\r\n\r\nBad Gateway\n";
         default:  return head ? "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
@@ -195,18 +199,18 @@ namespace relay::http_modern_detail {
         }
     }
 
-    inline auto serve_h1_tls(Session& session, corosio::io_context& context, rules::RouteMatcher const& policy,
+    inline auto serve_h1_tls(Session& session, corosio::io_context& context, rules::RouteProgram const& policy,
                              HttpModernProfile const& profile, tls::detail::ByteStream<corosio::tcp_socket>& tls_stream) -> capy::task<> {
         auto until = Clock::now() + std::chrono::seconds(10);
         std::string buf;
         std::array<std::uint8_t, 4096> rx{};
-        std::size_t header_end = std::string::npos;
-        while (buf.size() < 8192) {
+        http::HeaderBoundary boundary;
+        auto bstatus = http::HeaderBoundaryStatus::incomplete;
+        while (bstatus == http::HeaderBoundaryStatus::incomplete) {
             auto got = co_await tls_stream.read(rx, until);
             if (!got || !*got) co_return;
             buf.append(reinterpret_cast<char const*>(rx.data()), *got);
-            header_end = buf.find("\r\n\r\n");
-            if (header_end != std::string::npos) break;
+            bstatus = boundary.inspect(buf);
         }
         bool const is_head = std::string_view(buf).starts_with("HEAD ");
         auto send_txt = [&](std::string_view msg, Clock::time_point dl) -> capy::task<bool> {
@@ -217,6 +221,11 @@ namespace relay::http_modern_detail {
             (void)co_await send_txt(h1_error_reply(code, head), dl);
             (void)co_await tls_stream.close_output(dl);
         };
+        if (bstatus == http::HeaderBoundaryStatus::too_large) {
+            co_await send_error(431, is_head);
+            co_return;
+        }
+        auto const header_end = buf.find("\r\n\r\n");
         if (header_end == std::string::npos) {
             co_await send_error(400, is_head);
             co_return;
@@ -263,7 +272,10 @@ namespace relay::http_modern_detail {
         }
         auto fwd = http::parse_forward_request(buf);
         if (fwd.status != http::ConnectStatus::accepted) {
-            co_await send_error(400, is_head);
+            auto const code = (parsed.status == http::ConnectStatus::too_large || fwd.status == http::ConnectStatus::too_large)
+                ? std::uint16_t{431}
+                : (fwd.status == http::ConnectStatus::unsupported ? std::uint16_t{501} : std::uint16_t{400});
+            co_await send_error(code, is_head);
             co_return;
         }
         auto dst = make_dst_request(fwd.destination);

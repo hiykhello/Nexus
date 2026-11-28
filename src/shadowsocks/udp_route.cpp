@@ -45,13 +45,13 @@ namespace shadowsocks {
             return input;
         }
     }
-    auto UdpRoutedServer::preflight(UdpAccepted const& packet,rules::RouteMatcher const* override_policy,bool allow_tunnel) const -> std::expected<void,UdpRouteError> {
+    auto UdpRoutedServer::preflight(UdpAccepted const& packet,rules::RouteProgram const* override_policy,bool allow_tunnel) const -> std::expected<void,UdpRouteError> {
         auto request=parse(packet.packet.address);
         if (!request) return std::unexpected(UdpRouteError::invalid_target);
         if (!request->domain) return {};
         if (!override_policy) if (auto simple=std::get_if<rules::Matcher>(&policy_)) return check(*simple,
             with_source({.domain=*request->domain,.port=request->port,.network=rules::Network::udp},packet));
-        auto const& policy=override_policy ? *override_policy : std::get<rules::RouteMatcher>(policy_);
+        auto const& policy=override_policy ? *override_policy : std::get<rules::RouteProgram>(policy_);
         auto route=policy.preflight(
             with_source({.domain=*request->domain,.port=request->port,.network=rules::Network::udp},packet));
         if (!route) return std::unexpected(UdpRouteError::policy_error);
@@ -74,7 +74,7 @@ namespace shadowsocks {
         if(!sent)return std::unexpected(UdpRoutedFailure{sent.error()});
         return {};
     }
-    auto UdpRoutedServer::select_outbound(UdpAccepted const& packet,UdpPeer resolved,rules::RouteMatcher const* override_policy,bool allow_tunnel) const
+    auto UdpRoutedServer::select_outbound(UdpAccepted const& packet,UdpPeer resolved,rules::RouteProgram const* override_policy,bool allow_tunnel) const
         -> std::expected<std::size_t,UdpRouteError> {
         auto target=validate_selected(packet,resolved);
         if (!target) return std::unexpected(target.error());
@@ -82,7 +82,7 @@ namespace shadowsocks {
         auto initial=preflight(packet,override_policy,allow_tunnel);
         if (!initial) return std::unexpected(initial.error());
         auto ip=text(request->literal && mapped(*request->literal) ? *request->literal : resolved);
-        auto ordered=override_policy ? override_policy : std::get_if<rules::RouteMatcher>(&policy_);
+        auto ordered=override_policy ? override_policy : std::get_if<rules::RouteProgram>(&policy_);
         if (ordered) {
             std::optional<std::string_view> domain;
             if (request->domain) domain=*request->domain;
@@ -100,7 +100,7 @@ namespace shadowsocks {
         }
         return 0;
     }
-    auto UdpRoutedServer::forward(UdpAccepted const& packet,UdpPeer resolved,rules::RouteMatcher const* override_policy)
+    auto UdpRoutedServer::forward(UdpAccepted const& packet,UdpPeer resolved,rules::RouteProgram const* override_policy)
         -> std::expected<void,UdpRoutedFailure> {
         auto outbound=select_outbound(packet,resolved,override_policy);
         if (!outbound) return std::unexpected(UdpRoutedFailure{outbound.error()});

@@ -1,10 +1,14 @@
 package org.nexus.android.ui
 
-import androidx.annotation.DrawableRes
+import android.content.ClipboardManager
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,7 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -24,288 +28,149 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import org.nexus.android.R
 import org.nexus.android.bridge.ipc.OutboundMemberSnapshot
-import org.nexus.android.bridge.workspace.AndroidPerAppMode
+import org.nexus.android.bridge.workspace.NodeConfig
+import org.nexus.android.bridge.workspace.ProfileItem
+import org.nexus.android.bridge.workspace.ProfileKind
 import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 
 /**
- * Horizontal Bento quick-switch carousel for top nodes in the active policy group.
+ * Right-aligned semantic tabular RTT readout (`42 ms` / `超时` / `--`).
+ */
+@Composable
+internal fun LatencyReadoutText(
+    latencyMs: Long,
+    state: String,
+    modifier: Modifier = Modifier,
+) {
+    val ext = NexusTheme.colors
+    val isFailed = state == "timeout" || state == "error" || state == "circuit_open" || latencyMs == 0L
+    val color = when {
+        isFailed -> ext.danger
+        latencyMs < 0L -> ext.muted
+        latencyMs < 80L -> ext.success
+        latencyMs < 180L -> MaterialTheme.colorScheme.primary
+        latencyMs < 350L -> ext.warning
+        else -> ext.danger
+    }
+    Text(
+        text = when {
+            isFailed -> "超时"
+            latencyMs > 0L -> "$latencyMs ms"
+            else -> "--"
+        },
+        style = if (isFailed) MaterialTheme.typography.labelSmall else NexusNumericStyles.monoBadge,
+        fontWeight = FontWeight.Bold,
+        color = color,
+        maxLines = 1,
+        softWrap = false,
+        textAlign = TextAlign.End,
+        modifier = modifier,
+    )
+}
+
+internal fun shortProtocolBadge(profile: ProfileItem): String = when (profile.kind) {
+    ProfileKind.POLICY_GROUP -> "GROUP"
+    ProfileKind.PROXY_CHAIN -> "CHAIN"
+    ProfileKind.CUSTOM_OUTBOUND -> "OUT"
+    ProfileKind.FULL_CUSTOM_KDL -> "RAW"
+    ProfileKind.NODE -> when (val p = profile.node?.protocol?.lowercase().orEmpty()) {
+        "hysteria2" -> "HY2"
+        "shadowsocks" -> "SS"
+        "wireguard" -> "WG"
+        "http-connect", "http" -> "HTTP"
+        "" -> "NODE"
+        else -> p.uppercase()
+    }
+}
+
+internal fun formatNodeTransportSummary(n: NodeConfig): String = when (n.protocol.lowercase()) {
+    "wireguard" -> "wg · mtu ${n.extra.wgMtu.takeIf { it > 0 } ?: 1420}"
+    "masque" -> "h3 · ${n.extra.masqueMode.ifBlank { "connect-udp" }}"
+    "hysteria2" -> buildString {
+        append("quic+tls")
+        if (n.extra.hy2Ports.isNotEmpty()) append(" · hop:${n.extra.hy2Ports}")
+        if (n.extra.hy2SalamanderPassword.isNotEmpty()) append(" · obfs")
+    }
+    "tuic" -> "quic+tls · ${n.extra.tuicCongestionControl.ifBlank { "bbr" }}"
+    "ssh" -> "ssh"
+    "naive" -> "${n.extra.naiveProtocol.ifBlank { "h2" }}+tls"
+    "shadowsocks" -> buildString {
+        append(n.method.ifBlank { "aead" })
+        if (n.multiplex.enabled) append("+${n.multiplex.protocol.ifBlank { "mux" }}")
+    }
+    "snell" -> buildString {
+        append("v${n.extra.snellVersion.takeIf { it > 0 } ?: 4}")
+        if (n.extra.snellObfs.isNotEmpty() && n.extra.snellObfs != "none") append("+${n.extra.snellObfs}")
+    }
+    else -> {
+        val tr = n.transport.type.ifBlank { "tcp" }
+        val tls = when {
+            n.tls.realityPublicKey.isNotEmpty() -> "+reality"
+            n.tls.enabled -> "+tls"
+            else -> ""
+        }
+        val vision = if (n.flow.isNotEmpty()) "+vision" else ""
+        val pq = if (n.tls.keyExchange.contains("mlkem")) "+pq" else ""
+        val mux = if (n.multiplex.enabled) "+${n.multiplex.protocol.ifBlank { "mux" }}" else ""
+        val frag = if (n.tls.fragment || n.tls.recordFragment) "+frag" else ""
+        "$tr$tls$vision$pq$mux$frag"
+    }
+}
+
+internal fun shortProfileEndpoint(profile: ProfileItem): String = when (profile.kind) {
+    ProfileKind.NODE -> profile.node?.let { n ->
+        "${n.server}:${n.port} · ${formatNodeTransportSummary(n)}"
+    }.orEmpty()
+    ProfileKind.POLICY_GROUP -> profile.policyGroup?.let { "${it.strategy} · ${it.memberIds.size} 成员" }.orEmpty()
+    ProfileKind.PROXY_CHAIN -> "${profile.proxyChain?.hopIds?.size ?: 0} 跳代理链"
+    ProfileKind.CUSTOM_OUTBOUND -> "自定义出站配置"
+    ProfileKind.FULL_CUSTOM_KDL -> "完整自定义配置"
+}
+
+/**
+ * Multi-Column Quick Node Matrix Card (`2-column` Bento node tiles — never full-width horizontal strips):
+ * - Displays live group members when running, OR SQLite `workspaceProfiles` in Standby so it is NEVER hollow.
  */
 @Composable
 internal fun QuickNodesCarouselCard(
     running: Boolean,
     groupTag: String,
     nodes: List<OutboundMemberSnapshot>,
+    workspaceProfiles: List<ProfileItem> = emptyList(),
+    activeProfileId: String = "",
     isProbing: Boolean,
     onSelectNode: (OutboundMemberSnapshot) -> Unit,
+    onSelectWorkspaceProfile: (String) -> Unit = {},
+    onQuickPasteImport: (String) -> Unit = {},
     onProbeGroup: () -> Unit,
     onOpenGroups: () -> Unit,
+    onOpenConfig: () -> Unit = onOpenGroups,
+    maxVisibleNodes: Int = 6,
+    nodeColumns: Int = 2,
+    showP50Badge: Boolean = true,
+    compactHeader: Boolean = !showP50Badge,
     modifier: Modifier = Modifier,
 ) {
     val ext = NexusTheme.colors
+    val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val stats = remember(nodes) { computeGroupLatencyStats(nodes) }
 
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text(
-                text = "快捷切换",
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            if (groupTag.isNotEmpty()) {
-                StatusPill(
-                    text = groupTag,
-                    containerColor = ext.wellSurface,
-                    contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Spacer(Modifier.weight(1f))
-            if (running && groupTag.isNotEmpty()) {
-                Surface(
-                    onClick = {
-                        if (!isProbing) {
-                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                            onProbeGroup()
-                        }
-                    },
-                    modifier = Modifier.minimumInteractiveComponentSize(),
-                    shape = RoundedCornerShape(999.dp),
-                    color = ext.wellSurface,
-                    border = BorderStroke(1.dp, ext.hairlineStrong),
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp),
-                    ) {
-                        if (isProbing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(12.dp),
-                                strokeWidth = 1.8.dp,
-                                color = MaterialTheme.colorScheme.primary,
-                            )
-                        } else {
-                            Icon(
-                                painter = painterResource(R.drawable.ic_speed),
-                                contentDescription = "测速",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(13.dp),
-                            )
-                        }
-                        Text(
-                            text = if (isProbing) "测速中" else "测速",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            softWrap = false,
-                        )
-                    }
-                }
-            }
-            Row(
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onOpenGroups)
-                    .padding(horizontal = 6.dp, vertical = 6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                Text(
-                    text = "全部",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Icon(
-                    painter = painterResource(R.drawable.ic_chevron_right),
-                    contentDescription = "查看策略组",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(15.dp),
-                )
-            }
-        }
-
-        if (nodes.isNotEmpty()) {
-            val topFour = nodes.take(4)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                topFour.chunked(2).forEach { pair ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        pair.forEach { node ->
-                            QuickNodePillCard(
-                                node = node,
-                                onClick = {
-                                    if (!node.selected) {
-                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                        onSelectNode(node)
-                                    }
-                                },
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                        if (pair.size == 1) {
-                            Spacer(Modifier.weight(1f))
-                        }
-                    }
-                }
-            }
-        } else {
-            Surface(
-                onClick = onOpenGroups,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = ext.wellSurface,
-                border = BorderStroke(1.dp, ext.hairline),
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Text(
-                        text = if (running) "自动选优中" else "连接后显示快捷节点",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Icon(
-                        painter = painterResource(R.drawable.ic_chevron_right),
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(16.dp),
-                    )
-                }
-            }
-        }
-    }
-}
-
-/**
- * Slim 1-row quick tools bar (`清缓存` / `诊断` / `分应用` — deduplicated from QuickNodes's `测速`
- * button) or full TrafficSplit card when speed wave & status cards are hidden.
- */
-@Composable
-internal fun TrafficSplitCard(
-    running: Boolean,
-    downloadBytes: Long,
-    uploadBytes: Long,
-    excludedCount: Int,
-    perAppMode: AndroidPerAppMode = AndroidPerAppMode.EXCLUDE,
-    isProbing: Boolean,
-    diagnostic: String,
-    compactToolsOnly: Boolean = false,
-    onProbeGroup: () -> Unit,
-    onClearCache: () -> Unit,
-    onOpenSplitTunnel: () -> Unit,
-    onOpenDiagnostics: (() -> Unit)? = null,
-    modifier: Modifier = Modifier,
-) {
-    val ext = NexusTheme.colors
-    val haptic = LocalHapticFeedback.current
-    val totalBytes = (downloadBytes + uploadBytes).coerceAtLeast(0L)
-    val hasTraffic = totalBytes > 0L
-    val dlPct = if (hasTraffic) ((downloadBytes * 100L) / totalBytes).toInt() else 0
-    val ulPct = if (hasTraffic) (100 - dlPct) else 0
-
-    val perAppPillLabel = when (perAppMode) {
-        AndroidPerAppMode.OFF -> "分应用"
-        AndroidPerAppMode.EXCLUDE -> if (excludedCount > 0) "绕过 · $excludedCount" else "分应用"
-        AndroidPerAppMode.INCLUDE -> "仅代理 · $excludedCount"
-    }
-
-    val toolsRow: @Composable () -> Unit = {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (onOpenDiagnostics != null) {
-                QuickActionPill(
-                    label = "清缓存",
-                    iconRes = R.drawable.ic_delete,
-                    enabled = running,
-                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClearCache() },
-                    modifier = Modifier.weight(1f),
-                )
-                QuickActionPill(
-                    label = "诊断",
-                    iconRes = R.drawable.ic_rule,
-                    enabled = true,
-                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onOpenDiagnostics() },
-                    modifier = Modifier.weight(1f),
-                )
-            } else {
-                QuickActionPill(
-                    label = if (isProbing) "测速中" else "测速",
-                    iconRes = R.drawable.ic_speed,
-                    enabled = running && !isProbing,
-                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onProbeGroup() },
-                    modifier = Modifier.weight(1f),
-                )
-                QuickActionPill(
-                    label = "清缓存",
-                    iconRes = R.drawable.ic_delete,
-                    enabled = running,
-                    onClick = { haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); onClearCache() },
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            QuickActionPill(
-                label = perAppPillLabel,
-                iconRes = R.drawable.ic_apps,
-                enabled = true,
-                onClick = onOpenSplitTunnel,
-                modifier = Modifier.weight(1.18f),
-            )
-        }
-    }
-
-    val diagnosticBanner: @Composable () -> Unit = {
-        if (diagnostic.isNotEmpty()) {
-            Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = ext.wellSurface,
-                border = BorderStroke(1.dp, ext.hairline),
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text(
-                    text = diagnostic,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
-                )
-            }
-        }
-    }
-
-    if (compactToolsOnly) {
-        Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            toolsRow()
-            diagnosticBanner()
-        }
-        return
-    }
-
-    OpticalCard(modifier = modifier.fillMaxWidth(), cornerRadius = 16.dp) {
+    OpticalCard(cornerRadius = 12.dp, modifier = modifier.fillMaxWidth()) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(14.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Row(
@@ -313,73 +178,212 @@ internal fun TrafficSplitCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Text("流量构成", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
-                Text("↓ ${formatTrafficBytes(downloadBytes)}", style = NexusNumericStyles.monoBadge, color = ext.telemetryDownload, maxLines = 1, softWrap = false)
-                Text("·", style = NexusNumericStyles.monoBadge, color = ext.muted)
-                Text("↑ ${formatTrafficBytes(uploadBytes)}", style = NexusNumericStyles.monoBadge, color = ext.telemetryUpload, maxLines = 1, softWrap = false)
+                Text(
+                    text = "快速选点",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.weight(1f),
+                )
+                Surface(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        val clip = context.getSystemService(ClipboardManager::class.java)
+                            ?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString()?.trim().orEmpty()
+                        onQuickPasteImport(clip)
+                    },
+                    modifier = Modifier.minimumInteractiveComponentSize(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = ext.wellSurface,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = if (compactHeader) 7.dp else 9.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    ) {
+                        Icon(painterResource(R.drawable.ic_paste), "剪贴板导入", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(14.dp))
+                        if (!compactHeader) {
+                            Text("导入", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, maxLines = 1, softWrap = false)
+                        }
+                    }
+                }
+                if (running && groupTag.isNotEmpty()) {
+                    Surface(
+                        onClick = { if (!isProbing) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onProbeGroup() } },
+                        modifier = Modifier.minimumInteractiveComponentSize(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = ext.wellSurface,
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = if (compactHeader) 7.dp else 9.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            if (isProbing) {
+                                CircularProgressIndicator(Modifier.size(13.dp), strokeWidth = 1.8.dp, color = MaterialTheme.colorScheme.primary)
+                            } else {
+                                Icon(painterResource(R.drawable.ic_speed), "测速", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(14.dp))
+                            }
+                            if (!compactHeader) {
+                                Text(if (isProbing) "测速中" else "测速", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, maxLines = 1, softWrap = false)
+                            }
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(onClick = if (running && nodes.isNotEmpty()) onOpenGroups else onOpenConfig)
+                        .padding(horizontal = 4.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text("全部", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, maxLines = 1, softWrap = false)
+                    Icon(painterResource(R.drawable.ic_chevron_right), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(15.dp))
+                }
             }
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                NexusProportionBar(downloadBytes, uploadBytes, ext.telemetryDownload, ext.telemetryUpload)
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(
-                        text = if (hasTraffic) "下行 $dlPct%" else "暂无流量",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (hasTraffic) ext.telemetryDownload else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (hasTraffic) {
-                        Text("上行 $ulPct%", style = MaterialTheme.typography.labelSmall, color = ext.telemetryUpload)
+
+            val cols = nodeColumns.coerceIn(1, 3)
+            if (running && nodes.isNotEmpty()) {
+                LatencySpectrumBar(stats = stats, height = 4.dp)
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    nodes.take(maxVisibleNodes).chunked(cols).forEach { rowItems ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowItems.forEach { node ->
+                                BentoQuickNodeTile(
+                                    name = node.name,
+                                    badge = groupTag.ifEmpty { "LIVE" },
+                                    subtitle = if (node.overridden) "手动锁定" else if (node.selected) "当前活动" else "点击切换",
+                                    latencyMs = node.latencyMs,
+                                    state = node.state,
+                                    active = node.selected,
+                                    onClick = {
+                                        if (!node.selected) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onSelectNode(node)
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            repeat(cols - rowItems.size) { Spacer(Modifier.weight(1f)) }
+                        }
+                    }
+                }
+            } else if (workspaceProfiles.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    workspaceProfiles.take(maxVisibleNodes).chunked(cols).forEach { rowItems ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            rowItems.forEach { p ->
+                                val active = p.id == activeProfileId
+                                BentoQuickNodeTile(
+                                    name = p.remarks.ifBlank { p.id },
+                                    badge = shortProtocolBadge(p),
+                                    subtitle = shortProfileEndpoint(p),
+                                    latencyMs = -1L,
+                                    state = "unknown",
+                                    active = active,
+                                    onClick = {
+                                        if (!active) {
+                                            haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                            onSelectWorkspaceProfile(p.id)
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                )
+                            }
+                            repeat(cols - rowItems.size) { Spacer(Modifier.weight(1f)) }
+                        }
                     }
                 }
             }
-            toolsRow()
-            diagnosticBanner()
         }
     }
 }
 
 @Composable
-private fun QuickActionPill(
-    label: String,
-    @DrawableRes iconRes: Int,
-    enabled: Boolean,
+private fun BentoQuickNodeTile(
+    name: String,
+    badge: String,
+    subtitle: String,
+    latencyMs: Long,
+    state: String,
+    active: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val ext = NexusTheme.colors
-    val interactionSource = remember { MutableInteractionSource() }
+    val primary = MaterialTheme.colorScheme.primary
+    val interaction = remember { MutableInteractionSource() }
+    val reducedMotion = isReducedMotionEnabled()
+    val tileBg = animateColorAsState(
+        targetValue = if (active) primary.copy(alpha = if (ext.isDark) 0.18f else 0.08f) else ext.wellSurface,
+        animationSpec = tween(if (reducedMotion) 0 else 150, easing = NexusStrongEaseOut),
+        label = "nodeTileBg",
+    ).value
+    val borderCol = animateColorAsState(
+        targetValue = if (active) primary.copy(alpha = 0.72f) else ext.hairline.copy(alpha = 0f),
+        animationSpec = tween(if (reducedMotion) 0 else 150, easing = NexusStrongEaseOut),
+        label = "nodeTileBorder",
+    ).value
     Surface(
         onClick = onClick,
-        enabled = enabled,
-        interactionSource = interactionSource,
-        modifier = modifier
-            .minimumInteractiveComponentSize()
-            .heightIn(min = 48.dp)
-            .liquidPress(interactionSource = interactionSource, pressedScale = 0.97f)
-            .alpha(if (enabled) 1f else 0.48f),
-        shape = RoundedCornerShape(999.dp),
-        color = ext.wellSurface,
-        border = BorderStroke(1.dp, ext.hairline),
+        interactionSource = interaction,
+        shape = RoundedCornerShape(8.dp),
+        color = tileBg,
+        border = if (active) BorderStroke(1.2.dp, borderCol) else null,
+        modifier = modifier.heightIn(min = 58.dp).tactilePress(interaction, pressedScale = 0.97f),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
         ) {
-            Icon(
-                painter = painterResource(iconRes),
-                contentDescription = null,
-                tint = if (enabled) MaterialTheme.colorScheme.primary else ext.muted,
-                modifier = Modifier.size(14.dp),
-            )
-            Spacer(Modifier.width(5.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                softWrap = false,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .background(if (active) ext.success else ext.muted.copy(alpha = 0.55f), CircleShape),
+                )
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+                    color = if (active) primary else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (latencyMs >= 0L || state == "timeout") {
+                    LatencyReadoutText(latencyMs = latencyMs, state = state)
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = badge,
+                    style = NexusNumericStyles.monoBadge,
+                    fontWeight = FontWeight.Bold,
+                    color = if (active) primary else ext.muted,
+                    maxLines = 1,
+                )
+                Text(
+                    text = subtitle,
+                    style = NexusNumericStyles.monoBadge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
     }
 }

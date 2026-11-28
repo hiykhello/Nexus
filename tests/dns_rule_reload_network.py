@@ -63,7 +63,7 @@ dns {{
 }}
 routing {{
   rulesets {{ "traffic" path="route.kdl" format="kdl"; }}
-  rules {{ - kind="rule-set" value="traffic" outbound="drop"; }}
+  rules {{ - rule-set="traffic" to="drop"; }}
   final "direct"
 }}
 """)

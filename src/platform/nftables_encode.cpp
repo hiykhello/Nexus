@@ -345,6 +345,31 @@ namespace platform::nftables {
                 if (o.ipv6) emit_lo_tp(NFPROTO_IPV6);
             }
             emit_common_filters(w,tbl,name,output,o);
+            if (!output && (!o.protected_destinations.empty() || port==53))
+                for (auto const& prefix : o.local_destinations)
+                    w.emit_bypass(tbl,name,[&]{
+                        udp();w.destination(prefix);w.payload(NFT_PAYLOAD_TRANSPORT_HEADER,2,2);
+                        w.compare(std::array{static_cast<std::uint8_t>(port>>8),static_cast<std::uint8_t>(port)});
+                    });
+            for (auto const& prefix : o.protected_destinations) {
+                if ((prefix.family==4 && o.ipv4) || (prefix.family==6 && o.ipv6)) {
+                    std::uint8_t fam = prefix.family==4 ? NFPROTO_IPV4 : NFPROTO_IPV6;
+                    if (output) rule([&]{udp();w.destination(prefix);},[&]{w.set_meta_mark(o.tproxy_mark);});
+                    else rule([&]{udp();w.destination(prefix);},[&]{w.set_meta_mark(o.tproxy_mark);w.tproxy(fam,port);w.accept();});
+                }
+            }
+            if (o.intercept_udp_dns && port!=53) {
+                auto dns53=[&]{w.payload(NFT_PAYLOAD_TRANSPORT_HEADER,2,2);w.compare(std::array<std::uint8_t,2>{0,53});};
+                if (output) rule([&]{udp();dns53();},[&]{w.set_meta_mark(o.tproxy_mark);});
+                else {
+                    auto divert_dns=[&](std::uint8_t fam){
+                        rule([&]{w.meta(NFT_META_NFPROTO);w.compare(std::array{fam});udp();dns53();},
+                             [&]{w.set_meta_mark(o.tproxy_mark);w.tproxy(fam,port);w.accept();});
+                    };
+                    if (o.ipv4) divert_dns(NFPROTO_IPV4);
+                    if (o.ipv6) divert_dns(NFPROTO_IPV6);
+                }
+            }
             if (!output) for (auto const& prefix : o.local_destinations) w.emit_bypass(tbl,name,[&]{w.destination(prefix);});
             emit_dest_filters(w,tbl,name,o,s);
             if (output) {

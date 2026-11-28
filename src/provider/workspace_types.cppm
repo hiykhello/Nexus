@@ -221,6 +221,11 @@ export namespace provider {
     struct DesktopHostConfig {
         bool enable_mixed = true;
         std::string mixed_listen = "127.0.0.1:7890";
+        bool enable_socks = false;
+        std::string socks_listen = "127.0.0.1:10808";
+        bool enable_http = false;
+        std::string http_listen = "127.0.0.1:10809";
+        bool allow_lan = false;
         std::string second_local_listen;
         std::string lan_listen;
         std::string lan_username;
@@ -243,6 +248,13 @@ export namespace provider {
         std::string run_mode = "vpn";
         bool enable_local_proxy = false;
         std::string local_listen = "127.0.0.1:7890";
+        bool enable_http = false;
+        std::string http_listen = "127.0.0.1:10809";
+        bool enable_socks = false;
+        std::string socks_listen = "127.0.0.1:10806";
+        bool allow_lan = false;
+        std::string lan_username;
+        std::string lan_password;
         bool dynamic_local_port = false;
         std::uint16_t tun_mtu = 1500;
         bool tun_fd_from_env = true;

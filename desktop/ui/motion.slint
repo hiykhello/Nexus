@@ -1,8 +1,8 @@
 export global Motion {
-    in-out property <bool> reduced: false;
-    out property <duration> micro: reduced ? 0ms : 100ms;
-    out property <duration> fast: reduced ? 0ms : 120ms;
-    out property <duration> normal: reduced ? 0ms : 180ms;
-    out property <duration> fluid: reduced ? 0ms : 220ms;
-    out property <duration> exit: reduced ? 0ms : 150ms;
+    out property <bool> reduced: false;
+    out property <duration> micro: 100ms;
+    out property <duration> fast: 135ms;
+    out property <duration> normal: 180ms;
+    out property <duration> fluid: 220ms;
+    out property <duration> exit: 140ms;
 }

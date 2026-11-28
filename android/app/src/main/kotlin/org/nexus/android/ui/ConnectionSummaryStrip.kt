@@ -1,6 +1,7 @@
 package org.nexus.android.ui
 
-import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,14 +10,15 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -38,9 +40,7 @@ import org.nexus.android.ui.theme.NexusNumericStyles
 import org.nexus.android.ui.theme.NexusTheme
 
 /**
- * Wave 9 Live Connections KPI Strip (`活跃连接 · 实时下行 · 实时上行 · 代理占比`):
- * - Tablet / Foldable (`>= 600dp`): 4-column elevated smoked-graphite Bento KPI cards
- * - Compact Phone (`< 600dp`): sleek compact 2x2 stepped-graphite KPI pills
+ * Single-level Material 3 Adaptive Connections KPI Card (`12dp` radius, decoupled Cobalt RX / Emerald TX telemetry).
  */
 @Composable
 internal fun ConnectionsKpiStrip(
@@ -59,138 +59,100 @@ internal fun ConnectionsKpiStrip(
     val hasLiveRate = downloadRateBps >= 0L && uploadRateBps >= 0L
     val dlLabel = if (hasLiveRate) "实时下行" else "累计下行"
     val dlPrimary = if (hasLiveRate) formatTrafficRate(downloadRateBps) else formatTrafficBytes(totalDownload)
-    val dlSub = if (hasLiveRate) "总计 ${formatTrafficBytes(totalDownload)}" else "活跃会话"
     val ulLabel = if (hasLiveRate) "实时上行" else "累计上行"
     val ulPrimary = if (hasLiveRate) formatTrafficRate(uploadRateBps) else formatTrafficBytes(totalUpload)
-    val ulSub = if (hasLiveRate) "总计 ${formatTrafficBytes(totalUpload)}" else "活跃会话"
-    val proxyLabel = if (activeCount > 0) "$proxyPercent% 代理" else "--"
-    val proxySub = if (activeCount > 0) "${100 - proxyPercent}% 直连" else "等待连接"
+    val proxyLabel = if (activeCount > 0) "$proxyPercent%" else "--"
 
-    if (compact) {
-        Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CompactKpiPill("活跃连接", "$activeCount", "TCP $tcpCount · UDP $udpCount", MaterialTheme.colorScheme.onSurface, Modifier.weight(1f))
-                CompactKpiPill("代理占比", proxyLabel, proxySub, ext.success, Modifier.weight(1f))
-            }
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                CompactKpiPill(dlLabel, dlPrimary, dlSub, ext.telemetryDownload, Modifier.weight(1f))
-                CompactKpiPill(ulLabel, ulPrimary, ulSub, ext.telemetryUpload, Modifier.weight(1f))
-            }
-        }
-    } else {
-        Row(
-            modifier = modifier.fillMaxWidth().height(IntrinsicSize.Max),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            ExpandedKpiTile("活跃连接", "$activeCount", "TCP $tcpCount · UDP $udpCount", MaterialTheme.colorScheme.onSurface, Color.Transparent, Modifier.weight(1f).fillMaxHeight())
-            ExpandedKpiTile(dlLabel, dlPrimary, dlSub, ext.telemetryDownload, ext.telemetryDownload.copy(alpha = if (ext.isDark) 0.11f else 0.06f), Modifier.weight(1f).fillMaxHeight())
-            ExpandedKpiTile(ulLabel, ulPrimary, ulSub, ext.telemetryUpload, ext.telemetryUpload.copy(alpha = if (ext.isDark) 0.11f else 0.06f), Modifier.weight(1f).fillMaxHeight())
-            ExpandedKpiTile("代理占比", proxyLabel, proxySub, ext.success, ext.success.copy(alpha = if (ext.isDark) 0.10f else 0.06f), Modifier.weight(1f).fillMaxHeight())
-        }
-    }
-}
-
-@Composable
-private fun ExpandedKpiTile(
-    label: String,
-    value: String,
-    subtitle: String,
-    valueColor: Color,
-    accentTint: Color,
-    modifier: Modifier = Modifier,
-) {
     OpticalCard(
-        modifier = modifier,
-        cornerRadius = 16.dp,
-        accentTint = accentTint,
+        modifier = modifier.fillMaxWidth(),
+        cornerRadius = 12.dp,
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
-            verticalArrangement = Arrangement.spacedBy(3.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min).padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            LedgerMetricColumn(
+                label = "活跃流",
+                value = "$activeCount",
+                sub = "T:$tcpCount U:$udpCount",
+                valueColor = MaterialTheme.colorScheme.onSurface,
+                compact = compact,
+                modifier = Modifier.weight(1f),
             )
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleLarge.copy(
-                    fontFamily = FontFamily.SansSerif,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontSize = 20.sp,
-                    letterSpacing = (-0.5).sp,
-                    fontFeatureSettings = "tnum",
-                ),
-                color = valueColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Box(Modifier.width(1.dp).fillMaxHeight().background(ext.hairline))
+            LedgerMetricColumn(
+                label = dlLabel,
+                value = dlPrimary,
+                sub = formatTrafficBytes(totalDownload),
+                valueColor = ext.telemetryDownload,
+                compact = compact,
+                modifier = Modifier.weight(1.1f),
             )
-            Text(
-                text = subtitle,
-                style = NexusNumericStyles.monoBadge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+            Box(Modifier.width(1.dp).fillMaxHeight().background(ext.hairline))
+            LedgerMetricColumn(
+                label = ulLabel,
+                value = ulPrimary,
+                sub = formatTrafficBytes(totalUpload),
+                valueColor = ext.telemetryUpload,
+                compact = compact,
+                modifier = Modifier.weight(1.1f),
             )
+            if (!compact) {
+                Box(Modifier.width(1.dp).fillMaxHeight().background(ext.hairline))
+                LedgerMetricColumn(
+                    label = "代理分流",
+                    value = proxyLabel,
+                    sub = if (activeCount > 0) "直连 ${100 - proxyPercent}%" else "空闲",
+                    valueColor = ext.success,
+                    compact = false,
+                    modifier = Modifier.weight(0.9f),
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun CompactKpiPill(
+private fun LedgerMetricColumn(
     label: String,
     value: String,
-    subtitle: String,
+    sub: String,
     valueColor: Color,
+    compact: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val ext = NexusTheme.colors
-    Surface(
+    Column(
         modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = ext.cardSurface,
-        border = BorderStroke(1.dp, ext.hairline),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = subtitle,
-                    style = NexusNumericStyles.monoBadge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleMedium.copy(
-                    fontFamily = FontFamily.SansSerif,
-                    fontWeight = FontWeight.ExtraBold,
-                    fontFeatureSettings = "tnum",
-                ),
-                color = valueColor,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.titleMedium.copy(
+                fontFamily = FontFamily.SansSerif,
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = if (compact) 16.sp else 19.sp,
+                fontFeatureSettings = "tnum",
+            ),
+            color = valueColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = sub,
+            style = NexusNumericStyles.monoBadge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -203,27 +165,31 @@ internal fun ConnectionItemCard(
     onClose: () -> Unit,
 ) {
     val ext = NexusTheme.colors
-    val primary = MaterialTheme.colorScheme.primary
     val targetHost = conn.target.ifEmpty {
         if (conn.destinationPort > 0) "${conn.path}:${conn.destinationPort}" else conn.path
     }
-    val ruleBadge = conn.routeRule.substringBefore("->").trim().take(22)
+    val ruleBadge = conn.routeRule.substringBefore("->").trim().take(20)
+    val isDirect = conn.outbound.equals("direct", ignoreCase = true)
     val connTotal = (conn.downloadBytes + conn.uploadBytes).coerceAtLeast(0L)
     val shareFrac = if (maxTotalBytes > 0L && connTotal > 0L) {
         (connTotal.toFloat() / maxTotalBytes.toFloat()).coerceIn(0.05f, 1f)
     } else 0f
     val rxFrac = if (connTotal > 0L) (conn.downloadBytes.toFloat() / connTotal.toFloat()).coerceIn(0f, 1f) else 0f
 
-    OpticalCard(
-        modifier = Modifier.fillMaxWidth(),
-        cornerRadius = 16.dp,
-        borderColor = if (selected) primary.copy(alpha = 0.80f) else ext.hairline,
-        borderWidth = if (selected) 1.5.dp else 1.dp,
-        accentTint = if (selected) primary.copy(alpha = if (ext.isDark) 0.12f else 0.06f) else Color.Transparent,
-        onClick = onInspect,
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(
+                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = if (ext.isDark) 0.15f else 0.08f)
+                else Color.Transparent,
+            )
+            .clickable(onClick = onInspect),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 10.dp, bottom = if (shareFrac > 0f) 6.dp else 10.dp, end = 4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 54.dp)
+                .padding(start = 6.dp, top = 8.dp, bottom = if (shareFrac > 0f) 4.dp else 8.dp, end = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -235,7 +201,7 @@ internal fun ConnectionItemCard(
             )
             Column(
                 modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -244,7 +210,7 @@ internal fun ConnectionItemCard(
                     Text(
                         text = targetHost,
                         style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
+                        fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
@@ -252,8 +218,8 @@ internal fun ConnectionItemCard(
                     if (ruleBadge.isNotEmpty()) {
                         StatusPill(
                             text = ruleBadge,
-                            containerColor = ext.wellSurface,
-                            contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            containerColor = if (isDirect) ext.successContainer else ext.ruleVermilionContainer,
+                            contentColor = if (isDirect) ext.success else ext.ruleVermilion,
                         )
                     }
                 }
@@ -264,7 +230,7 @@ internal fun ConnectionItemCard(
                     Text(
                         text = conn.outbound.ifEmpty { conn.path },
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
+                        color = if (isDirect) ext.success else MaterialTheme.colorScheme.primary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f, fill = false),
@@ -295,7 +261,7 @@ internal fun ConnectionItemCard(
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 12.dp, end = 12.dp, bottom = 8.dp)
+                    .padding(start = 6.dp, end = 12.dp, bottom = 6.dp)
                     .height(2.dp)
                     .clip(CircleShape)
                     .drawBehind {
@@ -308,5 +274,6 @@ internal fun ConnectionItemCard(
                     },
             )
         }
+        HorizontalDivider(color = ext.hairline)
     }
 }

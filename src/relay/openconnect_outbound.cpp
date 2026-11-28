@@ -348,11 +348,14 @@ namespace relay {
                     }
 
                     if (!co_await open_tls(s, conn_session, conn, tls_stream, deadline)) co_return false;
-                    if (!platform::secure_random(std::as_writable_bytes(std::span{dtls_secret}))) co_return false;
-                    if (profile.cfg.dtls) dtls_secret_hex = hex_encode(dtls_secret);
+                    bool const try_dtls = profile.cfg.dtls && !via;
+                    if (try_dtls) {
+                        if (!platform::secure_random(std::as_writable_bytes(std::span{dtls_secret}))) co_return false;
+                        dtls_secret_hex = hex_encode(dtls_secret);
+                    }
                     cstp_req = openconnect::build_cstp_connect_headers(
                         profile.cfg.server_name, cookie, profile.cfg.mtu,
-                        dtls_secret_hex, profile.cfg.user_agent, profile.cfg.dtls);
+                        dtls_secret_hex, profile.cfg.user_agent, try_dtls);
                     if (!co_await tls_stream->send(std::span(reinterpret_cast<std::uint8_t const*>(cstp_req.data()), cstp_req.size()), deadline))
                         co_return false;
 

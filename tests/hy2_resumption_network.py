@@ -62,7 +62,7 @@ def verify(binary, peer_bin, require_resumption):
                 (root / f"rule-{index}.kdl").write_text(
                     f'schema-version 2\nkind "predicate"\nrule type="ip-cidr" value="127.0.0.{index + 1}/32"\n')
                 rule_sets.append(f'        rule{index} path="rule-{index}.kdl" format="kdl"')
-                route_rules.append(f'- kind="rule-set" value="rule{index}" outbound="edge{index}"')
+                route_rules.append(f'- rule-set="rule{index}" to="edge{index}"')
                 outbounds.append(f'''outbound "edge{index}" type="hysteria2" {{
     server host="{host}" port={ports[group]}
     authentication {{ password-file "{password}"; }}

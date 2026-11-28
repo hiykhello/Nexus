@@ -72,4 +72,4 @@ Linux 建议将可丢弃磁盘缓存放入 `/var/cache/nexus/` 的实例目录�
 
 目录权限、私有文件、符号链接、属主、多实例冲突和离线清理范围需验证。DNS 域名、规则来源和用户偏好默认不逐条记录到日志，诊断以类别、revision、条目数、占用、待写字节、最老待写时间、最近成功提交和错误阶段为主。
 
-验证见[DNS 与状态验证](../planning/dns-state-validation.md)，宿主网络恢复见[Linux 设计](../platform/linux/networking.md)。
+验证见 [验证体系与实机基线](../planning/validation.md#2-dns-与持久状态验证)，宿主网络恢复见 [Linux 设计](../platform/linux/networking.md)。

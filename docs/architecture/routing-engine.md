@@ -1,6 +1,12 @@
 # 路由匹配流水线与配置代次
 
-状态：主配置可按顺序引用谓词规则集并选择出口；v2 谓词支持 AND/OR/NOT、目标端口和网络，并为顶层域名及 IP 前缀编译索引，详见[规则集互转](../configuration/rule-sets.md)。完整路由引擎、其他上下文字段、复杂表达式索引和热重载仍为设计草案。
+状态：有序路由（`rules::RouteProgram`）与编译索引（`rules::Matcher` / `NXMM`）均已接入生产数据面；v2 谓词支持 AND/OR/NOT、目标/来源/进程/协议/网络等全量条件，并为单条大型规则集、连续纯索引指令段及 `NXMM` 零拷贝规则集提供 $O(\log N)$ 零堆分配求值，详见[规则集互转](../configuration/rule-sets.md)。
+
+## 有序路由（`RouteProgram`）编译优化
+
+- **指令级合并区间索引（`local_any_index`）**：单条非 `mmap` 指令包含 $\ge 8$ 个顶层谓词（如内存内 GeoIP / GeoSite 规则集）时，编译期自动将 IPv4/IPv6 CIDR 合并为有序不重叠区间、将域名/后缀排序，使单 IP 与多候选 DNS IP（`input.candidates`）均以单次 $O(\log N)$ 二分完成，避免最多 33/129 次前缀分组查表。
+- **跨指令纯索引段合并（`IndexedRun`）**：连续两条及以上同 `domain_source`、无未索引谓词的 `route` / `reject` 指令自动合并为一个索引段；`next()` 与 `preflight()` 通过单次全局 `first_indexed_match`（配合编译期字段位掩码 `idx_flags` 与 `root_to_instr_` 反查表）同时匹配数百条独立主规则，并在三态逻辑下精确保持首个 `unknown` 指令位置（满足 `OR(yes, unknown) == yes`）。
+- **单次域名栈上归一化与零堆分配**：入口处对 4 个域名源一次性完成校验与栈上小写归一化（`domain_normalized`），后续指令与 `any_index` 直接复用规范 `std::string_view`；热路径由 `rules_patterns_allocation` 与 `route_program_perf_unit` 强制验证 0 次堆分配。
 
 规则引擎设计原则见 [路由、DNS 与状态原则](../design-principles/routing-dns-and-state.md)；不同生态的条件名称接近不意味着配置或语义等价。
 

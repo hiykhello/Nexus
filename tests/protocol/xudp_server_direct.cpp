@@ -22,12 +22,12 @@ auto run(int family) -> bool {
     else { peer.address[15]=1; peer.port=ntohs(reinterpret_cast<sockaddr_in6*>(&bound)->sin6_port); }
     x::Address target; target.family=family==AF_INET ? x::Family::ipv4 : x::Family::ipv6; target.length=family==AF_INET ? 4 : 16; target.port=peer.port;
     std::copy_n(peer.address.begin(),target.length,target.bytes.begin());
-    auto policy=r::RouteMatcher::compile(std::span<r::RouteRule const>{},0,3);
-    auto block=r::RouteMatcher::compile(std::span<r::RouteRule const>{},1,3);
+    auto policy=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},0,3);
+    auto block=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},1,3);
     if (!policy || !block) return false;
     x::ServerDirect direct(*policy,2),denied(*block,1);
     r::RuleSet source_rule{{{"source-port","1234",{}}},2};
-    auto source_policy=r::RouteMatcher::compile(std::array{r::RouteRule{source_rule,1}},0,2,r::SourceMetadata::provided);
+    auto source_policy=r::RouteProgram::compile_policy(std::array{r::ProgramRule{source_rule,{r::ProgramActionKind::route,1}}},0,2,r::SourceMetadata::provided);
     if (!source_policy) return false;
     n::UdpEndpoint source{4,{127,0,0,1},1234};
     x::ServerDirect source_denied(*source_policy,1,&source);
@@ -80,7 +80,7 @@ auto run(int family) -> bool {
 }
 auto idle_expiration() -> bool {
     using namespace std::chrono_literals; using Clock=std::chrono::steady_clock;
-    auto policy=r::RouteMatcher::compile(std::span<r::RouteRule const>{},0,3); if (!policy) return false;
+    auto policy=r::RouteProgram::compile_policy(std::span<r::ProgramRule const>{},0,3); if (!policy) return false;
     x::ServerDirect direct(*policy,2); x::Address target; target.length=4; target.bytes[0]=127; target.bytes[3]=1; target.port=53;
     auto now=Clock::time_point{}+100s;
     auto first=direct.receive({1,x::Kind::open,false,false,target},now);
