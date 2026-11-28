@@ -19,7 +19,7 @@ import androidx.compose.ui.platform.LocalContext
 import org.nexus.android.bridge.workspace.AndroidThemePreset
 
 /**
- * Modern Flagship Card Console Material 3 Adaptive tokens (aligned with Clash Verge Rev & FlClash):
+ * Modern Card Console Material 3 Adaptive tokens:
  * - Cool Mist-Slate Light ground (`#F4F6F9`) with crisp `#FFFFFF` `12dp` single-level cards (`#E2E8F0` hairline)
  * - Deep Slate-Obsidian Dark ground (`#0F141C`) with elevated `#171E29` cards (`#263142` hairline)
  * - Electric Cobalt primary (`#2563EB` / `#60A5FA`), Signal Emerald live/TX (`#059669` / `#10B981`), Warm Amber (`#D97706` / `#F59E0B`)

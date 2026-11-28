@@ -8,7 +8,7 @@
 
 - **自研 TUN 栈**：从内存包设备（单/多流 IPv4/IPv6 TCP 与 UDP、乱序、重传、MTU 分片、RST/半关闭、背压与流表淘汰）起步，再到隔离 Linux netns 的真实 TUN 设备与撤回验证。
 - **自研 TLS 与 uTLS**：覆盖 BoringSSL `libcrypto` 密钥交换（X25519 / NIST / `X25519MLKEM768`）、TLS 1.3/1.2 认证握手、证书压缩（zlib/Brotli/Zstandard）、ALPS、ECH、1-RTT PSK 恢复与负例（错名、错 CA、非法记录、OOM 恢复）。浏览器指纹基线通过 `utls-dump` + [audit-utls.py](../../scripts/audit-utls.py) 离线对照上游 `refraction-networking/utls` 或真实浏览器抓包，严格区分数据漂移与能力缺口。
-- **HTTP 与代理互通**：覆盖恶意 framing、请求走私边界、431 头超限、CONNECT 半关闭、HTTP/2 流控与 HTTP/3/QUIC 恢复；所有协议均需与独立第三方实现（OpenSSL、Xray、sing-box、OpenVPN/OpenConnect 对端等）实网互通验证，不以自连自测代替互操作。
+- **HTTP 与代理互通**：覆盖恶意 framing、请求走私边界、431 头超限、CONNECT 半关闭、HTTP/2 流控与 HTTP/3/QUIC 恢复；所有协议均需与独立第三方实现（OpenSSL、主流开源代理对端、OpenVPN/OpenConnect 对端等）实网互通验证，不以自连自测代替互操作。
 
 ---
 

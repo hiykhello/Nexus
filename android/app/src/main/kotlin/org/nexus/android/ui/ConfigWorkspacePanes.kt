@@ -116,7 +116,7 @@ internal fun filterAndSortProfiles(
  * Flattened `LazyListScope` emitter for the Server & Subscription Console:
  * - Subscription Group Filter Tab Bar (`[全部] [手动配置] [<Sub>...]`)
  * - Search + Latency/Name Sort + Probe All + 1-click Update Subscription + Clipboard Import + `+ 新建`
- * - Two-tier FlClash-style virtualized `ProfileListRow` cards with full remarks, RTT, endpoint & true edit pencil icon
+ * - Two-tier virtualized `ProfileListRow` cards with full remarks, RTT, endpoint & true edit pencil icon
  */
 internal fun LazyListScope.profilesPillarItems(
     state: WorkspaceUiState,
